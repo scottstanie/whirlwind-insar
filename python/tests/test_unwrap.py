@@ -37,10 +37,6 @@ class TestUnwrap:
         aligned = _align_to_truth(unw, phase)
         np.testing.assert_allclose(aligned, phase, atol=1e-2)
 
-    @pytest.mark.xfail(
-        reason="integration seeds at (0,0); fails if (0,0) is outside the mask. "
-        "Will be addressed by seeding at a valid pixel."
-    )
     def test_nan_inputs_masked(self):
         """NaN-pixels are masked; the rest must unwrap correctly."""
         y, x = np.ogrid[-3:3:256j, -3:3:256j]

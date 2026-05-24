@@ -69,15 +69,16 @@ if not hasattr(np, 'float_'):
 z = np.load({str(scene_path)!r})
 igram = z['igram']
 corr  = z['corr']
+mask = z['mask'] if 'mask' in z.files else None
 nlooks = float(z['meta'][2])
 
 t0 = time.perf_counter()
 if {lib!r} == 'ww':
     import whirlwind_rs as ww
-    unw = ww.unwrap(igram, corr, nlooks, None)
+    unw = ww.unwrap(igram, corr, nlooks, mask)
 elif {lib!r} == 'snaphu':
     import snaphu
-    unw, _ = snaphu.unwrap(igram, corr, nlooks=nlooks, cost='smooth', mask=None)
+    unw, _ = snaphu.unwrap(igram, corr, nlooks=nlooks, cost='smooth', mask=mask)
 else:
     raise SystemExit('unknown lib')
 elapsed = time.perf_counter() - t0

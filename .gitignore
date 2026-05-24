@@ -8,3 +8,4 @@ __pycache__/
 *.dylib
 scripts/out/
 .DS_Store
+.vscode/

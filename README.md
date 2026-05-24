@@ -14,23 +14,36 @@ for the algorithm theoretical basis.
 ## Prerequisites
 
 - Rust ≥ 1.85 (the workspace is on edition 2024). `rustup update stable`.
-- Python ≥ 3.9 with `pip install maturin numpy` for the Python bindings.
-- Optional, for the cross-library bench (`scripts/bench.py`):
-  `pip install snaphu kamui rasterio matplotlib`.
+- Python ≥ 3.9.
+- [uv](https://docs.astral.sh/uv/) is the recommended way to get the dev
+  environment (test + bench dependencies, including snaphu/kamui for
+  cross-library comparison). Alternatively, plain `pip install maturin numpy`
+  works for just building the bindings.
 
 ## Quickstart
 
+With uv (recommended):
+
 ```bash
-# Run all the Rust tests (unit + integration).
+uv sync                                   # create venv + install all dev deps
+uv run maturin develop --release          # editable Rust build into the venv
+uv run pytest python/tests                # python test battery
+uv run python scripts/bench.py            # cross-library benchmark
+```
+
+Without uv:
+
+```bash
+pip install maturin numpy
+(cd crates/whirlwind-py && maturin develop --release)
+python -m pytest python/tests
+```
+
+Rust tests + CLI work standalone (no Python):
+
+```bash
 cargo test --workspace
 
-# Build + install the Python module in editable mode.
-(cd crates/whirlwind-py && maturin develop --release)
-
-# Run the Python test battery.
-python -m pytest python/tests
-
-# Generate a synthetic interferogram and unwrap it via the CLI.
 cargo run --release -p whirlwind-cli -- simulate --shape 256x256 --out /tmp/sim
 cargo run --release -p whirlwind-cli -- unwrap \
     --igram-re /tmp/sim/igram_re.tif --igram-im /tmp/sim/igram_im.tif \
@@ -93,9 +106,17 @@ micro-opts; see `docs/PERFORMANCE.md` for what changed):
 | noisy ramp γ=0.7 | 2048x2048 | 0.086 s | 15.20 s | **177×** |
 | very noisy ramp γ=0.3 | 1024x1024 | 1.094 s | 16.21 s | **14.8×** |
 
-(kamui's PUMA was excluded from this run — it takes 4+ minutes on the 1024²
-very-noisy case and was swap-thrashing on this machine. Previously-measured
-kamui numbers are in the earlier `BENCH_RESULTS.json`.)
+Notes:
+
+- The clean-ramp row taking *longer* than the noisy-ramp row for snaphu is
+  not a measurement artifact — snaphu's smooth-cost initialization scales
+  with both coherence and look count in non-obvious ways and is actually
+  more expensive at γ=0.99 than at γ=0.7 with our default per-scene nlooks.
+  Pin nlooks across scenes with `python scripts/bench.py --nlooks 4` if you
+  want a fixed snaphu regime.
+- kamui's PUMA was excluded from this run — it takes 4+ minutes on the
+  1024² very-noisy case and was swap-thrashing on this machine.
+  Previously-measured kamui numbers are in earlier `BENCH_RESULTS.json`.
 
 For the **long-running** worst-case bench (5+ minutes on the v1 code; used
 to measure Dijkstra-level changes where short benches are too noisy):
@@ -137,6 +158,10 @@ side-by-side PNG output it produces; `bench.py` is the one to use for tables.)
 
 - Workspace, all 3 crates, residue, cost (Lee + simple), min-cost flow, integration,
   simulator, pyo3 bindings, CLI, real-data verification, snaphu benchmark — done.
+- **Mask support is now end-to-end:** pass a `bool` mask (True = valid) to
+  `ww.unwrap(igram, corr, nlooks, mask)`. Masked pixels' arcs are pre-saturated
+  so Dijkstra skips them; integration BFS-walks the valid region from the
+  first valid pixel and leaves masked pixels as NaN. On a synthetic
+  4096² γ=0.7 scene with a 35 % water-mask: **0.54 s with mask vs 75 s
+  without** — masked-region junk residues otherwise dominate the cost.
 - Tiled parallel unwrap — not yet (stretch goal in the plan).
-- The mask test xfails because integration seeds at (0, 0); if that pixel is masked
-  out the seed value is wrong. Need to seed at the first valid pixel in the mask.

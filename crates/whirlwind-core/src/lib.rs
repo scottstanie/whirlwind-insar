@@ -51,12 +51,12 @@ pub fn unwrap(
     }
 
     let wrapped_phase = igram.mapv(|z| z.arg());
-    let residues = residue::compute(wrapped_phase.view());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
 
     let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
 
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new(&graph, residues.view(), &costs);
+    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
 
     // max_iter=50 (vs the original Whirlwind's 8): per-iteration cost is one
     // multi-source Dijkstra that batches every source's augmentation, while
@@ -65,6 +65,10 @@ pub fn unwrap(
     // SSP entirely is ~6× faster end to end. See `examples/bench_scale.rs`.
     primal_dual::run(&graph, &mut net, 50);
 
-    let unw = integrate::integrate(wrapped_phase.view(), &graph, &net);
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
     Ok(unw)
 }

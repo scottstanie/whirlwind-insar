@@ -92,6 +92,13 @@ def main():
                    default=Path("/tmp/heavy_scene.npz"))
     p.add_argument("--summary", action="store_true",
                    help="print residue count / coh stats for the cached scene")
+    p.add_argument("--mask-fraction", type=float, default=0.0,
+                   help="fraction of pixels to mark invalid; 0 = no mask.")
+    p.add_argument("--mask-kind", choices=("blobs", "rects"), default="blobs",
+                   help="'blobs' (default, realistic Sentinel-1 land/ocean) or "
+                   "'rects' (pathological fragmented mask, stress-test only)")
+    p.add_argument("--mask-blobs", type=int, default=6,
+                   help="number of gaussian blobs that define the land area (blobs mode)")
     args = p.parse_args()
 
     H = W = args.size
@@ -103,11 +110,56 @@ def main():
         flavor=args.flavor, low=args.low, high=args.high,
     )
 
+    # Optional pixel mask (True = valid). Two coverage models:
+    # - "blobs" (default): a few large gaussian-falloff "land" blobs against an
+    #   "ocean" background. ~Sentinel-1 over a coastal scene with islands.
+    # - "rects": many small rectangles — pathological fragmentation, used for
+    #   stress-testing the mask plumbing, not realistic.
+    mask = None
+    if args.mask_fraction > 0.0:
+        rng = np.random.default_rng(args.seed ^ 0xDEAD)
+        if args.mask_kind == "blobs":
+            # Sum a handful of large gaussian bumps; threshold to get a
+            # land/ocean mask with roughly `1 - mask_fraction` land coverage.
+            yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+            field = np.zeros((H, W), dtype=np.float32)
+            for _ in range(args.mask_blobs):
+                cy = rng.uniform(0, H)
+                cx = rng.uniform(0, W)
+                sigma = rng.uniform(0.15, 0.30) * min(H, W)
+                d2 = (yy - cy) ** 2 + (xx - cx) ** 2
+                field += np.exp(-d2 / (2 * sigma * sigma))
+            # Threshold so that (1 - mask_fraction) of pixels are above it.
+            thresh = float(np.quantile(field, args.mask_fraction))
+            mask = field > thresh
+        elif args.mask_kind == "rects":
+            mask = np.ones((H, W), dtype=np.bool_)
+            target_invalid = int(args.mask_fraction * H * W)
+            n_invalid = 0
+            while n_invalid < target_invalid:
+                rh = int(rng.integers(H // 20, H // 4))
+                rw = int(rng.integers(W // 20, W // 4))
+                ri = int(rng.integers(0, H - rh))
+                rj = int(rng.integers(0, W - rw))
+                before = int(mask[ri:ri + rh, rj:rj + rw].sum())
+                mask[ri:ri + rh, rj:rj + rw] = False
+                n_invalid += before
+        else:
+            raise ValueError(f"unknown mask-kind {args.mask_kind!r}")
+        # Sanitize igram/corr in the invalid region (real data has NaN there).
+        igram = igram.copy()
+        igram[~mask] = 0 + 0j
+        corr = corr.copy()
+        corr[~mask] = 0.0
+
     out = args.out
     if out.suffix != ".npz":
         out = out.with_suffix(".npz")
-    np.savez(out, igram=igram, corr=corr, gamma=gamma, truth=truth,
-             meta=np.array([H, W, args.nlooks, args.fringes, args.seed], dtype=np.float64))
+    save_kwargs = dict(igram=igram, corr=corr, gamma=gamma, truth=truth,
+                       meta=np.array([H, W, args.nlooks, args.fringes, args.seed], dtype=np.float64))
+    if mask is not None:
+        save_kwargs["mask"] = mask
+    np.savez(out, **save_kwargs)
     sz = out.stat().st_size / (1024 * 1024)
     print(f"Saved {out} ({sz:.0f} MiB)")
 

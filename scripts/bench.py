@@ -287,6 +287,14 @@ def main() -> int:
     p.add_argument("--real", action="store_true")
     p.add_argument("--very-noisy-max-size", type=int, default=1024,
                    help="cap on size for γ=0.3 (otherwise minutes for some libs)")
+    p.add_argument("--nlooks", type=int, default=0,
+                   help="If > 0, override the per-scene multilook count and use "
+                   "this value everywhere. Default 0 = per-scene defaults: clean "
+                   "ramp uses 1 (single-look matches γ=0.99 by construction), "
+                   "γ=0.7 uses 10, γ=0.3 uses 4. Note: snaphu's smooth-cost "
+                   "init time depends on both γ and nlooks in non-obvious ways, "
+                   "so snaphu's clean runs can take *longer* than its noisy "
+                   "runs — that's a real snaphu artifact, not a bench bug.")
     args = p.parse_args()
 
     libs = dict(LIBS)
@@ -317,19 +325,25 @@ def main() -> int:
                    if np.isfinite(r.seconds) else r.note)
             print(f" {tag}")
 
-    for size in sizes:
-        ig, co, _ = synthetic_diagonal_ramp(size, gamma=0.99, nlooks=1)
-        add_scene(f"clean ramp {size}x{size}", ig, co, 1.0, None)
+    def nlooks_for(default):
+        return args.nlooks if args.nlooks > 0 else default
 
     for size in sizes:
-        ig, co, _ = synthetic_diagonal_ramp(size, gamma=0.7, nlooks=10)
-        add_scene(f"noisy ramp γ=0.7 {size}x{size}", ig, co, 10.0, None)
+        nl = nlooks_for(1)
+        ig, co, _ = synthetic_diagonal_ramp(size, gamma=0.99, nlooks=nl)
+        add_scene(f"clean ramp {size}x{size}", ig, co, float(nl), None)
+
+    for size in sizes:
+        nl = nlooks_for(10)
+        ig, co, _ = synthetic_diagonal_ramp(size, gamma=0.7, nlooks=nl)
+        add_scene(f"noisy ramp γ=0.7 {size}x{size}", ig, co, float(nl), None)
 
     for size in sizes:
         if size > args.very_noisy_max_size:
             continue
-        ig, co, _ = synthetic_diagonal_ramp(size, gamma=0.3, nlooks=4)
-        add_scene(f"very noisy ramp γ=0.3 {size}x{size}", ig, co, 4.0, None)
+        nl = nlooks_for(4)
+        ig, co, _ = synthetic_diagonal_ramp(size, gamma=0.3, nlooks=nl)
+        add_scene(f"very noisy ramp γ=0.3 {size}x{size}", ig, co, float(nl), None)
 
     if args.real:
         ros = real_rosamond_pair()

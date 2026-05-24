@@ -123,6 +123,36 @@ The 8192² case is the one that actually exercises the worst-case primal-dual
 loop (5+ minutes on the v1 code) and is the easiest reproducible target for
 measuring future optimization work.
 
+### Mask acceleration (Sentinel-1 land/water)
+
+If a pixel-grid `mask` is passed to `ww.unwrap(igram, corr, nlooks, mask)`,
+`Network::new_with_mask` pre-saturates every arc that crosses an invalid
+pixel-edge so Dijkstra skips that arc. `residue::compute_with_mask` also
+zeros residues whose 2×2 pixel loop touches a masked pixel — otherwise the
+arbitrary-valued masked region (typically `igram=0+0j` after `nan_to_num`)
+produces a wall of spurious residues at the mask boundary that completely
+dominate the MCF problem.
+
+The combined effect is large for realistic scenes:
+
+| Scene | no mask | with mask | speedup |
+|---|---:|---:|---:|
+| 4096² γ=0.7 land + 35 % blob-shaped water mask (`heavy_scene.py --flavor noisy --low 0.7 --nlooks 10 --mask-fraction 0.35 --mask-kind blobs`) | 75.0 s | **0.54 s** | **139×** |
+
+(`/tmp/heavy_4k_realistic.npz` in the local repro.)
+
+The 139× isn't really a "mask makes things faster" story — it's that **without
+a mask, the unwrapper does an enormous amount of pointless work on invalid
+pixels** whose phase is just `arctan2(0, 0) = 0`, producing residues at every
+land/water boundary. The mask just tells the algorithm to skip them.
+
+Build a `heavy_scene.py`-style synthetic mask: `--mask-kind blobs` (a few
+large gaussian "land" areas, realistic for coastal scenes) or `--mask-kind
+rects` (random rectangles; stress-test, pathologically fragmented). On
+uniform-γ noisy scenes mask doesn't speed things up much — the valid land
+region itself is still dense in real residues. The win is in the realistic
+"clean land + noisy water" regime.
+
 ## On parallelizing the multi-source Dijkstra
 
 We tried, and the rayon-parallel `Dial` (`run_parallel` in

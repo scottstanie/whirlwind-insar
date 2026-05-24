@@ -28,8 +28,25 @@ fn cycle_diff(a: f32, b: f32) -> i32 {
 /// `phi[i+1, j]`, `phi[i, j+1]`), so the per-residue-row work is independent
 /// across `i` and we parallelize with rayon.
 pub fn compute(wrapped_phase: ArrayView2<f32>) -> Array2<i32> {
+    compute_with_mask(wrapped_phase, None)
+}
+
+/// Compute the residue grid, zeroing residues whose 2×2 pixel-loop touches
+/// any masked-out pixel (where `mask[i, j] == false`).
+///
+/// Without this, NaN/invalid pixels (replaced by zeros before unwrap) generate
+/// spurious large residues at the mask boundary that leak charge into the
+/// valid region's primal-dual loop. Zeroing them keeps the MCF problem
+/// confined to where the phase data is actually meaningful.
+pub fn compute_with_mask(
+    wrapped_phase: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+) -> Array2<i32> {
     let (m, n) = wrapped_phase.dim();
     assert!(m >= 1 && n >= 1);
+    if let Some(mm) = mask {
+        assert_eq!(mm.dim(), (m, n), "mask must match pixel grid");
+    }
     let mut out = Array2::<i32>::zeros((m + 1, n + 1));
 
     if m >= 2 && n >= 2 {
@@ -55,6 +72,13 @@ pub fn compute(wrapped_phase: ArrayView2<f32>) -> Array2<i32> {
                 let i = r - 1;
                 for c in 1..n {
                     let j = c - 1;
+                    // Skip residues where any 2x2 loop corner is masked out —
+                    // their values are nonsense (computed from filler phase).
+                    if let Some(mm) = mask {
+                        if !mm[(i, j)] || !mm[(i, j + 1)] || !mm[(i + 1, j)] || !mm[(i + 1, j + 1)] {
+                            continue;
+                        }
+                    }
                     let p00 = wrapped_phase[(i, j)];     // (r-1, c-1)
                     let p01 = wrapped_phase[(i, j + 1)]; // (r-1, c)
                     let p10 = wrapped_phase[(i + 1, j)]; // (r, c-1)
