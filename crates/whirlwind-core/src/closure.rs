@@ -239,22 +239,30 @@ pub fn correct(
     let mut date_phases = Array3::<f32>::zeros((graph.n_dates, m, n));
     let mut closure_rms = Array2::<f32>::zeros((m, n));
 
-    // Parallel over rows. Each row computes per-pixel θ + per-edge corrections.
-    let row_results: Vec<RowResult> = (0..m)
-        .into_par_iter()
-        .map(|i| solve_row(unw_stack, i, graph, &tree, n_edges, n))
-        .collect();
-
-    for (i, row) in row_results.into_iter().enumerate() {
-        for j in 0..n {
-            for e in 0..n_edges {
-                corrected[(e, i, j)] = row.corrected[e * n + j];
-                corrections[(e, i, j)] = row.corrections[e * n + j];
+    // Stripe-based parallel processing: each stripe of STRIPE_H rows is
+    // computed in parallel (rayon over rows within the stripe), then scattered
+    // into the output arrays serially. This bounds the peak intermediate
+    // memory to STRIPE_H × per_row_bytes instead of m × per_row_bytes — the
+    // latter is multi-GB on full scenes and was the cause of severe thrashing.
+    const STRIPE_H: usize = 64;
+    for stripe_start in (0..m).step_by(STRIPE_H) {
+        let stripe_end = (stripe_start + STRIPE_H).min(m);
+        let rows: Vec<RowResult> = (stripe_start..stripe_end)
+            .into_par_iter()
+            .map(|i| solve_row(unw_stack, i, graph, &tree, n_edges, n))
+            .collect();
+        for (offset, row) in rows.into_iter().enumerate() {
+            let i = stripe_start + offset;
+            for j in 0..n {
+                for e in 0..n_edges {
+                    corrected[(e, i, j)] = row.corrected[e * n + j];
+                    corrections[(e, i, j)] = row.corrections[e * n + j];
+                }
+                for d in 0..graph.n_dates {
+                    date_phases[(d, i, j)] = row.date_phases[d * n + j];
+                }
+                closure_rms[(i, j)] = row.closure_rms[j];
             }
-            for d in 0..graph.n_dates {
-                date_phases[(d, i, j)] = row.date_phases[d * n + j];
-            }
-            closure_rms[(i, j)] = row.closure_rms[j];
         }
     }
 
@@ -515,32 +523,36 @@ pub fn refine_mcf(
     let mut residual_violations = Array2::<u16>::zeros((m, n));
     let mut iterations = Array2::<u8>::zeros((m, n));
 
-    // Process row-by-row in parallel.
-    let row_results: Vec<RefineRow> = (0..m)
-        .into_par_iter()
-        .map(|i| {
-            refine_row(
-                unw_stack,
-                i,
-                graph,
-                crlb_per_date,
-                &basis,
-                &edge_to_cycles,
-                max_iter,
-                n_edges,
-                n,
-            )
-        })
-        .collect();
-
-    for (i, row) in row_results.into_iter().enumerate() {
-        for j in 0..n {
-            for e in 0..n_edges {
-                corrected[(e, i, j)] = row.corrected[e * n + j];
-                corrections[(e, i, j)] = row.corrections[e * n + j];
+    // Stripe-based: see closure::correct for rationale.
+    const STRIPE_H: usize = 64;
+    for stripe_start in (0..m).step_by(STRIPE_H) {
+        let stripe_end = (stripe_start + STRIPE_H).min(m);
+        let rows: Vec<RefineRow> = (stripe_start..stripe_end)
+            .into_par_iter()
+            .map(|i| {
+                refine_row(
+                    unw_stack,
+                    i,
+                    graph,
+                    crlb_per_date,
+                    &basis,
+                    &edge_to_cycles,
+                    max_iter,
+                    n_edges,
+                    n,
+                )
+            })
+            .collect();
+        for (offset, row) in rows.into_iter().enumerate() {
+            let i = stripe_start + offset;
+            for j in 0..n {
+                for e in 0..n_edges {
+                    corrected[(e, i, j)] = row.corrected[e * n + j];
+                    corrections[(e, i, j)] = row.corrections[e * n + j];
+                }
+                residual_violations[(i, j)] = row.violations[j];
+                iterations[(i, j)] = row.iters[j];
             }
-            residual_violations[(i, j)] = row.violations[j];
-            iterations[(i, j)] = row.iters[j];
         }
     }
 

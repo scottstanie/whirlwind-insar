@@ -173,6 +173,48 @@ def _output_profile(template_path: Path, win: Window | None, dtype: str, count: 
 # Pipeline
 # ---------------------------------------------------------------------------
 
+def _resolve_reference(
+    arg: str | None,
+    dolphin: Path,
+    crlb_cube: np.ndarray,
+    window: Window | None,
+) -> tuple[int, int, str]:
+    """Resolve the reference-pixel coords to (i, j) in the current (windowed) array.
+
+    Precedence:
+      1. `--reference i,j`  — explicit window-local pixel coords
+      2. `--reference dolphin` — read `dolphin/timeseries/reference_point.txt`
+                                 (window-aware: subtract the window's offset)
+      3. `--reference auto` (default) — pick the lowest-summed-CRLB pixel,
+                                         which is the most consistently coherent
+                                         across the entire stack
+    Returns (i, j, mode_str).
+    """
+    if arg is None or arg == "auto":
+        score = crlb_cube.sum(axis=0)
+        # Avoid nodata (zero) pixels in the auto-pick.
+        score = np.where(score > 0, score, np.inf)
+        i, j = np.unravel_index(int(score.argmin()), score.shape)
+        return int(i), int(j), f"auto (min Σ_d CRLB, score={float(crlb_cube.sum(axis=0)[i,j]):.3g})"
+    if arg == "dolphin":
+        rp = dolphin / "timeseries" / "reference_point.txt"
+        if not rp.exists():
+            raise FileNotFoundError(f"no {rp}; pass --reference auto or i,j")
+        txt = rp.read_text().strip()
+        # Format: "row,col" — these are full-scene coords in dolphin's grid.
+        parts = txt.replace(" ", "").split(",")
+        full_i, full_j = int(parts[0]), int(parts[1])
+        if window is not None:
+            full_i -= int(window.row_off)
+            full_j -= int(window.col_off)
+        return full_i, full_j, f"dolphin reference_point.txt = ({full_i}, {full_j}) in window"
+    # explicit "i,j"
+    parts = arg.replace(" ", "").split(",")
+    if len(parts) != 2:
+        raise ValueError(f"--reference must be 'auto', 'dolphin', or 'i,j'; got {arg!r}")
+    return int(parts[0]), int(parts[1]), f"explicit ({parts[0]}, {parts[1]})"
+
+
 def run(
     dolphin: Path,
     out_dir: Path,
@@ -180,6 +222,7 @@ def run(
     max_igs: int | None,
     n_threads: int,
     mcf_refine: bool = False,
+    reference_arg: str | None = None,
 ) -> None:
     print(f"[discover] scanning {dolphin}")
     igs, crlb_paths = discover_stack(dolphin)
@@ -305,6 +348,22 @@ def run(
         print(f"[mcf] max per-IG diff vs tree-based: median {np.median(per_ig_max):.4g}, "
               f"max {per_ig_max.max():.4g} rad")
 
+    # Reference-pixel anchoring (sparse-to-dense lite): subtract a single
+    # high-quality pixel's per-IG value to remove the arbitrary global
+    # integer offset that 2D unwrap leaves on each IG. After this step the
+    # output is *absolute relative phase* across the whole time series —
+    # the difference between any two pixels is physically meaningful
+    # displacement (modulo orbital / atmospheric residuals).
+    ref_i, ref_j, ref_mode = _resolve_reference(reference_arg, dolphin, crlb_cube, win)
+    ref_vals = closure["corrected"][:, ref_i, ref_j].copy()
+    print(f"[reference] anchoring on pixel ({ref_i}, {ref_j}) — {ref_mode}")
+    print(f"[reference] per-IG offsets removed: median {np.median(ref_vals):.3f} rad, "
+          f"std {ref_vals.std():.3f} rad")
+    closure["corrected"] -= ref_vals[:, None, None]
+    # Date phases: subtract the per-date reference value too.
+    ref_dates = closure["date_phases"][:, ref_i, ref_j].copy()
+    closure["date_phases"] -= ref_dates[:, None, None]
+
     # Per-date posterior variance from the tree.
     # With independent linked-SLC errors, telescoping along the tree gives
     #   var(θ_d) = σ²_ref + σ²_d
@@ -389,6 +448,7 @@ def run(
         "n_dates": len(dates),
         "n_edges": n_edges,
         "reference_date": dates[reference],
+        "reference_pixel": {"i": int(ref_i), "j": int(ref_j), "source": ref_mode},
         "dates": dates,
         "edges": [
             {"e": i, "from": e.date_a, "to": e.date_b,
@@ -418,8 +478,13 @@ def main() -> None:
     p.add_argument("--mcf-refine", action="store_true",
                    help="run cycle-greedy MCF refinement on the raw 2D-unwrapped stack "
                         "instead of tree-based closure correction (slower, diagnostic)")
+    p.add_argument("--reference", default="auto",
+                   help="reference pixel for absolute-phase anchoring: 'auto' "
+                        "(lowest-Σ-CRLB pixel), 'dolphin' (read timeseries/reference_point.txt), "
+                        "or 'i,j' for explicit window-local coords")
     args = p.parse_args()
-    run(args.dolphin, args.out, args.window, args.max_igs, args.threads, args.mcf_refine)
+    run(args.dolphin, args.out, args.window, args.max_igs, args.threads,
+        args.mcf_refine, args.reference)
 
 
 if __name__ == "__main__":
