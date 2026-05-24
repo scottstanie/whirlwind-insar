@@ -123,8 +123,10 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
 
         let (ui, uj) = g.node_ij(u);
         let out = g.outgoing(ui, uj);
-        // Tail of every outgoing arc is u; pre-load π[u] once.
+        // Tail of every outgoing arc is u; pre-load π[u] and source[u] once.
         let pot_u = net.potential[u];
+        let src_u = sp.source[u];
+        let u_i32 = u as i32;
         for &(arc, v) in out.iter() {
             if net.is_arc_saturated(arc) {
                 continue;
@@ -138,8 +140,8 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
             if nd < sp.dist[v] {
                 sp.dist[v] = nd;
                 sp.pred_arc[v] = arc as i32;
-                sp.pred_node[v] = u as i32;
-                sp.source[v] = sp.source[u];
+                sp.pred_node[v] = u_i32;
+                sp.source[v] = src_u;
                 let b = (nd as usize) % k;
                 buckets[b].push((v, nd));
                 pending += 1;

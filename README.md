@@ -53,11 +53,12 @@ All optional; defaults are sensible.
 See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for full per-stage timings,
 hotspot analysis, and memory model. Headline (M-series, 8 perf cores, release build):
 
-- **~75–110 Mpx/s** on clean / lightly-noisy data — cost-build-bound.
-- **~1 Mpx/s** on uniform-noisy residue-dense scenes; **2× faster on the
+- **~50–75 Mpx/s** on clean / lightly-noisy data — cost-build-bound.
+- **~1 Mpx/s** on uniform-noisy residue-dense scenes; **1.9× faster on the
   worst-case 8192² uniform-noisy bench** than the v1 release (312.6 s → 166.5 s)
   thanks to early-exit Dijkstra. **3.3×** on a realistic 4096² Sentinel-1-style
   mixed-coherence scene.
+- vs snaphu (same M-series): **177×** on noisy γ=0.7 2048², **406×** on clean 2048², **14.8×** on very-noisy γ=0.3 1024².
 - **Dijkstra is still ≥ 95 %** of time on the residue-dense regime;
   it's the remaining lever for further speedups. Parallel Dial is implemented
   (`WHIRLWIND_DIJKSTRA=dial-par`) but isn't faster than serial in practice —
@@ -83,15 +84,28 @@ single-scene comparison, `scripts/heavy_scene.py` + `scripts/bench_heavy.py`
 build and time a deliberately-hard scene — useful for measuring future
 optimization work where ~50 ms benchmarks are too noisy.
 
-Headline from a recent run on M-series (numbers are from before the early-exit
-pass; re-run after that change shrinks the ww times another 1.5–7× depending
-on regime — see `docs/PERFORMANCE.md`):
+Headline from the most recent run on M-series (post-early-exit + inner-loop
+micro-opts; see `docs/PERFORMANCE.md` for what changed):
 
-| Scene | size | whirlwind-rs | snaphu | kamui (PUMA) | ww vs snaphu |
+| Scene | size | whirlwind-rs | snaphu | ww vs snaphu |
+|---|---|---:|---:|---:|
+| clean ramp | 2048x2048 | 0.057 s | 23.09 s | **406×** |
+| noisy ramp γ=0.7 | 2048x2048 | 0.086 s | 15.20 s | **177×** |
+| very noisy ramp γ=0.3 | 1024x1024 | 1.094 s | 16.21 s | **14.8×** |
+
+(kamui's PUMA was excluded from this run — it takes 4+ minutes on the 1024²
+very-noisy case and was swap-thrashing on this machine. Previously-measured
+kamui numbers are in the earlier `BENCH_RESULTS.json`.)
+
+For the **long-running** worst-case bench (5+ minutes on the v1 code; used
+to measure Dijkstra-level changes where short benches are too noisy):
+
+| Scene | size | residues | v1 serial Dial | new serial Dial | speedup |
 |---|---|---:|---:|---:|---:|
-| clean ramp | 2048x2048 | 0.063 s | 20.06 s  | 117.7 s | **320×** |
-| noisy ramp γ=0.7 | 2048x2048 | 0.412 s | 12.42 s  | 122.9 s | 30×    |
-| very noisy ramp γ=0.3 | 1024x1024 | 2.206 s | 14.54 s | 229.9 s | 6.6×    |
+| 8192² uniform γ=0.3 | 8192x8192 | 10.65 M | 312.6 s | **166.5 s** | **1.88×** |
+| 4096² mixed-coherence (patchy γ map) | 4096x4096 | 1.16 M |  28.9 s |   **8.7 s** | **3.34×** |
+
+Reproduce: `python scripts/heavy_scene.py --size 8192 --flavor noisy && python scripts/bench_heavy.py --scene /tmp/heavy_scene.npz --no-snaphu --only "dial serial"`.
 
 (`scripts/bench_vs_snaphu.py` is a simpler 2-library version kept for the
 side-by-side PNG output it produces; `bench.py` is the one to use for tables.)
