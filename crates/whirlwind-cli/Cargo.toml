@@ -1,0 +1,20 @@
+[package]
+name = "whirlwind-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "whirlwind"
+path = "src/main.rs"
+
+[dependencies]
+whirlwind-core = { path = "../whirlwind-core" }
+ndarray.workspace = true
+num-complex.workspace = true
+anyhow.workspace = true
+rand.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+tiff = "0.10"

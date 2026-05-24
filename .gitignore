@@ -1,0 +1,10 @@
+target/
+**/*.rs.bk
+*.pdb
+.venv/
+__pycache__/
+*.pyc
+*.so
+*.dylib
+scripts/out/
+.DS_Store

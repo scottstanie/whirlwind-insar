@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/whirlwind-core",
+    "crates/whirlwind-cli",
+    "crates/whirlwind-py",
+]
+# whirlwind-py is built via `maturin develop`, not `cargo build` — pyo3's
+# extension-module feature relies on maturin to link against libpython.
+default-members = [
+    "crates/whirlwind-core",
+    "crates/whirlwind-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Scott Staniewicz <scott.stanie@utexas.edu>"]
+repository = "https://github.com/scottstanie/whirlwind-rs"
+description = "Bayesian min-cost-flow phase unwrapper for InSAR (Rust rewrite of Whirlwind)"
+
+[workspace.dependencies]
+ndarray = { version = "0.16", features = ["rayon"] }
+num-complex = "0.4"
+rayon = "1.10"
+bitvec = "1.0"
+rand = "0.8"
+rand_distr = "0.4"
+thiserror = "2.0"
+anyhow = "1.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = false
+
+[profile.bench]
+inherits = "release"

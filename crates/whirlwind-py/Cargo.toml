@@ -1,0 +1,19 @@
+[package]
+name = "whirlwind-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+whirlwind-core = { path = "../whirlwind-core" }
+ndarray.workspace = true
+num-complex.workspace = true
+rand.workspace = true
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39"] }
+numpy = "0.28"
