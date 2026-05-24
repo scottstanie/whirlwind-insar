@@ -24,7 +24,7 @@ fn max_abs_err(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
 
 #[test]
 fn diagonal_ramp_512() {
-    // The SNAPHU-style test the original whirlwind failed on. 512x512 ramp from
+    // SNAPHU-style smooth-ramp regression test. 512x512 diagonal ramp from
     // -3π to +3π; coherence = 1.0 everywhere.
     let truth = simulate::diagonal_ramp((512, 512));
     let wrapped = simulate::wrap_phase(&truth);

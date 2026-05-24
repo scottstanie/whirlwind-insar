@@ -517,39 +517,42 @@ The integration uses **double precision accumulation** to minimize numerical err
 
 ## 9. Implementation Details
 
-### 9.1 Language Architecture
+### 9.1 Implementation Architecture
 
-Whirlwind uses a **hybrid Python/C++ architecture**:
+Whirlwind is implemented in **Rust**, with a small Python binding layer:
 
-- **Python frontend** (`src/whirlwind/`): High-level interface, cost computation, I/O
-- **C++ backend** (`ext/libwhirlwind/`): Performance-critical graph/network algorithms
-- **nanobind**: Python bindings for C++ code
+- **`crates/whirlwind-core`** (Rust): All algorithms — residue computation,
+  cost build, min-cost flow solver, integration, synthetic-ifg simulator.
+  Parallelism via `rayon`.
+- **`crates/whirlwind-cli`** (Rust): `whirlwind` binary, `simulate` and
+  `unwrap` subcommands.
+- **`crates/whirlwind-py`** (`pyo3`/`maturin`): Python bindings, importable
+  as `whirlwind_rs`. Exposes `unwrap`, `compute_residues`, `simulate_ifg`,
+  `wrap_phase`, `diagonal_ramp`.
 
 ### 9.2 Key Data Structures
 
 #### 9.2.1 Rectangular Grid Graph
 
-```cpp
-template<Size num_parallel_edges, class Dim>
-class RectangularGridGraph {
-    Dim num_rows_;  // Number of rows of nodes
-    Dim num_cols_;  // Number of columns of nodes
-    // 4-connected: each node has up to 4 neighbors
-    // Residual graph has num_parallel_edges=2 (forward + reverse)
-};
+```rust
+pub struct RectangularGridGraph {
+    pub num_rows: usize,  // number of node rows  (= pixel rows + 1)
+    pub num_cols: usize,  // number of node cols  (= pixel cols + 1)
+    // 4-connected: each node has up to 4 neighbors.
+    // Residual graph has 2 parallel arcs per edge (forward + reverse).
+}
 ```
 
 #### 9.2.2 Network
 
-```cpp
-template<class Graph, class Cost, class Flow, 
-         template<class> class Container, class Mixin>
-class Network : public Mixin {
-    container_type<flow_type> node_excess_;     // b_i (supply/demand = residues)
-    container_type<cost_type> node_potential_;  // π_i (dual variables)
-    container_type<cost_type> arc_cost_;        // c_ij (includes reverse arc costs)
-    // Flow stored via Mixin (UnitCapacityMixin)
-};
+```rust
+pub struct Network<'a> {
+    graph: &'a RectangularGridGraph,
+    pub excess: Vec<i32>,       // b_i (supply/demand = residues)
+    pub potential: Vec<i64>,    // π_i (dual variables, i64 to avoid overflow)
+    pub cost_fwd: Vec<i32>,     // c_ij for forward arcs (reverse = -fwd)
+    pub is_saturated: BitVec,   // unit-capacity flow stored as a bitvec
+}
 ```
 
 #### 9.2.3 Dijkstra Variants
@@ -563,33 +566,26 @@ The algorithm supports two Dijkstra implementations:
 
 #### 9.3.1 Cost Scaling
 
-Costs are scaled by 100 and converted to integers for faster Dijkstra:
-
-```python
-cost_int = (100.0 * cost_float).astype(np.int32)
-```
-
-This allows use of Dial's algorithm while maintaining sufficient precision.
+Costs are scaled by `COST_SCALE = 100.0` and stored as `i32`, which lets Dial's
+bucket-queue Dijkstra run in `O(1)` per relax. The scale factor balances
+quantization error (≤ 0.005 per arc) against the largest bucket index Dial
+needs to allocate.
 
 #### 9.3.2 Masked Regions
 
-Masked pixels (invalid data) are handled by setting edge costs to zero:
+Pixel-grid masks (`true` = valid) are propagated into both the residue and
+network stages:
 
-```python
-if mask is not None:
-    mask_dy = logical_and(mask[1:, :], mask[:-1, :])
-    mask_dx = logical_and(mask[:, 1:], mask[:, :-1])
-    
-    cost_dn[mask_dx] = nan
-    cost_up[mask_dx] = nan
-    cost_rt[mask_dy] = nan
-    cost_lt[mask_dy] = nan
-
-# Later: convert NaN to 0
-cost[isnan(cost)] = 0.0
-```
-
-**Note**: Setting masked edge costs to zero makes them "free" to traverse. This is the current implementation behavior. An alternative would be to set very high costs to discourage flow through masked regions.
+- **Residue compute** zeros any residue whose 2×2 pixel loop touches a masked
+  pixel — without this, the arbitrary phase values in masked regions (typically
+  `igram = 0 + 0j` from upstream `nan_to_num`) generate a wall of spurious
+  residues at every mask boundary that dominate the MCF problem.
+- **Network construction** pre-saturates every arc that crosses an invalid
+  pixel-edge, so Dijkstra skips those arcs entirely. This is strictly stronger
+  than just setting edge costs high — saturated arcs are removed from the
+  residual graph rather than merely penalised.
+- **Integration** BFS-walks the valid region from the first valid pixel and
+  leaves masked pixels as `NaN` in the output.
 
 ### 9.4 Performance Characteristics
 
@@ -753,5 +749,4 @@ This **near-zero cost** means the edge doesn't strongly influence the solution, 
 ---
 
 *Document Version: 2.0*  
-*Last Updated: 2025-01-01*  
-*Based on: Whirlwind source code analysis and Geoff's notes*
+*Last Updated: 2026-05-24*

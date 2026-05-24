@@ -58,11 +58,11 @@ pub fn unwrap(
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
 
-    // max_iter=50 (vs the original Whirlwind's 8): per-iteration cost is one
-    // multi-source Dijkstra that batches every source's augmentation, while
-    // the SSP fallback does one Dijkstra *per source*. On very noisy data
-    // (hundreds of thousands of residues), running more PD iters and skipping
-    // SSP entirely is ~6× faster end to end. See `examples/bench_scale.rs`.
+    // max_iter=50: per primal-dual iteration we run one multi-source Dijkstra
+    // that batches every source's augmentation; the SSP fallback does one
+    // Dijkstra *per source*. On very noisy data (hundreds of thousands of
+    // residues) it's ~6× faster end-to-end to run more PD iters and skip
+    // SSP entirely. See `examples/bench_scale.rs`.
     primal_dual::run(&graph, &mut net, 50);
 
     let unw = if mask.is_some() {

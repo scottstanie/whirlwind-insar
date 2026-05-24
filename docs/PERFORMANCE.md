@@ -65,51 +65,18 @@ residue grid (≈ 360 ms / Dijkstra at 2048²), and the number of PD iterations 
 slowly with residue density (14 → 31 iters going from 10K to 666K residues — about
 logarithmic).
 
-## Changes from the v1 release
+## Heavy-scene benchmark
 
-| Change | Effect | Where |
-|---|---|---|
-| Parallel cost build (rayon-iterated rows of the 7×7 box filter and per-arc cost fill, slabbed by direction so each thread writes a disjoint region of the `Vec<i32>`) | Cost stage **3–6×** faster on every size | `crates/whirlwind-core/src/cost/mod.rs` |
-| Residue computation rewritten so each residue row is computed *only* from one pixel row (the curl is deposited at the bottom-right corner of each 2×2 pixel loop) — rows are independent → trivially `par_iter` over residue rows | Residue stage ~**1.3×** faster on noisy 2048² | `crates/whirlwind-core/src/residue.rs` |
-| `Network::new` uses `residues.as_slice().to_vec()` (memcpy) instead of element-by-element fill, and `bitvec![1; n]; sat[..fwd].fill(false)` instead of a per-bit `set` loop | Net stage **~20×** faster on 2048² (32 ms → 1.5 ms) | `crates/whirlwind-core/src/network.rs` |
-| `WHIRLWIND_DEBUG`, `WHIRLWIND_DIJKSTRA`, `WHIRLWIND_LLR_COST` env-var lookups are now cached in `OnceLock`s (was: re-read per Dijkstra call / per arc cost) | Eliminates ~25 syscalls/unwrap; small | `primal_dual.rs`, `shortest_path/mod.rs`, `cost/mod.rs` |
-| Augment-phase cycle dedup: per-iteration `u32` epoch + `Vec<u32>` instead of per-sink heap-allocated `HashSet`; source dedup uses `Vec<bool>` | Augment stage ~**2×** faster on residue-dense inputs | `crates/whirlwind-core/src/primal_dual.rs` |
-| Parallel potential update via `par_iter_mut().zip(par_iter())` | Potential stage ~**1.5×** faster | `primal_dual.rs` |
-| **Early-exit Dijkstra** — stop popping as soon as every deficit sink has been finalized. Cuts the wasted tail of late primal-dual iterations when only a few sinks remain. `ShortestPaths::popped[]` distinguishes finalized vs merely-relaxed nodes; the d_max cap in the potential update uses `popped` so the Ahuja-Magnanti-Orlin invariant still holds. | Dijkstra stage **2× on uniform-noisy 2048²** (11069→5431 ms); **7× on noisy γ=0.7 2048²** (361→13 ms); **3.3× on a realistic 4096² patchy scene** (28.9→8.7 s). | `crates/whirlwind-core/src/shortest_path/{dial,heap}.rs`, `primal_dual.rs`, `ssp.rs` |
-| Parallel max-reduced-cost scan (sets the Dial bucket count) — was a serial O(E) loop per Dijkstra call; now `(0..num_arcs).into_par_iter().max()` | Few ms per Dijkstra call; small but free | `shortest_path/dial.rs` |
-| Scratch buffers (`visited_epoch`, `source_used`, `path_info`, `deficits`) in `primal_dual::run` are now lifted out of the outer iteration loop and reused. Previously each ~67M-element `Vec<u32>` on 8192² was re-allocated every PD iter. | Cuts ~GiBs of alloc churn on multi-iter very-noisy runs; small wall-clock impact | `primal_dual.rs` |
-| Comment fix: swapped axis labels in `box_filter_2d` (no behavior change) | Readability | `cost/mod.rs` |
+For changes that need finer-grained measurement than the small-scene battery
+above, `scripts/heavy_scene.py` builds large noisy ifgs and
+`scripts/bench_heavy.py` times one configuration per subprocess (so the
+`WHIRLWIND_DIJKSTRA` OnceLock isn't pinned to a single backend across runs).
 
-Aggregate end-to-end speedup vs the v1 baseline measured here:
-
-| Scene | OLD total (v1 perf doc) | NEW total | Speedup |
-|---|---:|---:|---:|
-| clean 512²          |    17.4 ms |   6.1 ms | 2.9× |
-| clean 1024²         |    47.6 ms |  16.4 ms | 2.9× |
-| clean 2048²         |   159.5 ms |  50.8 ms | 3.1× |
-| noisy γ=0.7 1024²   |    38.4 ms |  10.5 ms | 3.7× |
-| noisy γ=0.7 2048²   |   510.3 ms |  59.7 ms | **8.5×** |
-| very noisy 512²     |   475.0 ms | 163.1 ms | 2.9× |
-| very noisy 1024²    |  3534.2 ms | 913.3 ms | 3.9× |
-| very noisy 2048²    | 21745.4 ms |4848.5 ms | **4.5×** |
-
-The biggest single win is **early-exit Dijkstra**, especially on inputs where the
-sinks (deficit residues) cluster spatially. On the noisy γ=0.7 2048² scene, only
-a handful of residues exist and they sit close to each other — every late PD
-iteration is now O(local-frontier) instead of O(grid).
-
-### Heavy-scene benchmark (added after the v1 perf pass)
-
-`scripts/heavy_scene.py` builds large noisy ifgs and `scripts/bench_heavy.py`
-times one configuration per subprocess (so the `WHIRLWIND_DIJKSTRA` OnceLock
-isn't pinned). These two scenes are what the final speedup table above
-extrapolates beyond:
-
-| Scene (4096²+) | v1 serial Dial | new serial Dial | speedup |
-|---|---:|---:|---:|
-| 4096² γ=0.3 uniform (15.9 % residues, "very noisy") |  45.7 s | 23.1 s | 1.97× |
-| 4096² patchy γ (mixed γ=0.30–0.90, 6.9 % residues, "realistic Sentinel-1") |  28.9 s |  8.7 s | 3.3× |
-| 8192² γ=0.3 uniform (15.9 % residues, ~2.66M sources + 2.66M sinks) | 312.6 s | 166.5 s | 1.88× |
+| Scene (4096²+) | wall time | notes |
+|---|---:|---|
+| 4096² γ=0.3 uniform | 23.1 s | 15.9 % residues, "very noisy" |
+| 4096² patchy γ (mixed γ=0.30–0.90) | 8.7 s | 6.9 % residues, "realistic Sentinel-1" |
+| 8192² γ=0.3 uniform | 166.5 s | 15.9 % residues, ~2.66 M sources + 2.66 M sinks |
 
 Run yourself with:
 
@@ -119,9 +86,9 @@ python scripts/heavy_scene.py --size 4096 --flavor noisy --low 0.30 \
 python scripts/bench_heavy.py --scene /tmp/heavy_4k_noisy.npz --no-snaphu
 ```
 
-The 8192² case is the one that actually exercises the worst-case primal-dual
-loop (5+ minutes on the v1 code) and is the easiest reproducible target for
-measuring future optimization work.
+The 8192² case exercises the worst-case primal-dual loop (multi-minute wall
+time) and is the easiest reproducible target when small benches are too
+noisy to measure a change.
 
 ### Mask acceleration (Sentinel-1 land/water)
 
@@ -185,7 +152,7 @@ Where parallelism actually pays off in the primal-dual loop right now:
 
 - **Max-reduced-cost scan** (sets the Dial bucket count) — parallel over arcs.
 - **Potential update** — parallel `par_iter_mut().zip(par_iter())`.
-- **Cost build, residue compute** — already parallel from the v1 perf pass.
+- **Cost build, residue compute** — already parallel.
 
 What *would* help in Dijkstra proper (but is significant work):
 - A true **Δ-stepping** implementation with `AtomicI32` packed `(dist, pred)`
@@ -204,7 +171,7 @@ much fat on it after early-exit.
 
 ```bash
 cargo run --release --example bench_scale -- --huge       # ~12 seconds total
-WW_MAX_ITER=8 cargo run --release --example bench_scale   # original v1 max_iter
+WW_MAX_ITER=8 cargo run --release --example bench_scale   # cap PD iters lower
 WHIRLWIND_DIJKSTRA=heap   cargo run --release --example bench_scale -- --huge  # heap backend
 WHIRLWIND_DIJKSTRA=dial-par cargo run --release --example bench_scale -- --huge # parallel Dial
 ```

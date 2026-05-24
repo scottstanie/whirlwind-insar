@@ -16,7 +16,7 @@ def _align_to_truth(unw: np.ndarray, truth: np.ndarray) -> np.ndarray:
 
 class TestUnwrap:
     def test_diagonal_ramp_clean(self):
-        """The SNAPHU-style test the original Whirlwind failed."""
+        """SNAPHU-style smooth diagonal-ramp regression test."""
         y, x = np.ogrid[-3:3:512j, -3:3:512j]
         phase = (np.pi * (x + y)).astype(np.float32)
         igram = np.exp(1j * phase).astype(np.complex64)

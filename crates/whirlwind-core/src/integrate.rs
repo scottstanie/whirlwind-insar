@@ -84,7 +84,7 @@ pub fn integrate_with_mask(
     assert_eq!(g.m, m + 1);
     assert_eq!(g.n, n + 1);
 
-    // No mask → fast path matches the original integrate.
+    // No mask → fall back to the unmasked fast path.
     let Some(mask) = mask else {
         return integrate(wrapped_phase, g, net);
     };

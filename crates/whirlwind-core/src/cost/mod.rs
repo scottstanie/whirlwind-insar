@@ -23,8 +23,8 @@ use std::f32::consts::TAU;
 use std::sync::OnceLock;
 
 /// Scale factor used when converting float Carballo costs to integers.
-/// 100 matches the original Python convention. Integer costs enable Dial's
-/// bucket-queue Dijkstra.
+/// Integer costs enable Dial's bucket-queue Dijkstra; 100 keeps the
+/// quantization error ≤ 0.005 per arc.
 pub const COST_SCALE: f32 = 100.0;
 
 /// Compute 7x7 box-filtered phase gradients (vertical & horizontal).

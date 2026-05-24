@@ -51,11 +51,11 @@ pub fn compute_with_mask(
 
     if m >= 2 && n >= 2 {
         // Per residue row r (1..=m), all contributions come from the pixel-2x2
-        // loop with bottom-right at (r, c). We rewrite the original three-cell-
-        // per-loop deposit (which writes into two adjacent residue rows) as a
-        // single deposit at the bottom-right residue corner — identical totals,
-        // verified by tracing the 2x2 case (see commit history for the
-        // accounting argument). This makes each residue row independent.
+        // loop with bottom-right at (r, c). Depositing the whole loop's curl at
+        // that single corner (instead of splitting it across two adjacent
+        // residue rows) gives the same totals — verified by tracing the 2x2
+        // case — and makes each residue row independent, so we can par_iter
+        // over rows.
         //
         // R[r, c] = clockwise curl of integer-rounded gradients around the
         //          2x2 pixel loop {(r-1, c-1), (r-1, c), (r, c), (r, c-1)}.
@@ -95,8 +95,8 @@ pub fn compute_with_mask(
 
     // Zero the outermost row/col — those positions correspond to *incomplete*
     // 2x2 circulations (partial loops at the image edge), not real phase
-    // singularities. On a smooth wrapped ramp this kills the spurious 12
-    // boundary residues that the original Whirlwind also fought with.
+    // singularities. On a smooth wrapped ramp this kills the 12 spurious
+    // boundary residues that the partial loops would otherwise generate.
     //
     // For real noisy data, real residues are interior; zeroing the outer
     // boundary may introduce a small charge imbalance, which we handle
@@ -131,8 +131,8 @@ mod tests {
         }
     }
 
-    /// Reference implementation (the original three-cell-per-loop accumulator)
-    /// used only by the regression test below.
+    /// Naive reference implementation (three-cell-per-loop accumulator) used
+    /// only by the regression test below to pin the par_iter version's output.
     fn compute_reference(wp: ArrayView2<f32>) -> Array2<i32> {
         let (m, n) = wp.dim();
         let mut out = Array2::<i32>::zeros((m + 1, n + 1));
@@ -203,8 +203,8 @@ mod tests {
 
     #[test]
     fn smooth_ramp_has_no_residues() {
-        // Diagonal phase ramp — boundary-zero kills the 12 spurious residues
-        // the original Whirlwind also fought with. Should leave zero residues.
+        // Diagonal phase ramp — boundary-zero kills the 12 spurious
+        // partial-loop residues. Should leave zero residues.
         let n = 64;
         let mut phase = Array2::<f32>::zeros((n, n));
         for i in 0..n {
