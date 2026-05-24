@@ -11,14 +11,21 @@ for the algorithm theoretical basis.
 - `crates/whirlwind-cli` — `whirlwind` CLI binary (`simulate` + `unwrap` subcommands).
 - `crates/whirlwind-py` — `pyo3`/`maturin` Python bindings, importable as `whirlwind_rs`.
 
+## Prerequisites
+
+- Rust ≥ 1.85 (the workspace is on edition 2024). `rustup update stable`.
+- Python ≥ 3.9 with `pip install maturin numpy` for the Python bindings.
+- Optional, for the cross-library bench (`scripts/bench.py`):
+  `pip install snaphu kamui rasterio matplotlib`.
+
 ## Quickstart
 
 ```bash
 # Run all the Rust tests (unit + integration).
 cargo test --workspace
 
-# Build + install the Python module.
-cd crates/whirlwind-py && maturin develop --release && cd ../..
+# Build + install the Python module in editable mode.
+(cd crates/whirlwind-py && maturin develop --release)
 
 # Run the Python test battery.
 python -m pytest python/tests
@@ -28,44 +35,54 @@ cargo run --release -p whirlwind-cli -- simulate --shape 256x256 --out /tmp/sim
 cargo run --release -p whirlwind-cli -- unwrap \
     --igram-re /tmp/sim/igram_re.tif --igram-im /tmp/sim/igram_im.tif \
     --cor     /tmp/sim/cor.tif --nlooks 10 --out /tmp/sim/unw.tif
-
-# Run on real interferograms and save side-by-side PNGs.
-python scripts/run_real_data.py           # Palos-Verdes (Sentinel-1)
-python scripts/run_real_data.py --rosamond # + Capella Rosamond
 ```
+
+## Environment variables
+
+All optional; defaults are sensible.
+
+| Var | Default | Effect |
+|---|---|---|
+| `WHIRLWIND_DEBUG` | unset | If set, primal-dual prints per-iteration state to stderr. |
+| `WHIRLWIND_LLR_COST` | unset | Use the Carballo log-likelihood cost (negative-cost-tolerant; currently needs Bellman-Ford preprocessing — not enabled). Default is the SNAPHU-style non-negative cost. |
+| `WHIRLWIND_DIJKSTRA` | `dial` | Select the multi-source Dijkstra backend: `dial` (default, serial Dial's bucket queue), `heap` (binary heap, reference), `dial-par` (rayon-parallel Dial — see `docs/PERFORMANCE.md`; not faster than serial on workloads we measured). |
+| `WW_MAX_ITER` | `50` | Primal-dual max iterations before SSP fall-back. Used by `examples/bench_scale.rs`. |
 
 ## Performance & memory
 
 See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for full per-stage timings,
-hotspot analysis, and memory model. Headline:
+hotspot analysis, and memory model. Headline (M-series, 8 perf cores, release build,
+post-rayon perf pass):
 
-- **~25 Mpx/s** on clean / lightly-noisy data
-- **0.2–0.8 Mpx/s** on residue-dense scenes; **97 %** of the time is Dijkstra in
-  the primal-dual loop
+- **~45–55 Mpx/s** on clean / lightly-noisy data (was ~25 Mpx/s before parallelizing
+  the cost build and box filter).
+- **0.5–1.0 Mpx/s** on residue-dense scenes; **97 %** of the time is now Dijkstra
+  inside the primal-dual loop. Parallel Dial is implemented but not faster than
+  serial on the workloads we measured — see `docs/PERFORMANCE.md` for why.
 - Memory **~115 bytes / pixel** working set:
   | image | pixels | RAM |
   |---|---:|---:|
   | 1024² | 1 Mpx | 118 MiB |
   | 2048² | 4 Mpx | 472 MiB |
   | Sentinel-1 IW (25K×4K) | 100 Mpx | ~11.5 GiB |
-- **6–12× speed-up** on residue-dense inputs from a one-line change (`max_iter` 8 → 50);
-  primal-dual now finishes natively with 0 SSP fall-back iterations on every scene we tested
 
-Reproduce: `cargo run --release --example bench_scale -- --huge`.
+Reproduce per-stage timings: `cargo run --release --example bench_scale -- --huge`.
 
-## Benchmarks vs SNAPHU
+## Benchmarks vs SNAPHU and kamui (PUMA)
 
-`python scripts/bench_vs_snaphu.py` (mac, M-series, release build):
+`python scripts/bench.py` is the canonical cross-library benchmark; it writes
+[`scripts/out/BENCH_RESULTS.md`](scripts/out/BENCH_RESULTS.md) and `.json` and is
+fully reproducible (single command, fixed seeds). Headline from a recent run on
+M-series:
 
-| Scene                          | whirlwind-rs | snaphu  | speedup |
-| ------------------------------ | -----------: | ------: | ------: |
-| diagonal ramp 512x512          |     0.013 s  | 0.355 s | 26.7×   |
-| noisy bump 256x256             |     0.005 s  | 0.053 s | 10.2×   |
-| Rosamond Capella 512x512 (low coh) |     0.267 s  | 1.337 s |  5.0×   |
-| Palos-Verdes S1 (~155x229, masked) |     0.301 s  | 0.152 s |  0.5×   |
+| Scene | size | whirlwind-rs | snaphu | kamui (PUMA) | ww vs snaphu |
+|---|---|---:|---:|---:|---:|
+| clean ramp | 2048x2048 | 0.063 s | 20.06 s  | 117.7 s | **320×** |
+| noisy ramp γ=0.7 | 2048x2048 | 0.412 s | 12.42 s  | 122.9 s | 30×    |
+| very noisy ramp γ=0.3 | 1024x1024 | 2.206 s | 14.54 s | 229.9 s | 6.6×    |
 
-Whirlwind-rs is faster on synthetic and noisy scenes; SNAPHU wins on the small masked
-Palos-Verdes case (most of our 0.3 s there is fixed setup, not flow solving).
+(`scripts/bench_vs_snaphu.py` is a simpler 2-library version kept for the
+side-by-side PNG output it produces; `bench.py` is the one to use for tables.)
 
 ## Implementation notes
 

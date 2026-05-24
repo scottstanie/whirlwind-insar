@@ -15,9 +15,12 @@ pub mod lee_pdf;
 pub mod lut;
 
 use crate::grid::RectangularGridGraph;
-use ndarray::{Array2, ArrayView2};
+use ndarray::{Array2, ArrayView2, Axis};
+use ndarray::parallel::prelude::*;
 use num_complex::Complex32;
+use rayon::prelude::*;
 use std::f32::consts::TAU;
+use std::sync::OnceLock;
 
 /// Scale factor used when converting float Carballo costs to integers.
 /// 100 matches the original Python convention. Integer costs enable Dial's
@@ -32,56 +35,74 @@ pub fn smooth_phase_gradients(
     let (m, n) = igram.dim();
     // Vertical gradient: angle(igram[i+1, j] * conj(igram[i, j])), shape (m-1, n).
     let mut phase_dy = Array2::<f32>::zeros((m - 1, n));
-    for i in 0..m - 1 {
-        for j in 0..n {
-            let z = igram[(i + 1, j)] * igram[(i, j)].conj();
-            phase_dy[(i, j)] = z.arg();
-        }
-    }
+    phase_dy
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n {
+                let z = igram[(i + 1, j)] * igram[(i, j)].conj();
+                row[j] = z.arg();
+            }
+        });
     // Horizontal gradient: angle(igram[i, j+1] * conj(igram[i, j])), shape (m, n-1).
     let mut phase_dx = Array2::<f32>::zeros((m, n - 1));
-    for i in 0..m {
-        for j in 0..n - 1 {
-            let z = igram[(i, j + 1)] * igram[(i, j)].conj();
-            phase_dx[(i, j)] = z.arg();
-        }
-    }
+    phase_dx
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n - 1 {
+                let z = igram[(i, j + 1)] * igram[(i, j)].conj();
+                row[j] = z.arg();
+            }
+        });
     let phase_dy_s = box_filter_2d(phase_dy.view(), 7);
     let phase_dx_s = box_filter_2d(phase_dx.view(), 7);
     (phase_dy_s, phase_dx_s)
 }
 
 /// Separable box filter with size `k` (must be odd), nearest-edge replication.
+/// O(k) per output pixel (no rolling-sum trick — kept simple; cost is ~1% of total).
 pub fn box_filter_2d(a: ArrayView2<f32>, k: usize) -> Array2<f32> {
     assert!(k % 2 == 1);
     let half = (k / 2) as isize;
     let (m, n) = a.dim();
-    let mut tmp = Array2::<f32>::zeros((m, n));
     let inv_k = 1.0 / (k as f32);
 
-    // Filter along columns (vertical pass).
-    for i in 0..m {
-        for j in 0..n {
-            let mut s = 0.0;
-            for dj in -half..=half {
-                let jj = ((j as isize + dj).clamp(0, n as isize - 1)) as usize;
-                s += a[(i, jj)];
+    // Horizontal pass: each output row depends only on input row i.
+    let mut tmp = Array2::<f32>::zeros((m, n));
+    tmp.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n {
+                let mut s = 0.0;
+                for dj in -half..=half {
+                    let jj = ((j as isize + dj).clamp(0, n as isize - 1)) as usize;
+                    s += a[(i, jj)];
+                }
+                row[j] = s * inv_k;
             }
-            tmp[(i, j)] = s * inv_k;
-        }
-    }
-    // Filter along rows (horizontal pass).
+        });
+
+    // Vertical pass: each output column depends only on input column j.
+    // We still write row-by-row to keep the output array layout-friendly.
+    let tmp_view = tmp.view();
     let mut out = Array2::<f32>::zeros((m, n));
-    for i in 0..m {
-        for j in 0..n {
-            let mut s = 0.0;
-            for di in -half..=half {
-                let ii = ((i as isize + di).clamp(0, m as isize - 1)) as usize;
-                s += tmp[(ii, j)];
+    out.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n {
+                let mut s = 0.0;
+                for di in -half..=half {
+                    let ii = ((i as isize + di).clamp(0, m as isize - 1)) as usize;
+                    s += tmp_view[(ii, j)];
+                }
+                row[j] = s * inv_k;
             }
-            out[(i, j)] = s * inv_k;
-        }
-    }
+        });
     out
 }
 
@@ -107,33 +128,47 @@ pub fn compute_carballo_costs(
 
     // Per-edge coherence (minimum of the two endpoint pixels).
     let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase)); // vertical edges in pixel space
-    for i in 0..m_phase - 1 {
-        for j in 0..n_phase {
-            cor_dy[(i, j)] = corr[(i, j)].min(corr[(i + 1, j)]);
-        }
-    }
+    cor_dy
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n_phase {
+                row[j] = corr[(i, j)].min(corr[(i + 1, j)]);
+            }
+        });
     let mut cor_dx = Array2::<f32>::zeros((m_phase, n_phase - 1)); // horizontal edges
-    for i in 0..m_phase {
-        for j in 0..n_phase - 1 {
-            cor_dx[(i, j)] = corr[(i, j)].min(corr[(i, j + 1)]);
-        }
-    }
+    cor_dx
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n_phase - 1 {
+                row[j] = corr[(i, j)].min(corr[(i, j + 1)]);
+            }
+        });
     let mask_dy = mask.map(|m_| {
         let mut out = Array2::<bool>::from_elem((m_phase - 1, n_phase), true);
-        for i in 0..m_phase - 1 {
-            for j in 0..n_phase {
-                out[(i, j)] = m_[(i, j)] && m_[(i + 1, j)];
-            }
-        }
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, mut row)| {
+                for j in 0..n_phase {
+                    row[j] = m_[(i, j)] && m_[(i + 1, j)];
+                }
+            });
         out
     });
     let mask_dx = mask.map(|m_| {
         let mut out = Array2::<bool>::from_elem((m_phase, n_phase - 1), true);
-        for i in 0..m_phase {
-            for j in 0..n_phase - 1 {
-                out[(i, j)] = m_[(i, j)] && m_[(i, j + 1)];
-            }
-        }
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, mut row)| {
+                for j in 0..n_phase - 1 {
+                    row[j] = m_[(i, j)] && m_[(i, j + 1)];
+                }
+            });
         out
     });
 
@@ -150,79 +185,119 @@ pub fn compute_carballo_costs(
     // (avoid unwrapping in smooth interior). We still consume `lut` lazily so
     // the analytical Lee PDF code path stays exercised by tests; the LLR is
     // retained behind a `WHIRLWIND_LLR_COST=1` env knob for experiments.
-    let use_llr = std::env::var("WHIRLWIND_LLR_COST").is_ok();
+    let use_llr = use_llr_cost();
     let lut = lut::get_or_build(nlooks);
+
+    // Per-arc cost as a closure; reads `lut` (Sync) and a copied `use_llr` bool.
     let cost_dir = |alpha: f32, gamma: f32| -> f32 {
         if use_llr {
             let p0 = lut.eval(alpha, gamma);
             let p1 = lut.eval(alpha - TAU, gamma);
             -((p1.max(1e-30)).ln() - (p0.max(1e-30)).ln())
         } else {
-            let _ = lut; // keep alive
             let pi = std::f32::consts::PI;
             (gamma * (pi - alpha.abs())).max(0.0)
         }
     };
 
-    // Allocate cost array.
+    // Allocate the unified arc-cost array and split it into the 4 forward-direction
+    // slabs + 1 reverse slab. Each slab is a disjoint &mut [i32], so we can fill
+    // them in parallel without aliasing. Layout (see `crate::grid`):
+    //   [0,        n_v)              DOWN
+    //   [n_v,      2*n_v)            UP
+    //   [2*n_v,    2*n_v + n_h)      RIGHT
+    //   [2*n_v + n_h, num_forward)   LEFT
+    //   [num_forward, 2*num_forward) reverse partners (cost = -forward)
     let mut cost = vec![0_i32; g.num_arcs()];
+    let (forward, reverse) = cost.split_at_mut(g.num_forward);
+    let (down_slab, rest) = forward.split_at_mut(g.n_v);
+    let (up_slab, rest) = rest.split_at_mut(g.n_v);
+    let (right_slab, left_slab) = rest.split_at_mut(g.n_h);
 
-    let store = |cost: &mut [i32], arc: Option<usize>, c: f32| {
-        if let Some(a) = arc {
-            cost[a] = (c * COST_SCALE).round() as i32;
-        }
-    };
+    let phase_dy_s_v = phase_dy_s.view();
+    let phase_dx_s_v = phase_dx_s.view();
+    let cor_dy_v = cor_dy.view();
+    let cor_dx_v = cor_dx.view();
+    let mask_dy_ref = mask_dy.as_ref().map(|a| a.view());
+    let mask_dx_ref = mask_dx.as_ref().map(|a| a.view());
 
-    // Iterate over each (vertical) pixel edge (i in 0..m_phase-1, j in 0..n_phase).
-    // The corresponding residue-grid arcs are RIGHT and LEFT between residues
-    // (i+1, j) and (i+1, j+1). (A vertical pixel-edge → horizontal residue-arc.)
-    for i in 0..m_phase - 1 {
-        for j in 0..n_phase {
-            let alpha = phase_dy_s[(i, j)];
-            let gamma = cor_dy[(i, j)];
-            let masked = mask_dy
-                .as_ref()
-                .map(|mm| !mm[(i, j)])
-                .unwrap_or(false);
-            let (c_rt, c_lt) = if masked {
-                (0.0, 0.0)
-            } else {
-                (cost_dir(-alpha, gamma), cost_dir(alpha, gamma))
-            };
-            // Residue node coords: (i+1, j) → (i+1, j+1) is the RIGHT direction.
-            let r = g.right_arc(i + 1, j);
-            let l = g.left_arc(i + 1, j + 1);
-            store(&mut cost, r, c_rt);
-            store(&mut cost, l, c_lt);
-        }
-    }
+    // RIGHT / LEFT slabs come from vertical pixel edges (alpha = phase_dy).
+    //   right_arc(i+1, j)     → right_slab[(i+1)*stride_h + j]
+    //   left_arc(i+1, j+1)    → left_slab [(i+1)*stride_h + j]
+    // Skip residue row 0 so chunk index = pixel-edge row i; both slabs have
+    // m grid rows × stride_h cells; we touch rows 1..m_phase (= rows 0..m_phase-1
+    // of the body view).
+    let stride_h = g.n - 1; // = n_phase
+    let right_body = &mut right_slab[stride_h..];
+    let left_body = &mut left_slab[stride_h..];
+    right_body
+        .par_chunks_mut(stride_h)
+        .zip(left_body.par_chunks_mut(stride_h))
+        .enumerate()
+        .for_each(|(i, (right_row, left_row))| {
+            if i >= m_phase - 1 {
+                return; // residue rows past last pixel-edge row stay zero
+            }
+            for j in 0..n_phase {
+                let alpha = phase_dy_s_v[(i, j)];
+                let gamma = cor_dy_v[(i, j)];
+                let masked = mask_dy_ref
+                    .as_ref()
+                    .map(|mm| !mm[(i, j)])
+                    .unwrap_or(false);
+                let (c_rt, c_lt) = if masked {
+                    (0.0, 0.0)
+                } else {
+                    (cost_dir(-alpha, gamma), cost_dir(alpha, gamma))
+                };
+                right_row[j] = (c_rt * COST_SCALE).round() as i32;
+                left_row[j] = (c_lt * COST_SCALE).round() as i32;
+            }
+        });
 
-    // Iterate over each horizontal pixel edge (i in 0..m_phase, j in 0..n_phase-1).
-    // Corresponding residue arcs are DOWN and UP between residues (i, j+1) and (i+1, j+1).
-    for i in 0..m_phase {
-        for j in 0..n_phase - 1 {
-            let alpha = phase_dx_s[(i, j)];
-            let gamma = cor_dx[(i, j)];
-            let masked = mask_dx
-                .as_ref()
-                .map(|mm| !mm[(i, j)])
-                .unwrap_or(false);
-            let (c_dn, c_up) = if masked {
-                (0.0, 0.0)
-            } else {
-                (cost_dir(alpha, gamma), cost_dir(-alpha, gamma))
-            };
-            let d = g.down_arc(i, j + 1);
-            let u = g.up_arc(i + 1, j + 1);
-            store(&mut cost, d, c_dn);
-            store(&mut cost, u, c_up);
-        }
-    }
+    // DOWN / UP slabs come from horizontal pixel edges (alpha = phase_dx).
+    //   down_arc(i,   j+1)  → down_slab[i * stride_v + (j+1)]   for i ∈ [0, m_phase)
+    //   up_arc  (i+1, j+1)  → up_slab  [i * stride_v + (j+1)]   for i ∈ [0, m_phase)
+    // Both slabs have m_phase rows of width stride_v.
+    let stride_v = g.n; // = n_phase + 1
+    down_slab
+        .par_chunks_mut(stride_v)
+        .zip(up_slab.par_chunks_mut(stride_v))
+        .enumerate()
+        .for_each(|(i, (down_row, up_row))| {
+            for j in 0..n_phase - 1 {
+                let alpha = phase_dx_s_v[(i, j)];
+                let gamma = cor_dx_v[(i, j)];
+                let masked = mask_dx_ref
+                    .as_ref()
+                    .map(|mm| !mm[(i, j)])
+                    .unwrap_or(false);
+                let (c_dn, c_up) = if masked {
+                    (0.0, 0.0)
+                } else {
+                    (cost_dir(alpha, gamma), cost_dir(-alpha, gamma))
+                };
+                let col = j + 1;
+                down_row[col] = (c_dn * COST_SCALE).round() as i32;
+                up_row[col] = (c_up * COST_SCALE).round() as i32;
+            }
+        });
 
-    // Residual reverse arcs: cost = -forward_cost.
-    for a in 0..g.num_forward {
-        cost[a + g.num_forward] = -cost[a];
-    }
+    // Residual reverse arcs: cost = -forward_cost (parallel copy).
+    reverse
+        .par_chunks_mut(8192)
+        .zip(forward.par_chunks(8192))
+        .for_each(|(rev_chunk, fwd_chunk)| {
+            for (r, f) in rev_chunk.iter_mut().zip(fwd_chunk.iter()) {
+                *r = -*f;
+            }
+        });
 
     cost
+}
+
+/// Cached env-var lookup for the LLR-cost toggle. Read once per process.
+fn use_llr_cost() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_LLR_COST").is_ok())
 }

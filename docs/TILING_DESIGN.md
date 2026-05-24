@@ -1,5 +1,24 @@
 # Tiling for whirlwind-rs — design + artifact analysis
 
+> **Update (2026-05):** Stage 1 (naive overlap-median stitch) is **not** being
+> pursued. Reason: simple overlap merging has a well-known failure mode on
+> rugged scenes (Chen & Zebker 2002, Fig 7) and prior in-house experiments
+> didn't show good results either. Instead, the first parallelization effort
+> stayed *inside* the existing single-piece solver — rayon-ifying the cost
+> build, residue computation, potential update, and network construction.
+> Those gave a **3-4× speedup on small/clean scenes** and a **1.7-1.9× speedup
+> on residue-dense scenes** (the latter mostly from non-Dijkstra cleanups;
+> see `docs/PERFORMANCE.md`).
+>
+> The Dijkstra step itself was attempted in parallel (rayon phase-1/phase-2
+> Dial; see `WHIRLWIND_DIJKSTRA=dial-par`) and was **not** faster than serial
+> on the workloads we measured. The serial bucket queue is hard to beat at
+> these problem sizes. Stage 2 (per-region MCF) remains an option for cases
+> where naive stitching genuinely can't work.
+>
+> The rest of this document is preserved for reference. The "Recommendation"
+> at the bottom is now superseded by the bullets above.
+
 ## Why we need it
 
 `unwrap()` is single-pass single-piece. The current scaling (per `docs/PERFORMANCE.md`) is **~115 bytes/pixel** working set and **O(R)** per Dijkstra where R is the residue count. For a full Sentinel-1 IW frame (~100 Mpx) that's:

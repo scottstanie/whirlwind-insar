@@ -5,10 +5,14 @@ use crate::grid::RectangularGridGraph;
 use crate::network::Network;
 use crate::shortest_path::dijkstra_multi_source;
 use crate::ssp;
+use rayon::prelude::*;
+use std::sync::OnceLock;
 
-/// If set, primal-dual prints per-iteration state to stderr.
+/// If set, primal-dual prints per-iteration state to stderr. Cached after the
+/// first read so 25+ Dijkstra iters don't each hit the env-var lookup.
 pub fn debug_enabled() -> bool {
-    std::env::var("WHIRLWIND_DEBUG").is_ok()
+    static D: OnceLock<bool> = OnceLock::new();
+    *D.get_or_init(|| std::env::var("WHIRLWIND_DEBUG").is_ok())
 }
 
 /// Cumulative per-stage timings for one `run()` call. Useful for profiling.
@@ -98,15 +102,28 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
         let deficits: Vec<usize> = net.deficit_nodes().collect();
         // Pre-compute actual source per sink by walking pred_node back to the
         // pred_arc<0 node (a seed source). Also remember the path arcs.
+        //
+        // Cycle detection: a `visited_epoch[v] == iter` marks v as on the
+        // current sink's path — replacing the per-sink HashSet (heap alloc
+        // each sink) with one bumped `u32` counter per outer iteration.
+        let n_nodes = g.num_nodes();
         let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new(); // (sink, src, arcs)
+        let mut visited_epoch = vec![0_u32; n_nodes];
+        let mut epoch: u32 = 0;
         for &sink in &deficits {
             if !sp.was_reached(sink) {
                 continue;
             }
+            epoch = epoch.wrapping_add(1);
+            if epoch == 0 {
+                // Counter wrap: reset the table (extremely rare; only after
+                // ~4 billion deficit-walks).
+                visited_epoch.fill(0);
+                epoch = 1;
+            }
             let mut arcs = Vec::new();
-            let mut visited_local = std::collections::HashSet::new();
             let mut cur = sink;
-            visited_local.insert(cur);
+            visited_epoch[cur] = epoch;
             loop {
                 let parc = sp.pred_arc[cur];
                 if parc < 0 {
@@ -114,7 +131,7 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
                 }
                 arcs.push(parc as usize);
                 cur = sp.pred_node[cur] as usize;
-                if !visited_local.insert(cur) {
+                if visited_epoch[cur] == epoch {
                     if dbg && arcs.len() < 30 {
                         eprintln!(
                             "[pd] CYCLE in pred-chain from sink={sink}, revisits cur={cur} after {} hops, dist={}",
@@ -124,6 +141,7 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
                     arcs.clear();
                     break;
                 }
+                visited_epoch[cur] = epoch;
             }
             if !arcs.is_empty() {
                 path_info.push((sink, cur, arcs));
@@ -131,13 +149,14 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
         }
         // Sort by source then path length so closest paths win.
         path_info.sort_by_key(|(_, src, arcs)| (*src, arcs.len()));
-        let mut used_sources: std::collections::HashSet<usize> = Default::default();
+        let mut source_used = vec![false; n_nodes];
         let mut augmented = 0;
 
         for (sink, src, arcs) in path_info.into_iter() {
-            if !used_sources.insert(src) {
+            if source_used[src] {
                 continue;
             }
+            source_used[src] = true;
             for arc in arcs {
                 net.push_unit(g, arc);
             }
@@ -157,15 +176,18 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
         // (Ahuja, Magnanti, Orlin §9: "valid potentials" after a Dijkstra pass.)
         let d_max = sp
             .dist
-            .iter()
+            .par_iter()
             .filter(|&&d| d < i64::MAX)
             .copied()
             .max()
             .unwrap_or(0);
-        for v in 0..g.num_nodes() {
-            let dv = if sp.dist[v] == i64::MAX { d_max } else { sp.dist[v] };
-            net.potential[v] -= dv;
-        }
+        net.potential
+            .par_iter_mut()
+            .zip(sp.dist.par_iter())
+            .for_each(|(pi, &d)| {
+                let dv = if d == i64::MAX { d_max } else { d };
+                *pi -= dv;
+            });
         record_potential(t_pot.elapsed().as_secs_f64() * 1000.0);
 
         iter += 1;

@@ -20,20 +20,27 @@ impl Network {
         assert_eq!(residues.dim(), (g.m, g.n));
         assert_eq!(costs.len(), g.num_arcs());
 
-        let mut excess = Vec::with_capacity(g.num_nodes());
-        for i in 0..g.m {
-            for j in 0..g.n {
-                excess.push(residues[(i, j)]);
+        // The residue ndarray is row-major and contiguous when freshly built;
+        // when it is we can flatten via `as_slice()` for a single memcpy.
+        let excess: Vec<i32> = if let Some(slice) = residues.as_slice() {
+            slice.to_vec()
+        } else {
+            let mut v = Vec::with_capacity(g.num_nodes());
+            for i in 0..g.m {
+                for j in 0..g.n {
+                    v.push(residues[(i, j)]);
+                }
             }
-        }
+            v
+        };
         let cost_fwd = costs[..g.num_forward].to_vec();
 
         // Saturation pattern: forward arcs start unsaturated (capacity 1, flow 0);
-        // reverse arcs start saturated (capacity 0).
-        let mut sat = bitvec![0; g.num_arcs()];
-        for a in g.num_forward..g.num_arcs() {
-            sat.set(a, true);
-        }
+        // reverse arcs start saturated (capacity 0). `bitvec![1; n]` initializes
+        // the whole thing in one pass and we then clear the forward half via
+        // `fill` which is faster than the per-bit `set` loop.
+        let mut sat = bitvec![1; g.num_arcs()];
+        sat[..g.num_forward].fill(false);
 
         Self {
             excess,

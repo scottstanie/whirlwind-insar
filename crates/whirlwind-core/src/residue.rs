@@ -8,7 +8,8 @@
 //! finite-image wrap-line entry/exit, not real singularities. The original
 //! whirlwind applied this fix in Python; we apply it at source.
 
-use ndarray::{Array2, ArrayView2};
+use ndarray::parallel::prelude::*;
+use ndarray::{Array2, ArrayView2, Axis};
 use std::f32::consts::TAU;
 
 /// Round (a-b)/2π to the nearest signed integer in {-1, 0, +1} for two
@@ -21,48 +22,51 @@ fn cycle_diff(a: f32, b: f32) -> i32 {
 /// Compute the residue grid from a wrapped phase array of shape `(m, n)`.
 /// Output shape is `(m+1, n+1)`; boundary (row 0, row m, col 0, col n) is
 /// always zero.
+///
+/// Each residue is the integer winding-number around a 2x2 pixel loop. We
+/// fill residue row `i+1` from pixel row `i` only (using `phi[i, j]`,
+/// `phi[i+1, j]`, `phi[i, j+1]`), so the per-residue-row work is independent
+/// across `i` and we parallelize with rayon.
 pub fn compute(wrapped_phase: ArrayView2<f32>) -> Array2<i32> {
     let (m, n) = wrapped_phase.dim();
     assert!(m >= 1 && n >= 1);
     let mut out = Array2::<i32>::zeros((m + 1, n + 1));
 
-    // Interior 2x2 quads: for each (i, j) in 0..m-1, 0..n-1, accumulate
-    // cycle differences at three of the four surrounding corners.
     if m >= 2 && n >= 2 {
-        for i in 0..m - 1 {
-            for j in 0..n - 1 {
-                let phi_00 = wrapped_phase[(i, j)];
-                let phi_10 = wrapped_phase[(i + 1, j)];
-                let phi_01 = wrapped_phase[(i, j + 1)];
-
-                let di = cycle_diff(phi_00, phi_10);
-                let dj = cycle_diff(phi_01, phi_00);
-
-                out[(i + 1, j)] += di;
-                out[(i, j + 1)] += dj;
-                out[(i + 1, j + 1)] -= di + dj;
-            }
-        }
-    }
-
-    // Last column: m-1 vertical edges.
-    if n >= 1 && m >= 2 {
-        let j = n - 1;
-        for i in 0..m - 1 {
-            let d = cycle_diff(wrapped_phase[(i, j)], wrapped_phase[(i + 1, j)]);
-            out[(i + 1, j)] += d;
-            out[(i + 1, j + 1)] -= d;
-        }
-    }
-
-    // Last row: n-1 horizontal edges.
-    if m >= 1 && n >= 2 {
-        let i = m - 1;
-        for j in 0..n - 1 {
-            let d = cycle_diff(wrapped_phase[(i, j + 1)], wrapped_phase[(i, j)]);
-            out[(i, j + 1)] += d;
-            out[(i + 1, j + 1)] -= d;
-        }
+        // Per residue row r (1..=m), all contributions come from the pixel-2x2
+        // loop with bottom-right at (r, c). We rewrite the original three-cell-
+        // per-loop deposit (which writes into two adjacent residue rows) as a
+        // single deposit at the bottom-right residue corner — identical totals,
+        // verified by tracing the 2x2 case (see commit history for the
+        // accounting argument). This makes each residue row independent.
+        //
+        // R[r, c] = clockwise curl of integer-rounded gradients around the
+        //          2x2 pixel loop {(r-1, c-1), (r-1, c), (r, c), (r, c-1)}.
+        //
+        // (`cycle_diff(a, b) = round((a - b) / 2π)` is the rounded gradient
+        // for the step b → a.)
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(r, mut residue_row)| {
+                if r == 0 || r >= m {
+                    return; // row 0 is boundary; row r needs pixel rows r-1, r
+                }
+                let i = r - 1;
+                for c in 1..n {
+                    let j = c - 1;
+                    let p00 = wrapped_phase[(i, j)];     // (r-1, c-1)
+                    let p01 = wrapped_phase[(i, j + 1)]; // (r-1, c)
+                    let p10 = wrapped_phase[(i + 1, j)]; // (r, c-1)
+                    let p11 = wrapped_phase[(i + 1, j + 1)]; // (r, c)
+                    // CCW (image y-down) loop (r-1,c-1)→(r,c-1)→(r,c)→(r-1,c)→(r-1,c-1):
+                    let s = cycle_diff(p10, p00)
+                        + cycle_diff(p11, p10)
+                        + cycle_diff(p01, p11)
+                        + cycle_diff(p00, p01);
+                    residue_row[c] = s;
+                }
+            });
     }
 
     // Zero the outermost row/col — those positions correspond to *incomplete*
@@ -100,6 +104,76 @@ mod tests {
             y + two_pi
         } else {
             y
+        }
+    }
+
+    /// Reference implementation (the original three-cell-per-loop accumulator)
+    /// used only by the regression test below.
+    fn compute_reference(wp: ArrayView2<f32>) -> Array2<i32> {
+        let (m, n) = wp.dim();
+        let mut out = Array2::<i32>::zeros((m + 1, n + 1));
+        if m >= 2 && n >= 2 {
+            for i in 0..m - 1 {
+                for j in 0..n - 1 {
+                    let di = cycle_diff(wp[(i, j)], wp[(i + 1, j)]);
+                    let dj = cycle_diff(wp[(i, j + 1)], wp[(i, j)]);
+                    out[(i + 1, j)] += di;
+                    out[(i, j + 1)] += dj;
+                    out[(i + 1, j + 1)] -= di + dj;
+                }
+            }
+        }
+        if n >= 1 && m >= 2 {
+            let j = n - 1;
+            for i in 0..m - 1 {
+                let d = cycle_diff(wp[(i, j)], wp[(i + 1, j)]);
+                out[(i + 1, j)] += d;
+                out[(i + 1, j + 1)] -= d;
+            }
+        }
+        if m >= 1 && n >= 2 {
+            let i = m - 1;
+            for j in 0..n - 1 {
+                let d = cycle_diff(wp[(i, j + 1)], wp[(i, j)]);
+                out[(i, j + 1)] += d;
+                out[(i + 1, j + 1)] -= d;
+            }
+        }
+        let (rm, rn) = out.dim();
+        for j in 0..rn {
+            out[(0, j)] = 0;
+            out[(rm - 1, j)] = 0;
+        }
+        for i in 0..rm {
+            out[(i, 0)] = 0;
+            out[(i, rn - 1)] = 0;
+        }
+        out
+    }
+
+    #[test]
+    fn matches_reference_on_random_phase() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xBEEF);
+        let (m, n) = (37, 53);
+        let mut phase = Array2::<f32>::zeros((m, n));
+        for i in 0..m {
+            for j in 0..n {
+                phase[(i, j)] = rng.gen_range(-PI..PI);
+            }
+        }
+        let new = compute(phase.view());
+        let reference = compute_reference(phase.view());
+        for i in 0..m + 1 {
+            for j in 0..n + 1 {
+                assert_eq!(
+                    new[(i, j)],
+                    reference[(i, j)],
+                    "mismatch at ({i}, {j}): new={} ref={}",
+                    new[(i, j)],
+                    reference[(i, j)]
+                );
+            }
         }
     }
 
