@@ -67,3 +67,26 @@ def closure_correct(
 
     Returns a dict; see ClosureResult.
     """
+
+
+class RefineResult(TypedDict):
+    corrected:           NDArray[np.float32]  # (E, m, n)
+    corrections:         NDArray[np.int16]    # (E, m, n) — additive on top of input
+    residual_violations: NDArray[np.uint16]   # (m, n)
+    iterations:          NDArray[np.uint8]    # (m, n)
+
+
+def closure_refine_mcf(
+    unw_stack: NDArray[np.float32],
+    edges_from: NDArray[np.uint32],
+    edges_to: NDArray[np.uint32],
+    n_dates: int,
+    reference: int,
+    crlb_per_date: NDArray[np.float32],
+    tree_priority: NDArray[np.float32] | None = ...,
+    max_iter: int = ...,
+) -> RefineResult:
+    """Cycle-greedy MCF refinement: doesn't implicitly trust the tree.
+
+    Routes integer cycle violations to the highest-σ² edge in each cycle.
+    """

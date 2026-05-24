@@ -179,6 +179,7 @@ def run(
     window: list[int] | None,
     max_igs: int | None,
     n_threads: int,
+    mcf_refine: bool = False,
 ) -> None:
     print(f"[discover] scanning {dolphin}")
     igs, crlb_paths = discover_stack(dolphin)
@@ -277,6 +278,33 @@ def run(
     dt = time.perf_counter() - t0
     print(f"[closure] done in {dt:.1f}s")
 
+    # Optional: cycle-greedy MCF refinement on the raw (NOT tree-corrected)
+    # unwrap stack. See note in closure.rs — with CRLB-priority cycle bases,
+    # greedy MCF and tree-based correction tend to make the same decisions on
+    # the typical case (where errors live on non-tree edges). It is still a
+    # useful diagnostic, and the framework supports future spatial-coupled
+    # variants where it should beat tree-based.
+    mcf = None
+    if mcf_refine:
+        t0 = time.perf_counter()
+        mcf = ww.closure_refine_mcf(
+            unw_stack,          # NOTE: raw 2D-unwrapped stack, not closure["corrected"]
+            edges_from, edges_to, len(dates), reference,
+            crlb_cube,
+            edge_priority,
+            32,
+        )
+        dt = time.perf_counter() - t0
+        print(f"[mcf] refined in {dt:.1f}s; "
+              f"{int((mcf['residual_violations'] > 0).sum()):,} pixels with unresolved cycles")
+        # Compare against tree-based output for a useful diagnostic.
+        diff = np.abs(mcf["corrected"] - closure["corrected"])
+        per_ig_max = diff.max(axis=(1, 2))
+        n_different = int((diff > 1e-3).sum())
+        print(f"[mcf] vs tree-based: {n_different:,} edge-pixels differ by >1e-3 rad")
+        print(f"[mcf] max per-IG diff vs tree-based: median {np.median(per_ig_max):.4g}, "
+              f"max {per_ig_max.max():.4g} rad")
+
     # Per-date posterior variance from the tree.
     # With independent linked-SLC errors, telescoping along the tree gives
     #   var(θ_d) = σ²_ref + σ²_d
@@ -305,11 +333,25 @@ def run(
     prof_unw["dtype"] = "float32"
     prof_unw.pop("nodata", None)
 
+    # Tree-based is ALWAYS the primary output (provably closes every cycle).
+    # MCF, when enabled, is a diagnostic-only second output.
     print(f"[write] saving outputs to {out_dir}")
     for idx, e in enumerate(igs):
         name = f"{e.date_a}_{e.date_b}.unw.tif"
         with rasterio.open(out_dir / "corrected" / name, "w", **prof_unw) as dst:
             dst.write(closure["corrected"][idx], 1)
+
+    if mcf_refine and mcf is not None:
+        (out_dir / "mcf_diagnostic").mkdir(exist_ok=True)
+        for idx, e in enumerate(igs):
+            name = f"{e.date_a}_{e.date_b}.unw.tif"
+            with rasterio.open(out_dir / "mcf_diagnostic" / name, "w", **prof_unw) as dst:
+                dst.write(mcf["corrected"][idx], 1)
+        # Also write the per-pixel residual_violations count.
+        prof_u16 = dict(prof_unw)
+        prof_u16["dtype"] = "uint16"
+        with rasterio.open(out_dir / "mcf_diagnostic" / "residual_violations.tif", "w", **prof_u16) as dst:
+            dst.write(mcf["residual_violations"], 1)
 
     # Closure RMS map.
     with rasterio.open(out_dir / "closure_rms.tif", "w", **prof_unw) as dst:
@@ -373,8 +415,11 @@ def main() -> None:
                    help="cap the number of IGs (handy for fast smoke tests)")
     p.add_argument("--threads", type=int, default=4,
                    help="outer thread pool for I/O overlap (rayon handles inner parallelism)")
+    p.add_argument("--mcf-refine", action="store_true",
+                   help="run cycle-greedy MCF refinement on the raw 2D-unwrapped stack "
+                        "instead of tree-based closure correction (slower, diagnostic)")
     args = p.parse_args()
-    run(args.dolphin, args.out, args.window, args.max_igs, args.threads)
+    run(args.dolphin, args.out, args.window, args.max_igs, args.threads, args.mcf_refine)
 
 
 if __name__ == "__main__":

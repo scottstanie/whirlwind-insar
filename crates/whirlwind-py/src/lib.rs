@@ -152,6 +152,80 @@ fn closure_correct<'py>(
     Ok(dict)
 }
 
+/// Cycle-greedy MCF refinement on an already-unwrapped stack.
+///
+/// Unlike `closure_correct`, this does NOT trust the spanning tree —
+/// integer corrections can land on any edge (including tree edges), routed
+/// to whichever edge has the largest per-pixel CRLB variance in each
+/// closure-violated cycle.
+///
+/// Inputs:
+///   unw_stack       : float32 (E, m, n) — usually closure_correct's output
+///   edges_from      : uint32 (E,) — reference-date index per IG
+///   edges_to        : uint32 (E,) — secondary-date index per IG
+///   n_dates         : int
+///   reference       : int
+///   crlb_per_date   : float32 (D, m, n) — σ²_d(p) per acquisition, in rad²
+///   tree_priority   : float32 (E,) or None — for cycle-basis selection
+///   max_iter        : int — cap on greedy iterations per pixel (32 is plenty)
+///
+/// Returns a dict with:
+///   corrected            : float32 (E, m, n)
+///   corrections          : int16   (E, m, n) — additive on top of input
+///   residual_violations  : uint16  (m, n)   — cycles still open per pixel
+///   iterations           : uint8   (m, n)
+#[pyfunction]
+#[pyo3(signature = (
+    unw_stack, edges_from, edges_to, n_dates, reference,
+    crlb_per_date, tree_priority = None, max_iter = 32,
+))]
+fn closure_refine_mcf<'py>(
+    py: Python<'py>,
+    unw_stack: PyReadonlyArray3<'py, f32>,
+    edges_from: PyReadonlyArray1<'py, u32>,
+    edges_to: PyReadonlyArray1<'py, u32>,
+    n_dates: usize,
+    reference: usize,
+    crlb_per_date: PyReadonlyArray3<'py, f32>,
+    tree_priority: Option<PyReadonlyArray1<'py, f32>>,
+    max_iter: u8,
+) -> PyResult<Bound<'py, PyDict>> {
+    let ef = edges_from.as_array();
+    let et = edges_to.as_array();
+    if ef.len() != et.len() {
+        return Err(PyValueError::new_err("edges_from and edges_to must be same length"));
+    }
+    let edges: Vec<whirlwind_core::closure::Edge> = ef
+        .iter()
+        .zip(et.iter())
+        .map(|(&a, &b)| whirlwind_core::closure::Edge { from: a, to: b })
+        .collect();
+    let graph = whirlwind_core::closure::TemporalGraph::new(n_dates, edges, reference);
+
+    let stack = unw_stack.as_array();
+    let crlb = crlb_per_date.as_array();
+    if stack.shape()[0] != ef.len() {
+        return Err(PyValueError::new_err("stack edge count != edges length"));
+    }
+    if crlb.shape()[0] != n_dates {
+        return Err(PyValueError::new_err("crlb date axis != n_dates"));
+    }
+
+    let prio_owned: Option<Vec<f32>> = tree_priority.as_ref().map(|p| p.as_array().to_vec());
+    let prio_slice = prio_owned.as_deref();
+
+    let out = py.detach(|| {
+        whirlwind_core::closure::refine_mcf(stack, &graph, crlb, prio_slice, max_iter)
+    });
+
+    let dict = PyDict::new(py);
+    dict.set_item("corrected", out.corrected.into_pyarray(py))?;
+    dict.set_item("corrections", out.corrections.into_pyarray(py))?;
+    dict.set_item("residual_violations", out.residual_violations.into_pyarray(py))?;
+    dict.set_item("iterations", out.iterations.into_pyarray(py))?;
+    Ok(dict)
+}
+
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap, m)?)?;
@@ -161,5 +235,6 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_ifg, m)?)?;
     m.add_function(wrap_pyfunction!(closure_correct, m)?)?;
+    m.add_function(wrap_pyfunction!(closure_refine_mcf, m)?)?;
     Ok(())
 }

@@ -2,6 +2,7 @@
 
 from ._native import (
     closure_correct,
+    closure_refine_mcf,
     compute_residues,
     diagonal_ramp,
     simulate_ifg,
@@ -12,6 +13,7 @@ from ._native import (
 
 __all__ = [
     "closure_correct",
+    "closure_refine_mcf",
     "compute_residues",
     "diagonal_ramp",
     "simulate_ifg",

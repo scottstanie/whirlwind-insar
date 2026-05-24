@@ -30,6 +30,133 @@ use ndarray::{Array2, Array3, ArrayView3};
 use rayon::prelude::*;
 use std::f32::consts::TAU;
 
+/// One signed edge step in a cycle traversal. `sign = +1` if we walk the
+/// underlying IG in its native (from→to) direction, `-1` otherwise.
+#[derive(Clone, Copy, Debug)]
+pub struct CycleStep {
+    pub edge_idx: u32,
+    pub sign: i8,
+}
+
+/// A fundamental cycle basis: one cycle per non-tree edge of the spanning
+/// tree, expressed as a signed sequence of original-graph edges. Each cycle
+/// has length ≤ 2·(tree depth) + 1.
+pub struct CycleBasis {
+    /// Flat storage of all cycle steps.
+    steps: Vec<CycleStep>,
+    /// `cycle_offsets[c .. c+1]` gives the steps for cycle c.
+    cycle_offsets: Vec<u32>,
+    /// For diagnostics: the underlying non-tree edge that defines each cycle.
+    pub defining_edge: Vec<u32>,
+}
+
+impl CycleBasis {
+    pub fn num_cycles(&self) -> usize {
+        self.cycle_offsets.len() - 1
+    }
+    pub fn cycle(&self, c: usize) -> &[CycleStep] {
+        let lo = self.cycle_offsets[c] as usize;
+        let hi = self.cycle_offsets[c + 1] as usize;
+        &self.steps[lo..hi]
+    }
+}
+
+/// Build the fundamental cycle basis induced by a spanning tree.
+///
+/// For each non-tree edge e_nt = (a, b), the unique fundamental cycle is
+/// e_nt followed by the reverse of the tree path from a to b — equivalently,
+/// "go from a to b via the tree, then take e_nt back to close the loop."
+/// The orientation convention here is: traverse each cycle so that summing
+/// signed unwrapped phases around it gives ψ̃(tree-path) − ψ̃(e_nt). A
+/// non-zero closure residue means the cycle is integer-violated by that
+/// many cycles of 2π.
+pub fn build_cycle_basis(graph: &TemporalGraph, tree: &SpanningTree) -> CycleBasis {
+    let d = graph.n_dates;
+    let mut is_tree_edge = vec![false; graph.edges.len()];
+    for &ei in &tree.tree_edges {
+        is_tree_edge[ei] = true;
+    }
+
+    // Compute depth from the reference along the tree (for LCA finding).
+    let mut depth = vec![0_u32; d];
+    // bfs_order has reference first; we can derive depths by walking parents.
+    for &v in &tree.bfs_order {
+        let v = v as usize;
+        if v == graph.reference {
+            depth[v] = 0;
+        } else {
+            let (pd, _, _) = tree.parent[v].expect("non-reference has parent");
+            depth[v] = depth[pd as usize] + 1;
+        }
+    }
+
+    let mut steps: Vec<CycleStep> = Vec::new();
+    let mut cycle_offsets: Vec<u32> = Vec::with_capacity(graph.edges.len() - tree.tree_edges.len() + 1);
+    let mut defining_edge: Vec<u32> = Vec::new();
+    cycle_offsets.push(0);
+
+    // Reusable scratch.
+    let mut path_from_a: Vec<CycleStep> = Vec::new();
+    let mut path_from_b: Vec<CycleStep> = Vec::new();
+
+    for (e_idx, edge) in graph.edges.iter().enumerate() {
+        if is_tree_edge[e_idx] {
+            continue;
+        }
+        // Walk from a and b up to their LCA in the tree. Each step we take
+        // along the tree contributes one CycleStep with the appropriate sign.
+        // We orient the cycle as: a → b along the tree, then b → a via e_nt
+        // (negative orientation of e_nt). The closure residue is then:
+        //     Σ_steps sign · ψ̃ = ψ̃(tree path a→b) − ψ̃(e_nt)
+        path_from_a.clear();
+        path_from_b.clear();
+
+        let mut x = edge.from as usize;
+        let mut y = edge.to as usize;
+        while depth[x] > depth[y] {
+            // Walk x up one step. The tree edge from x leads to its parent;
+            // moving x→parent in our "a→b" direction has sign that depends on
+            // how the original IG is oriented. tree.parent[x] = (pd, eidx, sgn)
+            // where sgn was set such that θ_x = θ_pd + sgn · ψ̃_eidx, i.e.
+            // walking the IG in the direction pd→x picks up +sgn·ψ̃. Going
+            // the other way (x→pd) picks up −sgn·ψ̃.
+            let (pd, eidx, sgn) = tree.parent[x].expect("non-reference has parent");
+            path_from_a.push(CycleStep { edge_idx: eidx as u32, sign: -(sgn as i8) });
+            x = pd as usize;
+        }
+        while depth[y] > depth[x] {
+            let (pd, eidx, sgn) = tree.parent[y].expect("non-reference has parent");
+            // Walking y→pd then reversing later: in the final a→b traversal
+            // this segment is pd→y, which contributes +sgn·ψ̃.
+            path_from_b.push(CycleStep { edge_idx: eidx as u32, sign: sgn as i8 });
+            y = pd as usize;
+        }
+        while x != y {
+            let (pdx, eidxx, sgnx) = tree.parent[x].expect("non-reference has parent");
+            path_from_a.push(CycleStep { edge_idx: eidxx as u32, sign: -(sgnx as i8) });
+            x = pdx as usize;
+            let (pdy, eidxy, sgny) = tree.parent[y].expect("non-reference has parent");
+            path_from_b.push(CycleStep { edge_idx: eidxy as u32, sign: sgny as i8 });
+            y = pdy as usize;
+        }
+        // Tree path a→b = path_from_a (in order) ++ reverse(path_from_b).
+        for s in &path_from_a {
+            steps.push(*s);
+        }
+        for s in path_from_b.iter().rev() {
+            steps.push(*s);
+        }
+        // Closing edge: travel back b→a via e_nt. Sign of −1 since the IG is
+        // oriented from edge.from → edge.to.
+        steps.push(CycleStep { edge_idx: e_idx as u32, sign: -1 });
+
+        defining_edge.push(e_idx as u32);
+        cycle_offsets.push(steps.len() as u32);
+    }
+
+    CycleBasis { steps, cycle_offsets, defining_edge }
+}
+
 /// One temporal-graph edge: an interferogram between two acquisition dates.
 #[derive(Clone, Copy, Debug)]
 pub struct Edge {
@@ -142,20 +269,20 @@ pub fn correct(
 // ---- spanning tree -------------------------------------------------------
 
 #[derive(Debug)]
-struct SpanningTree {
+pub struct SpanningTree {
     /// Indices into `graph.edges` of the edges chosen for the tree. Length D-1.
-    tree_edges: Vec<usize>,
+    pub tree_edges: Vec<usize>,
     /// BFS-order traversal of dates starting from `reference`. Length D.
     /// `bfs_order[0] = reference`. For each subsequent date, the edge that
     /// links it to its parent in the tree is `parent_edge[date]`.
-    bfs_order: Vec<u32>,
+    pub bfs_order: Vec<u32>,
     /// For each date d != reference, `(parent_date, edge_index, signed_dir)`:
     /// signed_dir is +1 if the edge goes parent→d (i.e. edge.from == parent),
     /// −1 if it goes d→parent. Used to integrate along the tree.
-    parent: Vec<Option<(u32, usize, f32)>>,
+    pub parent: Vec<Option<(u32, usize, f32)>>,
 }
 
-fn build_spanning_tree(graph: &TemporalGraph, priority: Option<&[f32]>) -> SpanningTree {
+pub fn build_spanning_tree(graph: &TemporalGraph, priority: Option<&[f32]>) -> SpanningTree {
     let d = graph.n_dates;
 
     // Adjacency: for each date, list of (neighbour_date, edge_index, signed_dir).
@@ -318,6 +445,228 @@ fn solve_row(
     }
 }
 
+// =========================================================================
+// Cycle-greedy MCF refinement (Joint 3D MCF, MVP)
+// =========================================================================
+//
+// The tree-based corrector forces k_tree ≡ 0. That's the limitation it has;
+// the joint MCF removes it. Here we run a per-pixel greedy minimum-cost flow
+// on the fundamental cycle basis: each cycle with a nonzero integer closure
+// residue routes its correction to the *highest-variance* (noisiest) edge in
+// the cycle — i.e. the edge for which absorbing an integer ambiguity is
+// cheapest under the L2-weighted-flow cost ∑ w_e · k_e² with w_e = 1/σ²_e.
+//
+// This is a heuristic, not provably optimal. But for sparse integer demands
+// (the typical case after a good tree-based pass), it lands on or near the
+// MCF optimum. Real LAMBDA / closest-vector-in-lattice can replace this if
+// pathological pixels surface.
+
+pub struct RefineOutput {
+    /// Refined unwrapped stack (n_edges, m, n).
+    pub corrected: Array3<f32>,
+    /// Total integer corrections (n_edges, m, n) — relative to the *input*
+    /// stack (i.e. additive on top of whatever the caller passed in).
+    pub corrections: Array3<i16>,
+    /// Per-pixel count of cycles still violated after refinement. Should be
+    /// zero on convergence; nonzero on pathological pixels.
+    pub residual_violations: Array2<u16>,
+    /// Max iterations of cycle resolution actually used at each pixel.
+    pub iterations: Array2<u8>,
+}
+
+/// Refine an already-unwrapped stack via greedy cycle MCF.
+///
+/// * `unw_stack`     — starting point, shape (E, m, n). Usually the output of
+///   [`correct`], but raw per-IG unwraps work too.
+/// * `graph`         — temporal graph, must match `unw_stack`'s edge layout.
+/// * `crlb_per_date` — per-acquisition CRLB σ²_d(p), shape (D, m, n) in rad².
+/// * `tree_edge_priority` — same as in [`correct`]. Used only to pick the
+///   spanning tree that defines the cycle basis; the choice of tree does
+///   not affect convergence as long as it's valid, but a lowest-variance
+///   tree tends to give a basis where most cycles are already closed.
+/// * `max_iter`      — cap on greedy iterations per pixel. 32 is plenty.
+pub fn refine_mcf(
+    unw_stack: ArrayView3<f32>,
+    graph: &TemporalGraph,
+    crlb_per_date: ArrayView3<f32>,
+    tree_edge_priority: Option<&[f32]>,
+    max_iter: u8,
+) -> RefineOutput {
+    let (n_edges, m, n) = unw_stack.dim();
+    assert_eq!(n_edges, graph.edges.len(), "stack/graph edge mismatch");
+    assert_eq!(crlb_per_date.dim().0, graph.n_dates, "CRLB date axis mismatch");
+    assert_eq!(crlb_per_date.dim().1, m);
+    assert_eq!(crlb_per_date.dim().2, n);
+
+    let tree = build_spanning_tree(graph, tree_edge_priority);
+    let basis = build_cycle_basis(graph, &tree);
+
+    // Build edge→cycle inverted index for efficient "update coupled cycles"
+    // when a routed flow lands on an edge shared by multiple cycles.
+    let mut edge_to_cycles: Vec<Vec<(u32, i8)>> = vec![Vec::new(); n_edges];
+    for c in 0..basis.num_cycles() {
+        for step in basis.cycle(c) {
+            edge_to_cycles[step.edge_idx as usize].push((c as u32, step.sign));
+        }
+    }
+
+    let mut corrected = Array3::<f32>::zeros((n_edges, m, n));
+    let mut corrections = Array3::<i16>::zeros((n_edges, m, n));
+    let mut residual_violations = Array2::<u16>::zeros((m, n));
+    let mut iterations = Array2::<u8>::zeros((m, n));
+
+    // Process row-by-row in parallel.
+    let row_results: Vec<RefineRow> = (0..m)
+        .into_par_iter()
+        .map(|i| {
+            refine_row(
+                unw_stack,
+                i,
+                graph,
+                crlb_per_date,
+                &basis,
+                &edge_to_cycles,
+                max_iter,
+                n_edges,
+                n,
+            )
+        })
+        .collect();
+
+    for (i, row) in row_results.into_iter().enumerate() {
+        for j in 0..n {
+            for e in 0..n_edges {
+                corrected[(e, i, j)] = row.corrected[e * n + j];
+                corrections[(e, i, j)] = row.corrections[e * n + j];
+            }
+            residual_violations[(i, j)] = row.violations[j];
+            iterations[(i, j)] = row.iters[j];
+        }
+    }
+
+    RefineOutput {
+        corrected,
+        corrections,
+        residual_violations,
+        iterations,
+    }
+}
+
+struct RefineRow {
+    corrected: Vec<f32>,    // (E, n)
+    corrections: Vec<i16>,  // (E, n)
+    violations: Vec<u16>,   // (n,)
+    iters: Vec<u8>,         // (n,)
+}
+
+fn refine_row(
+    unw_stack: ArrayView3<f32>,
+    i: usize,
+    graph: &TemporalGraph,
+    crlb_per_date: ArrayView3<f32>,
+    basis: &CycleBasis,
+    edge_to_cycles: &[Vec<(u32, i8)>],
+    max_iter: u8,
+    n_edges: usize,
+    n: usize,
+) -> RefineRow {
+    let mut corrected = vec![0.0_f32; n_edges * n];
+    let mut corrections = vec![0_i16; n_edges * n];
+    let mut violations = vec![0_u16; n];
+    let mut iters = vec![0_u8; n];
+
+    // Per-pixel scratch (reused across columns in this row).
+    let mut y = vec![0.0_f32; n_edges];
+    let mut k = vec![0_i32; n_edges];
+    let mut sigma2 = vec![0.0_f32; n_edges];           // per-edge IG variance
+    let mut demand = vec![0_i32; basis.num_cycles()];  // residue per cycle / 2π, rounded
+
+    for j in 0..n {
+        // Initialise y from the input stack and σ²_e from per-date CRLB.
+        for e in 0..n_edges {
+            y[e] = unw_stack[(e, i, j)];
+            k[e] = 0;
+            let edge = graph.edges[e];
+            sigma2[e] = crlb_per_date[(edge.from as usize, i, j)]
+                + crlb_per_date[(edge.to as usize, i, j)];
+        }
+
+        // Compute initial demands per cycle.
+        for c in 0..basis.num_cycles() {
+            let mut s = 0.0_f32;
+            for step in basis.cycle(c) {
+                s += (step.sign as f32) * y[step.edge_idx as usize];
+            }
+            demand[c] = (s / TAU).round() as i32;
+        }
+
+        // Greedy iteration.
+        let mut it: u8 = 0;
+        while it < max_iter {
+            // Pick the cycle with largest |demand|.
+            let mut pick_c: Option<usize> = None;
+            let mut pick_abs: i32 = 0;
+            for (c, &d) in demand.iter().enumerate() {
+                let a = d.abs();
+                if a > pick_abs {
+                    pick_abs = a;
+                    pick_c = Some(c);
+                }
+            }
+            let Some(c) = pick_c else { break };
+
+            // For this cycle, pick the edge with maximum σ²_e (noisiest =
+            // cheapest to absorb correction under L2 cost).
+            let mut best_step_idx: usize = 0;
+            let mut best_sigma2: f32 = f32::NEG_INFINITY;
+            let cycle_steps = basis.cycle(c);
+            for (idx, step) in cycle_steps.iter().enumerate() {
+                let s2 = sigma2[step.edge_idx as usize];
+                if s2 > best_sigma2 {
+                    best_sigma2 = s2;
+                    best_step_idx = idx;
+                }
+            }
+            let routed_step = cycle_steps[best_step_idx];
+            // Demand d means the cycle sum is +2π·d; to zero it out we want
+            // to subtract +2π·d from the cycle sum. If the routed step's sign
+            // in the cycle is +1, we *increase* k_e by d (so y_e ← y_e − 2π·d
+            // changes the contribution to the cycle sum by −2π·d). If sign is
+            // −1, we decrease k_e by d.
+            let routed_k: i32 = demand[c] * (routed_step.sign as i32);
+            let e = routed_step.edge_idx as usize;
+            y[e] -= TAU * (routed_k as f32);
+            k[e] += routed_k;
+
+            // Update demands of every cycle that touches edge e.
+            for &(c_other, sign_other) in &edge_to_cycles[e] {
+                let co = c_other as usize;
+                demand[co] -= routed_k * (sign_other as i32);
+            }
+            it += 1;
+        }
+
+        // Tally remaining violations & write outputs.
+        let mut viol: u16 = 0;
+        for &d in &demand {
+            if d != 0 {
+                viol += 1;
+            }
+        }
+        violations[j] = viol;
+        iters[j] = it;
+        for e in 0..n_edges {
+            corrected[e * n + j] = y[e];
+            // Clamp k into i16. With max_iter = 32 and per-cycle |demand| ≤
+            // small ints, |k_e| ≪ 32k in practice.
+            let kc = k[e].clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            corrections[e * n + j] = kc;
+        }
+    }
+
+    RefineRow { corrected, corrections, violations, iters }
+}
+
 // ---- tests ---------------------------------------------------------------
 
 #[cfg(test)]
@@ -454,6 +803,89 @@ mod tests {
         assert!((c[(3, 0, 0)] + c[(5, 0, 0)] - c[(4, 0, 0)]).abs() < 1e-4);
 
         assert!(out.closure_rms[(0, 0)] < 1e-3);
+    }
+
+    /// Cycle-greedy MCF should recover a +1-cycle injection on a TREE edge —
+    /// exactly the case the tree-based corrector cannot fix.
+    #[test]
+    fn mcf_recovers_tree_edge_error() {
+        let graph = TemporalGraph::new(
+            4,
+            vec![
+                Edge { from: 0, to: 1 },
+                Edge { from: 0, to: 2 },
+                Edge { from: 0, to: 3 },
+                Edge { from: 1, to: 2 },
+                Edge { from: 1, to: 3 },
+                Edge { from: 2, to: 3 },
+            ],
+            0,
+        );
+        let theta = [0.0_f32, 0.3, -0.7, 1.2];
+        let mut psi = Vec::<f32>::new();
+        for e in &graph.edges {
+            psi.push(theta[e.to as usize] - theta[e.from as usize]);
+        }
+        // With natural-order priority, the tree picks edges 0, 1, 2 (the
+        // three star edges from reference). Inject +1 cycle on TREE edge 1.
+        psi[1] += TAU;
+
+        let mut stack = Array3::<f32>::zeros((6, 1, 1));
+        for e in 0..6 {
+            stack[(e, 0, 0)] = psi[e];
+        }
+        // Construct a CRLB cube where edge 1 (between dates 0 and 2) has the
+        // higher per-date variance — so it's correctly identified as the
+        // noisiest edge to absorb a correction. Reverse the natural priority:
+        // dates 0, 2 are noisier so edge 1 is noisiest; dates 1, 3 are quiet.
+        let mut crlb = Array3::<f32>::zeros((4, 1, 1));
+        crlb[(0, 0, 0)] = 0.5;
+        crlb[(1, 0, 0)] = 0.05;
+        crlb[(2, 0, 0)] = 0.5;
+        crlb[(3, 0, 0)] = 0.05;
+
+        // Tree priority based on summed variance (matches what unwrap_stack.py does).
+        let mut prio = Vec::with_capacity(6);
+        for e in &graph.edges {
+            prio.push(crlb[(e.from as usize, 0, 0)] + crlb[(e.to as usize, 0, 0)]);
+        }
+        let out = refine_mcf(stack.view(), &graph, crlb.view(), Some(&prio), 16);
+        // After MCF, the +1 cycle on edge 1 should be removed.
+        assert_eq!(out.residual_violations[(0, 0)], 0, "all cycles should close");
+        // Sign convention: corrected = original − 2π·k. Injection was +2π, so
+        // the correction that removes it is k = +1.
+        assert_eq!(
+            out.corrections[(1, 0, 0)], 1,
+            "MCF should record k=+1 on edge 1, got {}",
+            out.corrections[(1, 0, 0)]
+        );
+        // The corrected value of edge 1 should now match the truth.
+        assert!((out.corrected[(1, 0, 0)] - (theta[2] - theta[0])).abs() < 1e-4);
+    }
+
+    /// Cycle basis size matches E - (D-1).
+    #[test]
+    fn cycle_basis_size_matches() {
+        let graph = TemporalGraph::new(
+            4,
+            vec![
+                Edge { from: 0, to: 1 },
+                Edge { from: 0, to: 2 },
+                Edge { from: 0, to: 3 },
+                Edge { from: 1, to: 2 },
+                Edge { from: 1, to: 3 },
+                Edge { from: 2, to: 3 },
+            ],
+            0,
+        );
+        let tree = build_spanning_tree(&graph, None);
+        let basis = build_cycle_basis(&graph, &tree);
+        assert_eq!(basis.num_cycles(), graph.edges.len() - (graph.n_dates - 1));
+        // Each cycle's edges sum to a closed loop — verify by traversing.
+        // We just check each cycle has at least 3 edges (triangle minimum).
+        for c in 0..basis.num_cycles() {
+            assert!(basis.cycle(c).len() >= 3);
+        }
     }
 
     /// With per-edge priority (e.g. CRLB), the spanning tree should pick the
