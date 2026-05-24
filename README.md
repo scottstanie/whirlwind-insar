@@ -51,29 +51,41 @@ All optional; defaults are sensible.
 ## Performance & memory
 
 See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for full per-stage timings,
-hotspot analysis, and memory model. Headline (M-series, 8 perf cores, release build,
-post-rayon perf pass):
+hotspot analysis, and memory model. Headline (M-series, 8 perf cores, release build):
 
-- **~45–55 Mpx/s** on clean / lightly-noisy data (was ~25 Mpx/s before parallelizing
-  the cost build and box filter).
-- **0.5–1.0 Mpx/s** on residue-dense scenes; **97 %** of the time is now Dijkstra
-  inside the primal-dual loop. Parallel Dial is implemented but not faster than
-  serial on the workloads we measured — see `docs/PERFORMANCE.md` for why.
+- **~75–110 Mpx/s** on clean / lightly-noisy data — cost-build-bound.
+- **~1 Mpx/s** on uniform-noisy residue-dense scenes; **2× faster on the
+  worst-case 8192² uniform-noisy bench** than the v1 release (312.6 s → 166.5 s)
+  thanks to early-exit Dijkstra. **3.3×** on a realistic 4096² Sentinel-1-style
+  mixed-coherence scene.
+- **Dijkstra is still ≥ 95 %** of time on the residue-dense regime;
+  it's the remaining lever for further speedups. Parallel Dial is implemented
+  (`WHIRLWIND_DIJKSTRA=dial-par`) but isn't faster than serial in practice —
+  see `docs/PERFORMANCE.md` for why.
 - Memory **~115 bytes / pixel** working set:
   | image | pixels | RAM |
   |---|---:|---:|
   | 1024² | 1 Mpx | 118 MiB |
   | 2048² | 4 Mpx | 472 MiB |
+  | 4096² | 16 Mpx | ~1.9 GiB |
+  | 8192² | 67 Mpx | ~7.5 GiB |
   | Sentinel-1 IW (25K×4K) | 100 Mpx | ~11.5 GiB |
 
 Reproduce per-stage timings: `cargo run --release --example bench_scale -- --huge`.
+Reproduce the heavy 5-min-class scene: `python scripts/heavy_scene.py --size 8192 --flavor noisy && python scripts/bench_heavy.py --scene /tmp/heavy_scene.npz --no-snaphu --only "dial serial"`.
 
 ## Benchmarks vs SNAPHU and kamui (PUMA)
 
 `python scripts/bench.py` is the canonical cross-library benchmark; it writes
 [`scripts/out/BENCH_RESULTS.md`](scripts/out/BENCH_RESULTS.md) and `.json` and is
-fully reproducible (single command, fixed seeds). Headline from a recent run on
-M-series:
+fully reproducible (single command, fixed seeds). For the long (5+ minute)
+single-scene comparison, `scripts/heavy_scene.py` + `scripts/bench_heavy.py`
+build and time a deliberately-hard scene — useful for measuring future
+optimization work where ~50 ms benchmarks are too noisy.
+
+Headline from a recent run on M-series (numbers are from before the early-exit
+pass; re-run after that change shrinks the ww times another 1.5–7× depending
+on regime — see `docs/PERFORMANCE.md`):
 
 | Scene | size | whirlwind-rs | snaphu | kamui (PUMA) | ww vs snaphu |
 |---|---|---:|---:|---:|---:|

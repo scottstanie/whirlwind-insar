@@ -13,8 +13,17 @@ use std::collections::BinaryHeap;
 pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
     let n_nodes = g.num_nodes();
     let mut sp = ShortestPaths::new(n_nodes);
-    let mut visited = vec![false; n_nodes];
     let mut heap: BinaryHeap<Reverse<(i64, usize)>> = BinaryHeap::new();
+
+    // Count sinks for early-exit.
+    let mut sinks_left = 0_usize;
+    let mut is_sink = vec![false; n_nodes];
+    for (v, &e) in net.excess.iter().enumerate() {
+        if e < 0 {
+            is_sink[v] = true;
+            sinks_left += 1;
+        }
+    }
 
     // Seed every excess node at distance 0.
     for s in net.excess_nodes() {
@@ -23,25 +32,36 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
         // sources have no predecessor — pred_arc stays -1, pred_node stays -1
         heap.push(Reverse((0, s)));
     }
+    if sinks_left == 0 {
+        return sp;
+    }
 
     while let Some(Reverse((d, u))) = heap.pop() {
-        if visited[u] {
+        if sp.popped[u] {
             continue;
         }
         if d > sp.dist[u] {
             continue;
         }
-        visited[u] = true;
+        sp.popped[u] = true;
+        if is_sink[u] {
+            sinks_left -= 1;
+            if sinks_left == 0 {
+                return sp;
+            }
+        }
         // sp.source[u] is already coherent with pred_node[u]: either u was a
         // seed (set above), or it was set at relaxation time below.
 
         let (ui, uj) = g.node_ij(u);
         let out = g.outgoing(ui, uj);
+        let pot_u = net.potential[u];
         for &(arc, v) in out.iter() {
             if net.is_arc_saturated(arc) {
                 continue;
             }
-            let rc = net.reduced_cost(g, arc);
+            // Inline reduced_cost (tail=u, head=v are known from outgoing()).
+            let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
             debug_assert!(rc >= 0, "negative reduced cost on residual arc {arc}: {rc}");
             let nd = d.saturating_add(rc);
             if nd < sp.dist[v] {

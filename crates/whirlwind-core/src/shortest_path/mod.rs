@@ -44,6 +44,11 @@ pub struct ShortestPaths {
     pub pred_arc: Vec<i32>,     // arc id of the predecessor arc, -1 if none
     pub pred_node: Vec<i32>,    // tail of that arc
     pub source: Vec<i32>,       // which excess source reached this node, -1 if not reached
+    /// True iff the node has been popped (i.e. `dist[node]` is finalized).
+    /// With early-exit Dijkstra a node may have a finite `dist` after
+    /// relaxation but not be finalized; callers must consult `popped`
+    /// (or the `was_reached` helper) before trusting `dist[v]`.
+    pub popped: Vec<bool>,
 }
 
 impl ShortestPaths {
@@ -53,11 +58,15 @@ impl ShortestPaths {
             pred_arc: vec![-1; n_nodes],
             pred_node: vec![-1; n_nodes],
             source: vec![-1; n_nodes],
+            popped: vec![false; n_nodes],
         }
     }
 
+    /// True iff this node was finalized by the Dijkstra (i.e. popped).
+    /// Distinct from "merely relaxed" — with early-exit on, some relaxed
+    /// nodes never get popped.
     pub fn was_reached(&self, node: usize) -> bool {
-        self.source[node] >= 0
+        self.popped[node]
     }
 }
 

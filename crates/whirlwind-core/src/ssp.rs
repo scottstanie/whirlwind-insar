@@ -49,15 +49,16 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network) {
         net.decrease_excess(src, 1);
 
         // Same potential update with d_max capping as primal_dual::run.
+        // Key off `popped` so the cap stays valid under early-exit Dijkstra.
         let d_max = sp
             .dist
             .iter()
-            .filter(|&&d| d < i64::MAX)
-            .copied()
+            .zip(sp.popped.iter())
+            .filter_map(|(&d, &p)| if p { Some(d) } else { None })
             .max()
             .unwrap_or(0);
         for v in 0..g.num_nodes() {
-            let dv = if sp.dist[v] == i64::MAX { d_max } else { sp.dist[v] };
+            let dv = if sp.popped[v] { sp.dist[v] } else { d_max };
             net.potential[v] -= dv;
         }
 

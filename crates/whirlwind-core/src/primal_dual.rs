@@ -64,6 +64,18 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
     // noisy data; the algorithm will route as much flow as it can and stop
     // when no more excess/deficit pairs are connected.
 
+    // Reusable scratch buffers — kept alive across PD iterations so we don't
+    // pay a ~n_nodes × 4-byte allocation per iter (on 8192² that's 268 MiB
+    // each, churned tens of times across the run).
+    let n_nodes = g.num_nodes();
+    let mut visited_epoch: Vec<u32> = vec![0; n_nodes];
+    let mut source_used: Vec<bool> = vec![false; n_nodes];
+    let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    let mut deficits: Vec<usize> = Vec::new();
+    // Epoch counter persists across PD iterations too — wrap-on-zero handles
+    // the (vanishingly rare) ~4B-walk overflow.
+    let mut epoch: u32 = 0;
+
     let mut iter = 0;
     let mut last_excess_total = i64::MAX;
     loop {
@@ -99,17 +111,16 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
         // to pred_node[] (downstream nodes keep an old source attribution
         // after their upstream parent gets re-relaxed by a different source).
         let t_aug = std::time::Instant::now();
-        let deficits: Vec<usize> = net.deficit_nodes().collect();
+        deficits.clear();
+        deficits.extend(net.deficit_nodes());
         // Pre-compute actual source per sink by walking pred_node back to the
         // pred_arc<0 node (a seed source). Also remember the path arcs.
         //
-        // Cycle detection: a `visited_epoch[v] == iter` marks v as on the
+        // Cycle detection: a `visited_epoch[v] == epoch` marks v as on the
         // current sink's path — replacing the per-sink HashSet (heap alloc
-        // each sink) with one bumped `u32` counter per outer iteration.
-        let n_nodes = g.num_nodes();
-        let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new(); // (sink, src, arcs)
-        let mut visited_epoch = vec![0_u32; n_nodes];
-        let mut epoch: u32 = 0;
+        // each sink) with one bumped `u32` counter that persists across
+        // outer iterations.
+        path_info.clear();
         for &sink in &deficits {
             if !sp.was_reached(sink) {
                 continue;
@@ -149,10 +160,11 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
         }
         // Sort by source then path length so closest paths win.
         path_info.sort_by_key(|(_, src, arcs)| (*src, arcs.len()));
-        let mut source_used = vec![false; n_nodes];
+        // Reset the source_used scratch buffer in place; allocation is reused.
+        source_used.iter_mut().for_each(|x| *x = false);
         let mut augmented = 0;
 
-        for (sink, src, arcs) in path_info.into_iter() {
+        for (sink, src, arcs) in path_info.drain(..) {
             if source_used[src] {
                 continue;
             }
@@ -168,24 +180,29 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
         if dbg { eprintln!("[pd] iter={iter} augmented {augmented}"); }
 
         let t_pot = std::time::Instant::now();
-        // Update potentials: π[v] -= dist[v] for nodes reached.
-        // For UNREACHED nodes, cap their effective dist at D_max (the largest
-        // dist among reached nodes). Without this cap, residual arcs that
-        // cross the reach/unreach boundary acquire negative reduced cost on
-        // the next iteration → Dijkstra produces cyclic predecessor chains.
-        // (Ahuja, Magnanti, Orlin §9: "valid potentials" after a Dijkstra pass.)
+        // Update potentials: π[v] -= dist[v] for nodes finalized by Dijkstra.
+        // For NON-FINALIZED nodes (either truly unreached, or just relaxed
+        // but never popped under early-exit), cap their effective dist at
+        // D_max (the largest dist among popped nodes). Without this cap,
+        // residual arcs that cross the boundary acquire negative reduced
+        // cost on the next iteration → Dijkstra produces cyclic predecessor
+        // chains. (Ahuja, Magnanti, Orlin §9: "valid potentials".)
+        //
+        // Note: we key off `popped`, not `dist == MAX`, because early-exit
+        // Dijkstra can leave nodes with finite-but-non-final dist values.
         let d_max = sp
             .dist
             .par_iter()
-            .filter(|&&d| d < i64::MAX)
-            .copied()
+            .zip(sp.popped.par_iter())
+            .filter_map(|(&d, &p)| if p { Some(d) } else { None })
             .max()
             .unwrap_or(0);
         net.potential
             .par_iter_mut()
             .zip(sp.dist.par_iter())
-            .for_each(|(pi, &d)| {
-                let dv = if d == i64::MAX { d_max } else { d };
+            .zip(sp.popped.par_iter())
+            .for_each(|((pi, &d), &popped)| {
+                let dv = if popped { d } else { d_max };
                 *pi -= dv;
             });
         record_potential(t_pot.elapsed().as_secs_f64() * 1000.0);
