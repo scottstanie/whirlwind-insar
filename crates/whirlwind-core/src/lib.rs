@@ -6,6 +6,7 @@
 //! 3. Solve a min-cost flow problem on the residue grid (primal-dual SSP).
 //! 4. Integrate the flow-corrected wrapped gradients to recover unwrapped phase.
 
+pub mod closure;
 pub mod cost;
 pub mod grid;
 pub mod integrate;
@@ -28,7 +29,7 @@ pub enum UnwrapError {
     TooSmall((usize, usize)),
 }
 
-/// Top-level phase unwrap.
+/// Top-level phase unwrap (coherence-based cost — for raw boxcar IGs).
 ///
 /// * `igram` — complex interferogram of shape `(m, n)`.
 /// * `corr`  — sample coherence in `[0, 1]` of shape `(m, n)`.
@@ -65,6 +66,42 @@ pub fn unwrap(
     // SSP entirely is ~6× faster end to end. See `examples/bench_scale.rs`.
     primal_dual::run(&graph, &mut net, 50);
 
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    Ok(unw)
+}
+
+/// Top-level phase unwrap (CRLB-weighted cost — for phase-linked IGs).
+///
+/// For interferograms formed from phase-linked SLCs (Dolphin, EVD, EMI),
+/// the proper per-pixel noise weight is the CRLB-derived phase variance,
+/// not the sliding-window sample coherence used by [`unwrap`].
+///
+/// * `igram` — complex interferogram, shape `(m, n)`.
+/// * `variance` — per-pixel phase variance σ²_IG = σ²_a + σ²_b in rad²,
+///   typically `crlb_<date_a>.tif + crlb_<date_b>.tif`. NoData = 0 is fine.
+/// * `mask` — optional valid-pixel mask.
+pub fn unwrap_crlb(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != variance.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_crlb_costs(igram, variance, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
+    primal_dual::run(&graph, &mut net, 50);
     let unw = if mask.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
     } else {
