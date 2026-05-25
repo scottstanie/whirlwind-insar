@@ -74,18 +74,31 @@ fn simulate_ifg<'py>(
 /// * `igram` — complex64, shape (m, n)
 /// * `variance` — float32 σ²_IG = σ²_a + σ²_b in rad², shape (m, n)
 /// * `mask` — optional bool, shape (m, n)
+/// * `tile_size` — if > 0 and < min(m, n), tile the image into
+///   `tile_size × tile_size` sub-images with `tile_overlap` overlap,
+///   unwrap each in parallel, and stitch with CRLB-weighted overlap-median
+///   2π reconciliation. Bounds per-IG MCF memory to tile-size scale.
 #[pyfunction]
-#[pyo3(signature = (igram, variance, mask = None))]
+#[pyo3(signature = (igram, variance, mask = None, tile_size = 0, tile_overlap = 0))]
 fn unwrap_crlb<'py>(
     py: Python<'py>,
     igram: PyReadonlyArray2<'py, Complex32>,
     variance: PyReadonlyArray2<'py, f32>,
     mask: Option<PyReadonlyArray2<'py, bool>>,
+    tile_size: usize,
+    tile_overlap: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let ig = igram.as_array();
     let v = variance.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
-    let unw = py.detach(|| whirlwind_core::unwrap_crlb(ig, v, m));
+    let use_tiling = tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size;
+    let unw = py.detach(|| {
+        if use_tiling {
+            whirlwind_core::tile::unwrap_crlb_tiled(ig, v, m, tile_size, tile_overlap)
+        } else {
+            whirlwind_core::unwrap_crlb(ig, v, m)
+        }
+    });
     let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(unw.into_pyarray(py))
 }
