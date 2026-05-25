@@ -225,6 +225,8 @@ def run(
     reference_arg: str | None = None,
     closure_mode: str = "off",
     quality_mask_threshold: int | None = None,
+    tile_size: int = 0,
+    tile_overlap: int = 128,
 ) -> None:
     print(f"[discover] scanning {dolphin}")
     igs, crlb_paths = discover_stack(dolphin)
@@ -293,11 +295,17 @@ def run(
         if e.mask_path is not None:
             mask = _read_bool(e.mask_path, win)
         t = time.perf_counter()
-        unw = ww.unwrap_crlb(igram, variance, mask)
+        unw = ww.unwrap_crlb(
+            igram, variance, mask,
+            tile_size=tile_size, tile_overlap=tile_overlap,
+        )
         unw_stack[idx] = unw
         return idx, time.perf_counter() - t
 
-    print(f"[unwrap] running 2D unwrap on {n_edges} IGs (CRLB cost, {n_threads} threads)")
+    tile_desc = (f"tiled {tile_size}x{tile_size} overlap {tile_overlap}"
+                 if tile_size > 0 else "single-tile (whole IG in memory)")
+    print(f"[unwrap] running 2D unwrap on {n_edges} IGs (CRLB cost, "
+          f"{n_threads} outer threads, {tile_desc})")
     # Within-Rust rayon parallelises each unwrap; the outer ThreadPool lets us
     # overlap I/O (reading the next IG while the current one solves).
     with ThreadPoolExecutor(max_workers=n_threads) as ex:
@@ -545,6 +553,22 @@ def main() -> None:
                    help="reference pixel for absolute-phase anchoring: 'auto' "
                         "(lowest-Σ-CRLB pixel), 'dolphin' (read timeseries/reference_point.txt), "
                         "or 'i,j' for explicit window-local coords")
+    p.add_argument("--tile-size", type=int, default=0,
+                   help="if > 0, tile each IG into tile_size x tile_size sub-images "
+                        "with --tile-overlap pixels of overlap, unwrap each tile in "
+                        "parallel, and stitch with CRLB-weighted overlap-median 2π "
+                        "reconciliation. Bounds per-IG MCF memory to tile-size scale. "
+                        "Output ≈ non-tiled in coherent areas; smaller tiles ⇒ more "
+                        "independent per-tile integer ambiguity choices ⇒ less stable "
+                        "stitching. 1024 or larger recommended on real data — at "
+                        "512+128 we see 99.78%% per-pixel agreement with non-tiled on "
+                        "the Palos-Verdes 1024² test tile, at 256+64 only 3.5%% (a "
+                        "single fictitious wrap-line at a tile boundary). Disabled "
+                        "by default; turn on for scenes that don't fit in memory.")
+    p.add_argument("--tile-overlap", type=int, default=128,
+                   help="overlap in pixels between adjacent tiles when --tile-size > 0. "
+                        "More overlap = more robust stitching median. ~tile_size/8 is "
+                        "a reasonable starting point.")
     p.add_argument("--quality-mask-threshold", type=int, default=None,
                    help="NaN pixels in the corrected/ output where the quality "
                         "map (per-pixel max |K| over fundamental temporal cycles) "
@@ -556,7 +580,7 @@ def main() -> None:
     args = p.parse_args()
     run(args.dolphin, args.out, args.window, args.max_igs, args.threads,
         args.mcf_refine, args.reference, args.closure,
-        args.quality_mask_threshold)
+        args.quality_mask_threshold, args.tile_size, args.tile_overlap)
 
 
 if __name__ == "__main__":
