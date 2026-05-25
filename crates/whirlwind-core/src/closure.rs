@@ -454,6 +454,302 @@ fn solve_row(
 }
 
 // =========================================================================
+// Per-pixel quality map from fundamental-cycle residuals
+// =========================================================================
+//
+// Phase linking guarantees that the *wrapped* sum around any temporal cycle
+// is identically zero (wrap respects the algebraic identity). After per-IG
+// 2D unwrapping each IG independently picks an integer ambiguity k_e, so the
+// *unwrapped* cycle sum is exactly 2π · (Σ_e ε_e k_e) — i.e. always an
+// integer multiple of 2π, with the integer being the per-cycle unwrap
+// mistake count.
+//
+// `quality_max_integer_cycles` returns, per pixel, the max |K| over the
+// fundamental cycle basis (E - D + 1 cycles, defined by the spanning tree).
+// 0 = perfectly consistent across all cycles; ≥1 = at least one cycle has
+// an integer-ambiguity mismatch. Use as a "trust this pixel" gate: water
+// and decorrelated regions naturally produce high K because their per-IG
+// unwraps are arbitrary and don't cohere over loops.
+//
+// This is a heuristic (max |K| over fundamental cycles), not a true
+// Bayesian posterior. A more principled per-pixel posterior would solve
+// a weighted integer LS (LAMBDA / closest-vector-in-lattice) over the
+// full integer-correction vector; deferred — see ATBD-3d §10.5.
+
+/// Per-pixel max |K| over fundamental cycles. Returns shape (m, n).
+pub fn quality_max_integer_cycles(
+    unw_stack: ArrayView3<f32>,
+    graph: &TemporalGraph,
+    tree_edge_priority: Option<&[f32]>,
+) -> Array2<u16> {
+    let (n_edges, m, n) = unw_stack.dim();
+    assert_eq!(
+        n_edges,
+        graph.edges.len(),
+        "stack edge count {n_edges} != graph edge count {}",
+        graph.edges.len()
+    );
+    let tree = build_spanning_tree(graph, tree_edge_priority);
+    assert_eq!(
+        tree.tree_edges.len(),
+        graph.n_dates - 1,
+        "graph is not connected for quality map"
+    );
+    let mut is_tree_edge = vec![false; n_edges];
+    for &ei in &tree.tree_edges {
+        is_tree_edge[ei] = true;
+    }
+
+    let mut out = Array2::<u16>::zeros((m, n));
+    const STRIPE_H: usize = 64;
+    for stripe_start in (0..m).step_by(STRIPE_H) {
+        let stripe_end = (stripe_start + STRIPE_H).min(m);
+        let rows: Vec<Vec<u16>> = (stripe_start..stripe_end)
+            .into_par_iter()
+            .map(|i| quality_row(unw_stack, i, graph, &tree, &is_tree_edge, n))
+            .collect();
+        for (offset, row) in rows.into_iter().enumerate() {
+            let i = stripe_start + offset;
+            for j in 0..n {
+                out[(i, j)] = row[j];
+            }
+        }
+    }
+    out
+}
+
+fn quality_row(
+    unw_stack: ArrayView3<f32>,
+    i: usize,
+    graph: &TemporalGraph,
+    tree: &SpanningTree,
+    is_tree_edge: &[bool],
+    n: usize,
+) -> Vec<u16> {
+    let d = graph.n_dates;
+    let mut theta = vec![0.0_f32; d];
+    let mut out = vec![0_u16; n];
+    for j in 0..n {
+        // Propagate θ along the tree in BFS order.
+        for &dv in &tree.bfs_order {
+            let dv = dv as usize;
+            if dv == graph.reference {
+                theta[dv] = 0.0;
+                continue;
+            }
+            let (pd, ei, sgn) = tree.parent[dv].expect("non-reference node has no parent");
+            theta[dv] = theta[pd as usize] + sgn * unw_stack[(ei, i, j)];
+        }
+        // For each non-tree edge, compute the cycle residual integer.
+        let mut max_k: u16 = 0;
+        for (e, edge) in graph.edges.iter().enumerate() {
+            if is_tree_edge[e] {
+                continue;
+            }
+            let y = unw_stack[(e, i, j)];
+            let expected = theta[edge.to as usize] - theta[edge.from as usize];
+            let k_abs = ((y - expected) / TAU).round().abs() as u32;
+            let k_u16 = k_abs.min(u16::MAX as u32) as u16;
+            if k_u16 > max_k {
+                max_k = k_u16;
+            }
+        }
+        out[j] = max_k;
+    }
+    out
+}
+
+/// Per-pixel max |K| over all temporal *triangles* (3-cycles) in the graph.
+///
+/// A triangle is a triple (a, b, c) where IGs (a, b), (b, c), and (a, c)
+/// all exist in the temporal graph. The cycle sum
+/// `ψ_{a,b} + ψ_{b,c} − ψ_{a,c}` is exactly 0 (mod 2π) for phase-linked
+/// inputs, so any nonzero residual after per-IG unwrapping is exactly
+/// 2π·K with K integer.
+///
+/// Compared to `quality_max_integer_cycles` (which uses the fundamental
+/// cycle basis, with cycles of length up to D−1 through the spanning
+/// tree), triangles are *local*: only three IGs participate per cycle, so
+/// errors don't accumulate over long tree paths. Recommended for the
+/// "reliable region" gate on phase-linked stacks where short-baseline
+/// triangles are the natural redundancy structure.
+///
+/// Returns shape (m, n); each value is the per-pixel max |K| over all
+/// triangles that pass through this pixel. K = 0 means every triangle
+/// agrees on its integer ambiguities here.
+pub fn quality_from_triangles(
+    unw_stack: ArrayView3<f32>,
+    graph: &TemporalGraph,
+) -> Array2<u16> {
+    let (n_edges, m, n) = unw_stack.dim();
+    assert_eq!(n_edges, graph.edges.len());
+
+    // Enumerate triangles. For each ordered triple (a, b, c) with a<b<c,
+    // we need edges (a,b), (b,c), and (a,c). Store as (e_ab, e_bc, e_ac).
+    // Build an edge lookup: (from, to) → edge index. Store edges in
+    // canonical (min, max) form to allow either orientation.
+    use std::collections::HashMap;
+    let mut edge_lookup: HashMap<(u32, u32), usize> = HashMap::new();
+    for (idx, e) in graph.edges.iter().enumerate() {
+        let key = if e.from < e.to { (e.from, e.to) } else { (e.to, e.from) };
+        edge_lookup.insert(key, idx);
+    }
+    let mut triangles: Vec<(usize, usize, usize)> = Vec::new();
+    let d = graph.n_dates as u32;
+    for a in 0..d {
+        for b in (a + 1)..d {
+            let Some(&e_ab) = edge_lookup.get(&(a, b)) else { continue };
+            for c in (b + 1)..d {
+                let Some(&e_bc) = edge_lookup.get(&(b, c)) else { continue };
+                let Some(&e_ac) = edge_lookup.get(&(a, c)) else { continue };
+                triangles.push((e_ab, e_bc, e_ac));
+            }
+        }
+    }
+
+    let mut out = Array2::<u16>::zeros((m, n));
+    if triangles.is_empty() {
+        return out;
+    }
+
+    // The cycle (a→b) + (b→c) − (a→c) is closed (sums to 0 mod 2π) when
+    // each edge is read in its "from<to" orientation. Each `graph.edges[e]`
+    // may already be stored that way (and is in dolphin's output), so the
+    // signs in our cycle sum are (+1, +1, −1) under that convention.
+    // Confirm at lookup-time below.
+    const STRIPE_H: usize = 64;
+    for stripe_start in (0..m).step_by(STRIPE_H) {
+        let stripe_end = (stripe_start + STRIPE_H).min(m);
+        let rows: Vec<Vec<u16>> = (stripe_start..stripe_end)
+            .into_par_iter()
+            .map(|i| {
+                let mut row = vec![0_u16; n];
+                for j in 0..n {
+                    let mut max_k: u16 = 0;
+                    for &(e_ab, e_bc, e_ac) in &triangles {
+                        let s = unw_stack[(e_ab, i, j)]
+                            + unw_stack[(e_bc, i, j)]
+                            - unw_stack[(e_ac, i, j)];
+                        let k_abs = (s / TAU).round().abs() as u32;
+                        let k_u16 = k_abs.min(u16::MAX as u32) as u16;
+                        if k_u16 > max_k {
+                            max_k = k_u16;
+                        }
+                    }
+                    row[j] = max_k;
+                }
+                row
+            })
+            .collect();
+        for (offset, row) in rows.into_iter().enumerate() {
+            let i = stripe_start + offset;
+            for j in 0..n {
+                out[(i, j)] = row[j];
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod quality_tests {
+    use super::*;
+    use ndarray::Array3;
+
+    fn make_triangle_graph() -> TemporalGraph {
+        TemporalGraph {
+            n_dates: 3,
+            edges: vec![
+                Edge { from: 0, to: 1 },
+                Edge { from: 1, to: 2 },
+                Edge { from: 0, to: 2 },
+            ],
+            reference: 0,
+        }
+    }
+
+    #[test]
+    fn quality_zero_on_consistent_stack() {
+        // A triangle (0→1, 1→2, 0→2) with ψ_0→1 + ψ_1→2 - ψ_0→2 = 0 → K=0 everywhere.
+        let g = make_triangle_graph();
+        let m = 4;
+        let n = 4;
+        let mut stack = Array3::<f32>::zeros((3, m, n));
+        for i in 0..m {
+            for j in 0..n {
+                let a = 0.3 * i as f32;
+                let b = 0.7 * j as f32;
+                let c = a + b;
+                stack[(0, i, j)] = a;
+                stack[(1, i, j)] = b;
+                stack[(2, i, j)] = c;
+            }
+        }
+        let q = quality_max_integer_cycles(stack.view(), &g, None);
+        assert!(q.iter().all(|&v| v == 0), "consistent stack should give K=0 everywhere");
+    }
+
+    #[test]
+    fn quality_detects_integer_mismatch() {
+        // Plant a +2π on edge 2 (the non-tree edge in a sensibly-chosen tree)
+        // at one pixel; that pixel's K should be exactly 1.
+        let g = make_triangle_graph();
+        let m = 4;
+        let n = 4;
+        let mut stack = Array3::<f32>::zeros((3, m, n));
+        for i in 0..m {
+            for j in 0..n {
+                let a = 0.1 * i as f32;
+                let b = 0.2 * j as f32;
+                stack[(0, i, j)] = a;
+                stack[(1, i, j)] = b;
+                stack[(2, i, j)] = a + b;
+            }
+        }
+        // Plant the mismatch at (2, 1).
+        stack[(2, 2, 1)] += TAU;
+        let q = quality_max_integer_cycles(stack.view(), &g, None);
+        assert_eq!(q[(2, 1)], 1, "planted +2π should yield K=1");
+        // Other pixels unchanged.
+        for i in 0..m {
+            for j in 0..n {
+                if (i, j) != (2, 1) {
+                    assert_eq!(q[(i, j)], 0, "unplanted pixel ({i},{j}) should be 0");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn quality_triangles_detect_mismatch() {
+        let g = make_triangle_graph();
+        let m = 4;
+        let n = 4;
+        let mut stack = Array3::<f32>::zeros((3, m, n));
+        for i in 0..m {
+            for j in 0..n {
+                let a = 0.1 * i as f32;
+                let b = 0.2 * j as f32;
+                stack[(0, i, j)] = a;     // 0→1
+                stack[(1, i, j)] = b;     // 1→2
+                stack[(2, i, j)] = a + b; // 0→2
+            }
+        }
+        // Plant +2π on edge 0 (0→1) at (1, 2). Triangle sum becomes ±2π.
+        stack[(0, 1, 2)] += TAU;
+        let q = quality_from_triangles(stack.view(), &g);
+        assert_eq!(q[(1, 2)], 1, "planted +2π on (0→1) should yield K=1");
+        for i in 0..m {
+            for j in 0..n {
+                if (i, j) != (1, 2) {
+                    assert_eq!(q[(i, j)], 0, "unplanted pixel ({i},{j}) should be 0");
+                }
+            }
+        }
+    }
+}
+
+// =========================================================================
 // Cycle-greedy MCF refinement (Joint 3D MCF, MVP)
 // =========================================================================
 //

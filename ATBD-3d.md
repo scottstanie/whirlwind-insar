@@ -386,7 +386,9 @@ The cycle-greedy MCF refinement `closure::refine_mcf` (`--mcf-refine`) is retain
 
 **Spatial coupling.** Neighbouring pixels should agree on which edges had wrap errors; voting across a spatial neighbourhood disambiguates per-pixel cycle assignments. The most promising direction for a robust 3D unwrapper, and addresses both §10.2 and §10.3 simultaneously.
 
-**Per-pixel weighted integer LS (LAMBDA-style).** Decorrelate the integer search basis, search nearest lattice vectors. Theoretically clean, computationally expensive at scale.
+**Per-pixel weighted integer LS (LAMBDA-style).** Decorrelate the integer search basis, search nearest lattice vectors. Theoretically clean, computationally expensive at scale. Would also give a principled per-pixel posterior probability that subsumes the current `quality_triangles` heuristic — see §10.7.
+
+**A real per-pixel posterior.** Today's quality map (`quality_triangles`) is a heuristic — per-pixel max |K| over all temporal triangles. A genuine Bayesian posterior would weight each cycle's residual by its per-IG CRLB-derived variance, and would surface a soft probability rather than an integer count. The LAMBDA approach above naturally produces this; deferred until the heuristic mask proves insufficient.
 
 **Sparse-to-dense propagation.** Unwrap on a sparse network of low-CRLB PS-style pixels first to fix the integer ambiguity globally, then propagate to dense pixels.
 
