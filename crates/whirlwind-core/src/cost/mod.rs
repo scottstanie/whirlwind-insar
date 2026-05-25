@@ -301,3 +301,255 @@ fn use_llr_cost() -> bool {
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("WHIRLWIND_LLR_COST").is_ok())
 }
+
+// =========================================================================
+// CRLB-weighted cost (for phase-linked inputs)
+// =========================================================================
+//
+// Motivation: for inputs that are interferograms formed from phase-linked
+// SLCs (Dolphin / EMI / EVD), the proper per-pixel noise model is *not* the
+// sliding-window sample coherence. That's a downsampling-window estimator
+// that biases low and ignores the off-diagonal structure of the coherence
+// matrix. The right model is the Cramér-Rao Lower Bound on the per-acquisition
+// phase variance σ²_t(x,y) that phase linking *also emits* as a byproduct,
+// often as a `crlb_<DATE>.tif` raster.
+//
+// For an interferogram between acquisitions a and b, the per-pixel phase
+// variance is (assuming independent linked-phase estimates, which is the
+// dominant convention):
+//     σ²_IG(p) = σ²_a(p) + σ²_b(p)
+//
+// And for an arc connecting two adjacent pixels p, q in the residue graph,
+// the gradient noise variance is σ²_edge = σ²_IG(p) + σ²_IG(q). The arc
+// cost is the same topological shape as the Carballo cost above, but with
+// inverse-variance precision replacing coherence:
+//     cost(α, σ²) = (1 / σ²_edge) · (π − |α|)   clipped to nonneg
+//
+// This is dimensional analysis on autopilot: 1/σ² is the Fisher information,
+// (π − |α|) is the "wraparound budget" left on this gradient, the product is
+// the log-likelihood ratio (up to additive constants) of "this gradient
+// should get a +1 cycle correction".
+
+/// Minimum CRLB variance accepted, in rad². Anything below this gets clamped
+/// so the inverse-variance weight stays finite. 1e-3 corresponds to
+/// γ_equiv ≈ 0.999 — essentially noiseless — and prevents nodata=0 pixels
+/// from producing infinite costs.
+pub const CRLB_VARIANCE_FLOOR: f32 = 1e-3;
+
+/// Compute integer costs from CRLB-derived per-IG phase variance.
+///
+/// * `igram`     — complex IG, shape (m_phase, n_phase).
+/// * `variance`  — per-pixel phase variance for this IG (σ²_a + σ²_b),
+///                 same shape, in rad². NoData should be passed as a very
+///                 large number (or 0; we clamp).
+/// * `mask`      — optional valid-pixel mask.
+///
+/// Pixels with `variance <= 0` (NoData) get clipped to `CRLB_VARIANCE_FLOOR`
+/// for cost computation but are excluded by `mask` if provided.
+pub fn compute_crlb_costs(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+) -> Vec<i32> {
+    let (m_phase, n_phase) = igram.dim();
+    assert_eq!(
+        variance.dim(),
+        (m_phase, n_phase),
+        "variance shape {:?} != igram shape {:?}",
+        variance.dim(),
+        (m_phase, n_phase)
+    );
+    let m = m_phase + 1;
+    let n = n_phase + 1;
+    let g = RectangularGridGraph::new(m, n);
+
+    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
+
+    // Per-edge inverse variance. For vertical edges (between (i,j) and (i+1,j)),
+    // the gradient variance is var(i,j) + var(i+1,j); the weight is 1 / that.
+    // Use a small floor to avoid /0 on nodata pixels.
+    let inv_var_dy = build_inv_var_dy(variance);
+    let inv_var_dx = build_inv_var_dx(variance);
+
+    let mask_dy = mask.map(|m_| {
+        let mut out = Array2::<bool>::from_elem((m_phase - 1, n_phase), true);
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, mut row)| {
+                for j in 0..n_phase {
+                    row[j] = m_[(i, j)] && m_[(i + 1, j)];
+                }
+            });
+        out
+    });
+    let mask_dx = mask.map(|m_| {
+        let mut out = Array2::<bool>::from_elem((m_phase, n_phase - 1), true);
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, mut row)| {
+                for j in 0..n_phase - 1 {
+                    row[j] = m_[(i, j)] && m_[(i, j + 1)];
+                }
+            });
+        out
+    });
+
+    let cost_dir = |alpha: f32, w: f32| -> f32 {
+        let pi = std::f32::consts::PI;
+        (w * (pi - alpha.abs())).max(0.0)
+    };
+
+    let mut cost = vec![0_i32; g.num_arcs()];
+    let (forward, reverse) = cost.split_at_mut(g.num_forward);
+    let (down_slab, rest) = forward.split_at_mut(g.n_v);
+    let (up_slab, rest) = rest.split_at_mut(g.n_v);
+    let (right_slab, left_slab) = rest.split_at_mut(g.n_h);
+
+    let phase_dy_s_v = phase_dy_s.view();
+    let phase_dx_s_v = phase_dx_s.view();
+    let inv_var_dy_v = inv_var_dy.view();
+    let inv_var_dx_v = inv_var_dx.view();
+    let mask_dy_ref = mask_dy.as_ref().map(|a| a.view());
+    let mask_dx_ref = mask_dx.as_ref().map(|a| a.view());
+
+    let stride_h = g.n - 1;
+    let right_body = &mut right_slab[stride_h..];
+    let left_body = &mut left_slab[stride_h..];
+    right_body
+        .par_chunks_mut(stride_h)
+        .zip(left_body.par_chunks_mut(stride_h))
+        .enumerate()
+        .for_each(|(i, (right_row, left_row))| {
+            if i >= m_phase - 1 {
+                return;
+            }
+            for j in 0..n_phase {
+                let alpha = phase_dy_s_v[(i, j)];
+                let w = inv_var_dy_v[(i, j)];
+                let masked = mask_dy_ref
+                    .as_ref()
+                    .map(|mm| !mm[(i, j)])
+                    .unwrap_or(false);
+                let (c_rt, c_lt) = if masked {
+                    (0.0, 0.0)
+                } else {
+                    (cost_dir(-alpha, w), cost_dir(alpha, w))
+                };
+                right_row[j] = (c_rt * COST_SCALE).round() as i32;
+                left_row[j] = (c_lt * COST_SCALE).round() as i32;
+            }
+        });
+
+    let stride_v = g.n;
+    down_slab
+        .par_chunks_mut(stride_v)
+        .zip(up_slab.par_chunks_mut(stride_v))
+        .enumerate()
+        .for_each(|(i, (down_row, up_row))| {
+            for j in 0..n_phase - 1 {
+                let alpha = phase_dx_s_v[(i, j)];
+                let w = inv_var_dx_v[(i, j)];
+                let masked = mask_dx_ref
+                    .as_ref()
+                    .map(|mm| !mm[(i, j)])
+                    .unwrap_or(false);
+                let (c_dn, c_up) = if masked {
+                    (0.0, 0.0)
+                } else {
+                    (cost_dir(alpha, w), cost_dir(-alpha, w))
+                };
+                let col = j + 1;
+                down_row[col] = (c_dn * COST_SCALE).round() as i32;
+                up_row[col] = (c_up * COST_SCALE).round() as i32;
+            }
+        });
+
+    reverse
+        .par_chunks_mut(8192)
+        .zip(forward.par_chunks(8192))
+        .for_each(|(rev_chunk, fwd_chunk)| {
+            for (r, f) in rev_chunk.iter_mut().zip(fwd_chunk.iter()) {
+                *r = -*f;
+            }
+        });
+
+    cost
+}
+
+/// Per-vertical-edge inverse variance. For pixel-row i and pixel-col j the
+/// vertical edge connects (i, j) ↔ (i+1, j); variance = var(i,j) + var(i+1,j).
+fn build_inv_var_dy(variance: ArrayView2<f32>) -> Array2<f32> {
+    let (m_phase, n_phase) = variance.dim();
+    let mut out = Array2::<f32>::zeros((m_phase - 1, n_phase));
+    out.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n_phase {
+                let s = (variance[(i, j)].max(CRLB_VARIANCE_FLOOR))
+                    + (variance[(i + 1, j)].max(CRLB_VARIANCE_FLOOR));
+                row[j] = 1.0 / s;
+            }
+        });
+    out
+}
+
+/// Per-horizontal-edge inverse variance. (i, j) ↔ (i, j+1).
+fn build_inv_var_dx(variance: ArrayView2<f32>) -> Array2<f32> {
+    let (m_phase, n_phase) = variance.dim();
+    let mut out = Array2::<f32>::zeros((m_phase, n_phase - 1));
+    out.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n_phase - 1 {
+                let s = (variance[(i, j)].max(CRLB_VARIANCE_FLOOR))
+                    + (variance[(i, j + 1)].max(CRLB_VARIANCE_FLOOR));
+                row[j] = 1.0 / s;
+            }
+        });
+    out
+}
+
+#[cfg(test)]
+mod crlb_tests {
+    use super::*;
+    use ndarray::Array2;
+
+    #[test]
+    fn crlb_cost_basic_shape() {
+        let m = 16_usize;
+        let n = 16_usize;
+        // Synthetic smooth IG: phase ramp.
+        let igram = Array2::from_shape_fn((m, n), |(i, j)| {
+            let phase = 0.1 * (i as f32) + 0.05 * (j as f32);
+            Complex32::from_polar(1.0, phase)
+        });
+        let variance = Array2::<f32>::from_elem((m, n), 0.1);
+        let costs = compute_crlb_costs(igram.view(), variance.view(), None);
+        let g = RectangularGridGraph::new(m + 1, n + 1);
+        assert_eq!(costs.len(), g.num_arcs());
+        // Reverse arcs are negatives of forward arcs.
+        let (fwd, rev) = costs.split_at(g.num_forward);
+        for (f, r) in fwd.iter().zip(rev.iter()) {
+            assert_eq!(*r, -*f);
+        }
+    }
+
+    #[test]
+    fn low_variance_yields_higher_cost() {
+        let m = 8;
+        let n = 8;
+        let igram = Array2::from_shape_fn((m, n), |(_, _)| Complex32::from_polar(1.0, 0.0));
+        let var_low = Array2::<f32>::from_elem((m, n), 0.05);
+        let var_high = Array2::<f32>::from_elem((m, n), 1.0);
+        let costs_low = compute_crlb_costs(igram.view(), var_low.view(), None);
+        let costs_high = compute_crlb_costs(igram.view(), var_high.view(), None);
+        // Low variance → high precision → cost-to-tear should be higher.
+        let sum_low: i64 = costs_low.iter().take(64).map(|&c| c as i64).sum();
+        let sum_high: i64 = costs_high.iter().take(64).map(|&c| c as i64).sum();
+        assert!(sum_low > sum_high * 5, "low-variance cost should dominate");
+    }
+}
