@@ -110,3 +110,49 @@ pub fn unwrap_crlb(
     };
     Ok(unw)
 }
+
+/// Top-level CRLB-weighted phase unwrap with a virtual ground node.
+///
+/// Adds a single ground node connected to every boundary residue with a
+/// unit-capacity forward arc of cost `ground_cost`. Wrap-line endpoints
+/// can then terminate at the image boundary independently of each other,
+/// fixing the capacity-1 stacking limitation of [`unwrap_crlb`].
+///
+/// * `ground_cost = 0` — ground is free. Best for clean inputs whose
+///   wrap-lines all exit at the boundary (e.g. smooth ramps with no
+///   interior residues): MCF drains every boundary residue to ground
+///   independently and places no spurious flow on interior arcs, leaving
+///   the Itoh integration alone to recover the unwrap.
+/// * `ground_cost > 0` — ground is preferred only when it's cheaper than
+///   pairing with an opposite-sign interior residue along an internal
+///   path. For data with dense interior residues (real noisy IGs), a
+///   moderate positive cost keeps internal routing for the bulk of
+///   residues while still draining boundary-only wrap-lines to ground.
+pub fn unwrap_crlb_grounded(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    ground_cost: i32,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != variance.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_crlb_costs(igram, variance, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new_with_mask_and_ground(
+        &graph, residues.view(), &costs, mask, Some(ground_cost),
+    );
+    primal_dual::run(&graph, &mut net, 50);
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    Ok(unw)
+}
