@@ -21,6 +21,7 @@ requires-python = ">=3.9"
 dependencies = [
     "maturin>=1.5,<2.0",
     "numpy>=1.21",
+    "rasterio>=1.4.3",
 ]
 
 [dependency-groups]
