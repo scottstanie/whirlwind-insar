@@ -152,6 +152,104 @@ fn closure_correct<'py>(
     Ok(dict)
 }
 
+/// Per-pixel quality map: max |K| over the fundamental cycle basis, where
+/// K = round(cycle_residual / 2π) is the integer mismatch count per cycle.
+///
+/// Because phase linking guarantees the *wrapped* sum around any temporal
+/// cycle is exactly zero, any post-unwrap cycle residual is exactly 2π · K
+/// with K an integer. K=0 means all fundamental cycles through this pixel
+/// agree on the integer ambiguity choices; K≥1 means at least one cycle
+/// disagrees — typically water or decorrelated regions where per-IG
+/// unwraps were arbitrary.
+///
+/// Inputs:
+///   unw_stack       : float32 (E, m, n)
+///   edges_from      : uint32  (E,)
+///   edges_to        : uint32  (E,)
+///   n_dates         : int
+///   reference       : int
+///   tree_priority   : float32 (E,) or None — same semantics as closure_correct
+///
+/// Returns: uint16 (m, n).
+#[pyfunction]
+#[pyo3(signature = (unw_stack, edges_from, edges_to, n_dates, reference, tree_priority = None))]
+fn quality_map<'py>(
+    py: Python<'py>,
+    unw_stack: PyReadonlyArray3<'py, f32>,
+    edges_from: PyReadonlyArray1<'py, u32>,
+    edges_to: PyReadonlyArray1<'py, u32>,
+    n_dates: usize,
+    reference: usize,
+    tree_priority: Option<PyReadonlyArray1<'py, f32>>,
+) -> PyResult<Bound<'py, numpy::PyArray2<u16>>> {
+    let ef = edges_from.as_array();
+    let et = edges_to.as_array();
+    if ef.len() != et.len() {
+        return Err(PyValueError::new_err("edges_from and edges_to must be same length"));
+    }
+    let n_edges = ef.len();
+    let edges: Vec<whirlwind_core::closure::Edge> = ef
+        .iter()
+        .zip(et.iter())
+        .map(|(&a, &b)| whirlwind_core::closure::Edge { from: a, to: b })
+        .collect();
+    let graph = whirlwind_core::closure::TemporalGraph::new(n_dates, edges, reference);
+
+    let stack = unw_stack.as_array();
+    if stack.shape()[0] != n_edges {
+        return Err(PyValueError::new_err(format!(
+            "stack shape[0]={} != n_edges {n_edges}",
+            stack.shape()[0]
+        )));
+    }
+
+    let priority_owned: Option<Vec<f32>> = tree_priority.as_ref().map(|p| p.as_array().to_vec());
+    let priority_slice = priority_owned.as_deref();
+
+    let out = py.detach(|| {
+        whirlwind_core::closure::quality_max_integer_cycles(stack, &graph, priority_slice)
+    });
+    Ok(out.into_pyarray(py))
+}
+
+/// Per-pixel quality from temporal triangles (3-cycles).
+///
+/// Same idea as `quality_map` but uses only triangles instead of the
+/// fundamental cycle basis. Triangles are *local* (3 IGs per cycle), so
+/// errors don't accumulate over long tree paths — the recommended default
+/// for "reliable region" gating on phase-linked stacks where short-baseline
+/// triangle redundancy is the natural network structure.
+#[pyfunction]
+fn quality_triangles<'py>(
+    py: Python<'py>,
+    unw_stack: PyReadonlyArray3<'py, f32>,
+    edges_from: PyReadonlyArray1<'py, u32>,
+    edges_to: PyReadonlyArray1<'py, u32>,
+    n_dates: usize,
+) -> PyResult<Bound<'py, numpy::PyArray2<u16>>> {
+    let ef = edges_from.as_array();
+    let et = edges_to.as_array();
+    if ef.len() != et.len() {
+        return Err(PyValueError::new_err("edges_from and edges_to must be same length"));
+    }
+    let edges: Vec<whirlwind_core::closure::Edge> = ef
+        .iter()
+        .zip(et.iter())
+        .map(|(&a, &b)| whirlwind_core::closure::Edge { from: a, to: b })
+        .collect();
+    let graph = whirlwind_core::closure::TemporalGraph::new(n_dates, edges, 0);
+    let stack = unw_stack.as_array();
+    if stack.shape()[0] != ef.len() {
+        return Err(PyValueError::new_err(format!(
+            "stack shape[0]={} != n_edges {}", stack.shape()[0], ef.len()
+        )));
+    }
+    let out = py.detach(|| {
+        whirlwind_core::closure::quality_from_triangles(stack, &graph)
+    });
+    Ok(out.into_pyarray(py))
+}
+
 /// Cycle-greedy MCF refinement on an already-unwrapped stack.
 ///
 /// Unlike `closure_correct`, this does NOT trust the spanning tree —
@@ -236,5 +334,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(simulate_ifg, m)?)?;
     m.add_function(wrap_pyfunction!(closure_correct, m)?)?;
     m.add_function(wrap_pyfunction!(closure_refine_mcf, m)?)?;
+    m.add_function(wrap_pyfunction!(quality_map, m)?)?;
+    m.add_function(wrap_pyfunction!(quality_triangles, m)?)?;
     Ok(())
 }

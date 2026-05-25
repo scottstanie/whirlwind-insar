@@ -224,6 +224,7 @@ def run(
     mcf_refine: bool = False,
     reference_arg: str | None = None,
     closure_mode: str = "off",
+    quality_mask_threshold: int | None = None,
 ) -> None:
     print(f"[discover] scanning {dolphin}")
     igs, crlb_paths = discover_stack(dolphin)
@@ -376,6 +377,42 @@ def run(
     ref_dates = closure["date_phases"][:, ref_i, ref_j].copy()
     closure["date_phases"] -= ref_dates[:, None, None]
 
+    # Per-pixel quality map: max |K| over the fundamental-cycle basis. K is
+    # the integer ambiguity mismatch count per cycle. Phase linking gives
+    # zero wrapped misclosure, so the cycle sum of *true* per-IG phases is
+    # exactly 0 at every pixel; any unwrap of the cycle then differs from
+    # 0 by exactly 2π·K with K integer. We compute it on the
+    # reference-pixel-anchored stack so each IG reads 0 at the reference
+    # (K=0 there is trivial); the per-pixel K then measures only the
+    # spatially-relative unwrap consistency across loops.
+    #
+    # K=0 ⇒ all fundamental cycles through this pixel agree on the per-IG
+    # integer ambiguity choices ⇒ pixel is fully self-consistent.
+    # K≥1 ⇒ at least one cycle disagrees, typically water / heavily
+    # decorrelated pixels where per-IG unwraps are arbitrary.
+    t0 = time.perf_counter()
+    # Anchor a working copy of the raw unwrap stack at the reference (so the
+    # quality map reflects per-IG unwrap consistency relative to the same
+    # absolute datum, not the IG-arbitrary global integer offsets).
+    unw_anchored = unw_stack - unw_stack[:, ref_i:ref_i + 1, ref_j:ref_j + 1]
+    quality = ww.quality_triangles(
+        unw_anchored, edges_from, edges_to, len(dates),
+    )
+    dt = time.perf_counter() - t0
+    q_hist = np.bincount(quality.ravel(), minlength=4)
+    n_high = int(quality.size - q_hist[0] - q_hist[1] - q_hist[2])
+    print(f"[quality] map computed in {dt:.1f}s. K-histogram: "
+          f"0:{q_hist[0]:,}  1:{q_hist[1]:,}  2:{q_hist[2]:,}  "
+          f">2:{n_high:,}  "
+          f"({100*q_hist[0]/quality.size:.1f}% perfectly consistent)")
+
+    if quality_mask_threshold is not None:
+        bad = quality > quality_mask_threshold
+        n_bad = int(bad.sum())
+        closure["corrected"][:, bad] = np.nan
+        print(f"[quality] NaN'd {n_bad:,} pixels ({100*n_bad/bad.size:.1f}%) "
+              f"with K > {quality_mask_threshold}")
+
     # Per-date posterior variance from the tree.
     # With independent linked-SLC errors, telescoping along the tree gives
     #   var(θ_d) = σ²_ref + σ²_d
@@ -423,6 +460,13 @@ def run(
         prof_u16["dtype"] = "uint16"
         with rasterio.open(out_dir / "mcf_diagnostic" / "residual_violations.tif", "w", **prof_u16) as dst:
             dst.write(mcf["residual_violations"], 1)
+
+    # Quality map: per-pixel max |K| over fundamental cycles. uint16.
+    prof_q = dict(prof_unw)
+    prof_q["dtype"] = "uint16"
+    prof_q["predictor"] = 2
+    with rasterio.open(out_dir / "quality.tif", "w", **prof_q) as dst:
+        dst.write(quality, 1)
 
     # Closure RMS map.
     with rasterio.open(out_dir / "closure_rms.tif", "w", **prof_unw) as dst:
@@ -501,9 +545,18 @@ def main() -> None:
                    help="reference pixel for absolute-phase anchoring: 'auto' "
                         "(lowest-Σ-CRLB pixel), 'dolphin' (read timeseries/reference_point.txt), "
                         "or 'i,j' for explicit window-local coords")
+    p.add_argument("--quality-mask-threshold", type=int, default=None,
+                   help="NaN pixels in the corrected/ output where the quality "
+                        "map (per-pixel max |K| over fundamental temporal cycles) "
+                        "exceeds this integer. K=0 = all loops agree on integer "
+                        "ambiguities (PS/coherent land). K≥1 = at least one loop "
+                        "disagrees (typically water / decorrelated). Recommended "
+                        "starting value: 0 (strictest) or 1 (allow occasional "
+                        "noise). Off by default — quality.tif is always written.")
     args = p.parse_args()
     run(args.dolphin, args.out, args.window, args.max_igs, args.threads,
-        args.mcf_refine, args.reference, args.closure)
+        args.mcf_refine, args.reference, args.closure,
+        args.quality_mask_threshold)
 
 
 if __name__ == "__main__":
