@@ -268,15 +268,34 @@ On a 1024 × 1024 Palos Verdes tile, 60 IGs over 23 dates (7 distinct temporal b
 
 ![sample-pixel acquisition-phase time series](docs/figures/fig_palos_verdes_1024_displacement_timeseries.png)
 
-| metric | 60 IGs × 1024² | full scene (in progress) |
+#### Full-scene figures (4065 × 3802, 150 IGs, 52 acquisitions)
+
+![full-scene: wrapped vs ours vs dolphin SNAPHU](docs/figures/fig_palos_verdes_full_wrapped_vs_unwrapped.png)
+
+![full-scene: per-IG mod-2π agreement (all 150 IGs at 100 %) and absolute disagreement (median 4.72 rad)](docs/figures/fig_palos_verdes_full_per_ig_metrics.png)
+
+![full-scene: |whirlwind − dolphin SNAPHU| mod 2π map](docs/figures/fig_palos_verdes_full_diff_vs_dolphin.png)
+
+![full-scene: closure RMS map after correction (≈ 0)](docs/figures/fig_palos_verdes_full_closure_rms.png)
+
+![full-scene: per-acquisition posterior std cube (52 acquisitions)](docs/figures/fig_palos_verdes_full_posterior_std.png)
+
+![full-scene: sample-pixel acquisition-phase time series](docs/figures/fig_palos_verdes_full_displacement_timeseries.png)
+
+| metric | 60 IGs × 1024² tile | **150 IGs × 4065×3802 full scene** |
 |---|---|---|
-| median % within π/2 (mod 2π) | **100.00 %** | _TBD_ |
-| min %  within π/2 (mod 2π)  across IGs | **100.00 %** | _TBD_ |
-| median absolute RMS diff (anchored at same px) | 17.56 rad | _TBD_ |
-| median absolute max diff (anchored)           | 62.83 rad | _TBD_ |
-| median valid pixels per IG                     | 1,048,554 | _TBD_ |
-| Stage-1 (2D unwrap) wall clock, total          | 20.9 s    | _TBD_ |
-| Stage-2 (closure) wall clock                   | 0.7 s     | _TBD_ |
+| median % within π/2 (mod 2π) vs dolphin SNAPHU | **100.00 %** | **100.00 %** |
+| min %  within π/2 (mod 2π)  across IGs         | **100.00 %** | **100.00 %** |
+| median absolute RMS diff (anchored at same px) | 17.56 rad | **4.72 rad** |
+| median absolute max diff (anchored)            | 62.83 rad | 37.70 rad |
+| median valid pixels per IG                     | 1,048,554 | 15,423,348 |
+| Stage-1 (2D unwrap) wall clock, total          | 20.9 s    | 10,260 s   (171 min) |
+| Stage-1 wall clock, per IG (median)            | ~0.35 s   | 129 s |
+| Stage-2 (closure correction) wall clock        | 0.7 s     | **7.2 s** |
+| outer parallelism                              | 4 threads | 2 threads |
+| output size on disk (LZW + predictor 2)        | ~190 MB   | 16 GB |
+
+The lower full-scene absolute RMS (4.72 rad vs 17.56) is because the tile run auto-picked a reference pixel inside the tile, while the full-scene run used dolphin's own reference pixel at (225, 2633) — anchoring at the same exact pixel both runs used cuts the disagreement to under one cycle on the median IG. Stage 2 (closure correction) is **7.2 s on the full 15-Mpx × 150-IG stack** — the stripe-parallel implementation scales effectively linearly with pixel count.
 
 The residual *absolute* disagreement after both sides are anchored to the same reference pixel (~18 rad median RMS) comes from SNAPHU's per-connected-component integer choices that we do not replicate; both unwrappings are valid solutions of the underlying integer-ambiguity problem, and downstream displacement timeseries derived from either should agree to within the noise floor after their respective network inversions.
 
