@@ -394,9 +394,22 @@ The cycle-greedy MCF refinement `closure::refine_mcf` (`--mcf-refine`) is retain
 
 **Ground-node MCF.** Add a virtual ground node connected to every boundary residue with appropriate cost. Lets multiple wrap-lines terminate at the boundary without sharing the same arc, fixes the unit-capacity issue in §10.3, and is the textbook SNAPHU approach.
 
-### 10.6 Full-scene tiling
+### 10.6 Tiling
 
-The current pipeline runs on the whole scene in memory. For very large scenes (> 10× Palos Verdes) we would need spatial tiling with phase-offset reconciliation across tile boundaries — that reconciliation is itself a non-trivial secondary problem and is deferred.
+The Rust `unwrap_crlb_tiled` (exposed in Python as `tile_size`/`tile_overlap` kwargs on `unwrap_crlb`, and as `--tile-size`/`--tile-overlap` on the orchestrator) splits each IG into overlapping tiles, runs the existing MCF unwrap on each in parallel, then stitches by CRLB-weighted overlap-median 2π reconciliation in BFS order from a seed tile.
+
+What works well on Palos-Verdes 1024² test data:
+
+| tile_size + overlap | wall clock vs non-tiled | per-pixel agreement with non-tiled |
+|---|---|---|
+| 1024² (no tiling) | 0.49 s | (baseline) |
+| 512 + 128 | 0.21 s (2.3× faster) | **99.78 %** |
+| 256 + 64  | 0.11 s             | 3.5 %  ← single fictitious wrap-line at one tile boundary |
+| 128 + 32  | 0.10 s             | 97.1 % |
+
+The 256+64 anomaly (3.5 % match while neighbours both clear 97 %) is the dominant failure mode: smaller tiles ⇒ more independent per-tile integer-ambiguity choices ⇒ the overlap median picks a different 2π multiple for one specific tile, creating a fictitious wrap-line at its boundary. Larger tiles + larger overlaps suppress this; the recommended default is **tile_size ≥ 1024 with overlap ~tile_size/8**. The capped-memory benefit kicks in at scenes where the full residue / cost / network would not fit (per-tile RAM scales as O(tile_size²)).
+
+Still TODO: a virtual-ground-node MCF (§10.5) would replace the median-stitch with a globally-consistent integer assignment and make the choice of tile size irrelevant; today's stitching is a working heuristic.
 
 ## 11. References
 

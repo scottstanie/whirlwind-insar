@@ -25,8 +25,16 @@ def unwrap_crlb(
     igram: NDArray[np.complex64],
     variance: NDArray[np.float32],
     mask: NDArray[np.bool_] | None = ...,
+    tile_size: int = ...,
+    tile_overlap: int = ...,
 ) -> NDArray[np.float32]:
-    """2D phase unwrap with the CRLB-weighted Gaussian cost (for phase-linked IGs)."""
+    """2D phase unwrap with the CRLB-weighted Gaussian cost (for phase-linked IGs).
+
+    If ``tile_size > 0`` and the image is larger than one tile, the image is
+    split into overlapping tiles, each tile is unwrapped independently, and
+    they are stitched together by CRLB-weighted overlap-median 2π
+    reconciliation. Bounds per-IG MCF memory use to tile-size scale.
+    """
 
 def compute_residues(wrapped_phase: NDArray[np.float32]) -> NDArray[np.int32]:
     """Compute the integer residue grid from a wrapped-phase array."""

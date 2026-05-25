@@ -16,6 +16,7 @@ pub mod residue;
 pub mod shortest_path;
 pub mod simulate;
 pub mod ssp;
+pub mod tile;
 
 use ndarray::{Array2, ArrayView2};
 use num_complex::Complex32;
