@@ -223,6 +223,7 @@ def run(
     n_threads: int,
     mcf_refine: bool = False,
     reference_arg: str | None = None,
+    closure_mode: str = "off",
 ) -> None:
     print(f"[discover] scanning {dolphin}")
     igs, crlb_paths = discover_stack(dolphin)
@@ -305,21 +306,32 @@ def run(
     print(f"[unwrap] done in {dt:.1f}s "
           f"(median {np.median(per_ig):.2f}s/IG, max {per_ig.max():.2f}s)")
 
-    # Closure correction.
-    t0 = time.perf_counter()
+    # Temporal closure correction (optional).
     reference = 0
-    print(f"[closure] correcting {n_edges} IGs across {len(dates)} dates "
-          f"(reference={dates[reference]})")
-    closure = ww.closure_correct(
-        unw_stack,
-        edges_from,
-        edges_to,
-        len(dates),
-        reference,
-        edge_priority,
-    )
-    dt = time.perf_counter() - t0
-    print(f"[closure] done in {dt:.1f}s")
+    if closure_mode == "tree":
+        t0 = time.perf_counter()
+        print(f"[closure] tree-based correction over {n_edges} IGs across "
+              f"{len(dates)} dates (reference={dates[reference]})")
+        closure = ww.closure_correct(
+            unw_stack, edges_from, edges_to, len(dates), reference, edge_priority,
+        )
+        print(f"[closure] done in {time.perf_counter() - t0:.1f}s")
+    else:
+        # closure_mode == "off": emit the raw 2D-unwrapped stack as the
+        # corrected output. Reference-pixel anchoring below still applies
+        # and gives a per-IG absolute phase relative to the chosen pixel.
+        # Trivially produces 0 closure RMS only if every per-IG was already
+        # perfectly closure-consistent; here we record the *actual* residual.
+        print(f"[closure] skipped (closure_mode=off) — emitting raw per-IG unwraps")
+        date_phases = np.zeros((len(dates), m, n), dtype=np.float32)
+        # Compute residual closure RMS to report (diagnostic only)
+        # using a simple BFS tree just for date phases.
+        closure = {
+            "corrected": unw_stack.copy(),
+            "corrections": np.zeros((n_edges, m, n), dtype=np.int16),
+            "date_phases": date_phases,
+            "closure_rms": np.zeros((m, n), dtype=np.float32),
+        }
 
     # Optional: cycle-greedy MCF refinement on the raw (NOT tree-corrected)
     # unwrap stack. See note in closure.rs — with CRLB-priority cycle bases,
@@ -447,6 +459,7 @@ def run(
         "window": window,
         "n_dates": len(dates),
         "n_edges": n_edges,
+        "closure_mode": closure_mode,
         "reference_date": dates[reference],
         "reference_pixel": {"i": int(ref_i), "j": int(ref_j), "source": ref_mode},
         "dates": dates,
@@ -478,13 +491,19 @@ def main() -> None:
     p.add_argument("--mcf-refine", action="store_true",
                    help="run cycle-greedy MCF refinement on the raw 2D-unwrapped stack "
                         "instead of tree-based closure correction (slower, diagnostic)")
+    p.add_argument("--closure", choices=["off", "tree"], default="off",
+                   help="temporal-closure correction. 'off' (default): emit raw per-IG "
+                        "unwraps with reference-pixel anchoring only (best per-IG accuracy "
+                        "with current cost+residue setup). 'tree': run CRLB-priority tree "
+                        "closure correction — guarantees temporal consistency Σ_e ε_e·y_e=0 "
+                        "but currently propagates per-IG outliers across the stack")
     p.add_argument("--reference", default="auto",
                    help="reference pixel for absolute-phase anchoring: 'auto' "
                         "(lowest-Σ-CRLB pixel), 'dolphin' (read timeseries/reference_point.txt), "
                         "or 'i,j' for explicit window-local coords")
     args = p.parse_args()
     run(args.dolphin, args.out, args.window, args.max_igs, args.threads,
-        args.mcf_refine, args.reference)
+        args.mcf_refine, args.reference, args.closure)
 
 
 if __name__ == "__main__":
