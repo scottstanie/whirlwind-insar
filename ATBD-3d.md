@@ -291,13 +291,34 @@ The "before" column reflects the residue-boundary bug described in §10.1; both 
 
 #### Full-scene figures (4065 × 3802, 150 IGs, 52 acquisitions)
 
-The figures below were regenerated with the boundary-residue fix; the table updates on completion of the full re-run.
+Anchored at dolphin's own reference pixel (225, 2633).
 
 ![full-scene: wrapped vs ours vs dolphin SNAPHU](docs/figures/fig_palos_verdes_full_wrapped_vs_unwrapped.png)
 
+The whirlwind-rs panel (middle) and the dolphin SNAPHU panel (right) share the same colour scale and the same large-scale spatial structure: the blue (negative) regions in the lower right and the red (positive) regions in the upper centre match across the two unwrappings.
+
 ![full-scene: per-IG mod-2π agreement and absolute disagreement](docs/figures/fig_palos_verdes_full_per_ig_metrics.png)
 
+100 % mod-2π agreement on every one of the 150 IGs; the per-IG absolute RMS clusters tightly around 2–3 rad with a handful of outliers in the 6–7 rad band (one connected region off by ±2π).
+
 ![full-scene: |whirlwind − dolphin SNAPHU| mod 2π map](docs/figures/fig_palos_verdes_full_diff_vs_dolphin.png)
+
+#### Aggregate metrics — full scene
+
+| metric | before residue-boundary fix | **after fix (current)** |
+|---|---|---|
+| median % within π/2 (mod 2π) vs SNAPHU | 100.00 % | **100.00 %** |
+| min %  within π/2 across IGs           | 100.00 % | **100.00 %** |
+| **median absolute RMS vs SNAPHU** (anchored at dolphin's reference) | 4.72 rad | **2.31 rad** |
+| median absolute max diff (per IG)      | 37.70 rad | **25.13 rad** |
+| per-IG anchor offset std (across stack) | (n/a, closure on) | **7.6 rad** |
+| Stage-1 (2D unwrap) wall clock, total  | 10,260 s (171 min) | **1989 s (33 min)** |
+| Stage-1 per-IG median                  | 129 s | **24.4 s** |
+| n IGs, n dates                         | 150, 52 | 150, 52 |
+| valid pixels per IG (median)           | 15.4 M | 15.4 M |
+| outer parallelism / threads            | 2 | 2 |
+
+The 5× Stage-1 speedup comes from the boundary-residue fix indirectly: with proper boundary residues the MCF converges in far fewer primal-dual iterations on real noisy data, so each IG finishes faster.
 
 ### 9.2 Injection stress test on the unwrapped stack
 
