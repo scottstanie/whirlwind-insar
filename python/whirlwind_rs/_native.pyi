@@ -90,3 +90,32 @@ def closure_refine_mcf(
 
     Routes integer cycle violations to the highest-σ² edge in each cycle.
     """
+
+
+def quality_map(
+    unw_stack: NDArray[np.float32],
+    edges_from: NDArray[np.uint32],
+    edges_to: NDArray[np.uint32],
+    n_dates: int,
+    reference: int,
+    tree_priority: NDArray[np.float32] | None = ...,
+) -> NDArray[np.uint16]:
+    """Per-pixel max |K| over the *fundamental* temporal cycle basis.
+
+    K = round(cycle_residual / 2π); 0 on perfectly consistent pixels.
+    Cycles are length up to D-1 (tree path); errors accumulate. Prefer
+    `quality_triangles` for phase-linked stacks with triangle redundancy.
+    """
+
+
+def quality_triangles(
+    unw_stack: NDArray[np.float32],
+    edges_from: NDArray[np.uint32],
+    edges_to: NDArray[np.uint32],
+    n_dates: int,
+) -> NDArray[np.uint16]:
+    """Per-pixel max |K| over all temporal triangles (3-cycles).
+
+    Local 3-cycle check — recommended over `quality_map` for phase-linked
+    stacks where short-baseline triangles are the natural redundancy.
+    """

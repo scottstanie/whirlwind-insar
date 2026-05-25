@@ -116,6 +116,26 @@ def main() -> None:
     plt.close(fig)
     print(f"[fig] wrote {out_path.name}")
 
+    # ---- Quality map (always written) ----
+    qpath = args.ours / "quality.tif"
+    if qpath.exists():
+        q = _read(qpath)
+        n_total = q.size
+        n_zero = int((q == 0).sum())
+        n_one = int((q == 1).sum())
+        n_high = int((q > 1).sum())
+        fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
+        im = ax.imshow(q, cmap="hot", vmin=0, vmax=max(1, float(np.percentile(q, 99))))
+        ax.set_title(
+            f"per-pixel max |K| over temporal triangles  (anchored at reference)\n"
+            f"K=0: {100*n_zero/n_total:.1f}%  |  "
+            f"K=1: {100*n_one/n_total:.1f}%  |  K>1: {100*n_high/n_total:.1f}%"
+        )
+        plt.colorbar(im, ax=ax, shrink=0.7, label="K (integer)")
+        fig.savefig(args.out / f"fig_{args.name}_quality.png", dpi=120)
+        plt.close(fig)
+        print(f"[fig] wrote fig_{args.name}_quality.png")
+
     # ---- Closure-RMS + posterior-std figures only when closure was run ----
     # These figures describe the output of the temporal closure step, which
     # currently amplifies per-IG outliers more than it suppresses them; the
