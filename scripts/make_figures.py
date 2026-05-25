@@ -75,9 +75,11 @@ def main() -> None:
     ref = report["reference_pixel"]
     window = report.get("window")
     crop = Window(window[1], window[0], window[3] - window[1], window[2] - window[0]) if window else None  # type: ignore[call-arg]
+    closure_on = report.get("closure_mode", "tree") != "off"
 
     print(f"[fig] {len(edges)} IGs over {len(dates)} dates")
     print(f"[fig] reference pixel: ({ref['i']}, {ref['j']})")
+    print(f"[fig] closure correction: {'on' if closure_on else 'off'}")
 
     # ---- Figure 1: wrapped vs ours vs dolphin SNAPHU for one representative IG ----
     pick = edges[len(edges) // 2]  # middle of stack
@@ -95,7 +97,8 @@ def main() -> None:
     axes[0].set_title(f"Wrapped phase\n{name_ig[:8]}_{name_ig[15:23]}")
     plt.colorbar(im0, ax=axes[0], shrink=0.7, label="rad")
     im1 = axes[1].imshow(ours, cmap="RdBu_r", vmin=np.percentile(ours, 1), vmax=np.percentile(ours, 99))
-    axes[1].set_title("whirlwind-rs unwrapped\n(closure-corrected, anchored)")
+    suffix = "closure-corrected, anchored" if closure_on else "anchored"
+    axes[1].set_title(f"whirlwind-rs unwrapped\n({suffix})")
     plt.colorbar(im1, ax=axes[1], shrink=0.7, label="rad")
     if args.dolphin:
         unw_path = args.dolphin / "unwrapped" / f"{name_ig}.unw.tif"
@@ -113,42 +116,43 @@ def main() -> None:
     plt.close(fig)
     print(f"[fig] wrote {out_path.name}")
 
-    # ---- Figure 2: closure RMS map ----
-    rms = _read(args.ours / "closure_rms.tif")
-    fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
-    im = ax.imshow(rms, cmap="magma", vmin=0, vmax=max(1e-3, float(np.percentile(rms, 99))))
-    ax.set_title(f"Closure RMS after correction (≈ 0 by construction)\nmean = {rms.mean():.2e} rad")
-    plt.colorbar(im, ax=ax, shrink=0.7, label="rad")
-    fig.savefig(args.out / f"fig_{args.name}_closure_rms.png", dpi=120)
-    plt.close(fig)
-    print(f"[fig] wrote fig_{args.name}_closure_rms.png")
+    # ---- Closure-RMS + posterior-std figures only when closure was run ----
+    # These figures describe the output of the temporal closure step, which
+    # currently amplifies per-IG outliers more than it suppresses them; the
+    # default pipeline runs with closure off and emits raw per-IG unwraps.
+    if closure_on:
+        rms = _read(args.ours / "closure_rms.tif")
+        fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
+        im = ax.imshow(rms, cmap="magma", vmin=0, vmax=max(1e-3, float(np.percentile(rms, 99))))
+        ax.set_title(f"Closure RMS after correction (≈ 0 by construction)\nmean = {rms.mean():.2e} rad")
+        plt.colorbar(im, ax=ax, shrink=0.7, label="rad")
+        fig.savefig(args.out / f"fig_{args.name}_closure_rms.png", dpi=120)
+        plt.close(fig)
+        print(f"[fig] wrote fig_{args.name}_closure_rms.png")
 
-    # ---- Figure 3: per-date posterior std heatmap ----
-    with rasterio.open(args.ours / "date_phase_std.tif") as src:
-        std_cube = src.read()  # (D, m, n)
-    # Spatially-averaged per-date std
-    per_date_med = np.array([
-        float(np.median(std_cube[d][std_cube[d] > 0])) if (std_cube[d] > 0).any() else 0.0
-        for d in range(std_cube.shape[0])
-    ])
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
-    # Heatmap of (date, pixel-row) of per-date std (averaged across columns)
-    per_date_row = std_cube.mean(axis=2)  # (D, m)
-    im = axes[0].imshow(per_date_row, aspect="auto", cmap="viridis", origin="lower")
-    axes[0].set_xlabel("image row")
-    axes[0].set_ylabel("acquisition index")
-    axes[0].set_title("posterior std per date (col-averaged)")
-    plt.colorbar(im, ax=axes[0], shrink=0.7, label="rad")
-    dts = [_parse_date(d) for d in dates]
-    axes[1].plot(dts, per_date_med, "o-")
-    axes[1].set_ylabel("median posterior std (rad)")
-    axes[1].set_xlabel("acquisition date")
-    axes[1].set_title("scene-median posterior std per acquisition")
-    axes[1].grid(alpha=0.3)
-    fig.autofmt_xdate()
-    fig.savefig(args.out / f"fig_{args.name}_posterior_std.png", dpi=120)
-    plt.close(fig)
-    print(f"[fig] wrote fig_{args.name}_posterior_std.png")
+        with rasterio.open(args.ours / "date_phase_std.tif") as src:
+            std_cube = src.read()  # (D, m, n)
+        per_date_med = np.array([
+            float(np.median(std_cube[d][std_cube[d] > 0])) if (std_cube[d] > 0).any() else 0.0
+            for d in range(std_cube.shape[0])
+        ])
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
+        per_date_row = std_cube.mean(axis=2)
+        im = axes[0].imshow(per_date_row, aspect="auto", cmap="viridis", origin="lower")
+        axes[0].set_xlabel("image row")
+        axes[0].set_ylabel("acquisition index")
+        axes[0].set_title("posterior std per date (col-averaged)")
+        plt.colorbar(im, ax=axes[0], shrink=0.7, label="rad")
+        dts = [_parse_date(d) for d in dates]
+        axes[1].plot(dts, per_date_med, "o-")
+        axes[1].set_ylabel("median posterior std (rad)")
+        axes[1].set_xlabel("acquisition date")
+        axes[1].set_title("scene-median posterior std per acquisition")
+        axes[1].grid(alpha=0.3)
+        fig.autofmt_xdate()
+        fig.savefig(args.out / f"fig_{args.name}_posterior_std.png", dpi=120)
+        plt.close(fig)
+        print(f"[fig] wrote fig_{args.name}_posterior_std.png")
 
     # ---- Figure 4 + 5: per-IG diff vs dolphin SNAPHU (if available) ----
     # We compare against dolphin/unwrapped/*.unw.tif — the per-IG SNAPHU
@@ -233,32 +237,33 @@ def main() -> None:
         plt.close(fig)
         print(f"[fig] wrote fig_{args.name}_per_ig_metrics.png")
 
-    # ---- Figure 6: timeseries at sample pixels ----
-    with rasterio.open(args.ours / "date_phases.tif") as src:
-        theta = src.read()  # (D, m, n)
-    rng = np.random.default_rng(0)
-    h, w = theta.shape[1], theta.shape[2]
-    sample_ij = []
-    for _ in range(args.n_sample_pixels):
-        for _ in range(50):
-            i, j = rng.integers(0, h), rng.integers(0, w)
-            if not np.any(np.isnan(theta[:, i, j])):
-                sample_ij.append((int(i), int(j)))
-                break
-    fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
-    dts = [_parse_date(d) for d in dates]
-    for (i, j) in sample_ij:
-        ax.plot(dts, theta[:, i, j], "o-", alpha=0.7, label=f"({i},{j})")
-    ax.axhline(0, color="black", lw=0.5, alpha=0.5)
-    ax.set_xlabel("acquisition date")
-    ax.set_ylabel("relative phase (rad, anchored at reference)")
-    ax.set_title(f"acquisition phase θ_d at {len(sample_ij)} random pixels")
-    ax.legend(fontsize=7)
-    ax.grid(alpha=0.3)
-    fig.autofmt_xdate()
-    fig.savefig(args.out / f"fig_{args.name}_displacement_timeseries.png", dpi=120)
-    plt.close(fig)
-    print(f"[fig] wrote fig_{args.name}_displacement_timeseries.png")
+    # ---- θ_d(t) at sample pixels — only meaningful when closure was run ----
+    if closure_on:
+        with rasterio.open(args.ours / "date_phases.tif") as src:
+            theta = src.read()  # (D, m, n)
+        rng = np.random.default_rng(0)
+        h, w = theta.shape[1], theta.shape[2]
+        sample_ij = []
+        for _ in range(args.n_sample_pixels):
+            for _ in range(50):
+                i, j = rng.integers(0, h), rng.integers(0, w)
+                if not np.any(np.isnan(theta[:, i, j])):
+                    sample_ij.append((int(i), int(j)))
+                    break
+        fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
+        dts = [_parse_date(d) for d in dates]
+        for (i, j) in sample_ij:
+            ax.plot(dts, theta[:, i, j], "o-", alpha=0.7, label=f"({i},{j})")
+        ax.axhline(0, color="black", lw=0.5, alpha=0.5)
+        ax.set_xlabel("acquisition date")
+        ax.set_ylabel("relative phase (rad, anchored at reference)")
+        ax.set_title(f"acquisition phase θ_d at {len(sample_ij)} random pixels")
+        ax.legend(fontsize=7)
+        ax.grid(alpha=0.3)
+        fig.autofmt_xdate()
+        fig.savefig(args.out / f"fig_{args.name}_displacement_timeseries.png", dpi=120)
+        plt.close(fig)
+        print(f"[fig] wrote fig_{args.name}_displacement_timeseries.png")
 
     print(f"\n[done] figures in {args.out}")
 

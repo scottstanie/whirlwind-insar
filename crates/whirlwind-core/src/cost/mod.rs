@@ -332,20 +332,40 @@ fn use_llr_cost() -> bool {
 
 /// Minimum CRLB variance accepted, in rad². Anything below this gets clamped
 /// so the inverse-variance weight stays finite. 1e-3 corresponds to
-/// γ_equiv ≈ 0.999 — essentially noiseless — and prevents nodata=0 pixels
-/// from producing infinite costs.
+/// γ_equiv ≈ 0.999 — essentially noiseless.
 pub const CRLB_VARIANCE_FLOOR: f32 = 1e-3;
+
+/// Variance assumed for missing CRLB (≤0 or non-finite). Phase linking
+/// writes 0 for pixels it didn't pick (PS/DS thresholding) and for real
+/// nodata at scene edges; those pixels are *unreliable*, not noiseless,
+/// so they should get *low* inverse-variance weight (cheap to cut).
+///
+/// 50 rad² is roughly what a γ≈0.1 pixel would give from the Lee multilook
+/// variance at L=5 looks. With it the per-edge weight is ~0.01, ~3 orders
+/// of magnitude weaker than a typical PS pixel (σ²~0.2 ⇒ w~2.5). MCF still
+/// has a residual cost gradient (so it prefers short routes through noise)
+/// but routes flow *into* nodata rather than away from it.
+pub const CRLB_VARIANCE_NODATA: f32 = 50.0;
+
+/// Per-pixel variance after nodata / clamp policy. Negative, zero, NaN, or
+/// non-finite inputs are treated as nodata (→ `CRLB_VARIANCE_NODATA`); all
+/// other values are clamped to `[CRLB_VARIANCE_FLOOR, CRLB_VARIANCE_NODATA]`.
+#[inline]
+fn per_pixel_var(v: f32) -> f32 {
+    if !v.is_finite() || v <= 0.0 {
+        CRLB_VARIANCE_NODATA
+    } else {
+        v.clamp(CRLB_VARIANCE_FLOOR, CRLB_VARIANCE_NODATA)
+    }
+}
 
 /// Compute integer costs from CRLB-derived per-IG phase variance.
 ///
 /// * `igram`     — complex IG, shape (m_phase, n_phase).
 /// * `variance`  — per-pixel phase variance for this IG (σ²_a + σ²_b),
-///                 same shape, in rad². NoData should be passed as a very
-///                 large number (or 0; we clamp).
+///                 same shape, in rad². NoData = 0 (or NaN, or ≤0) is
+///                 mapped to `CRLB_VARIANCE_NODATA` (cheap to cut through).
 /// * `mask`      — optional valid-pixel mask.
-///
-/// Pixels with `variance <= 0` (NoData) get clipped to `CRLB_VARIANCE_FLOOR`
-/// for cost computation but are excluded by `mask` if provided.
 pub fn compute_crlb_costs(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
@@ -488,8 +508,8 @@ fn build_inv_var_dy(variance: ArrayView2<f32>) -> Array2<f32> {
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase {
-                let s = (variance[(i, j)].max(CRLB_VARIANCE_FLOOR))
-                    + (variance[(i + 1, j)].max(CRLB_VARIANCE_FLOOR));
+                let s = per_pixel_var(variance[(i, j)])
+                    + per_pixel_var(variance[(i + 1, j)]);
                 row[j] = 1.0 / s;
             }
         });
@@ -505,8 +525,8 @@ fn build_inv_var_dx(variance: ArrayView2<f32>) -> Array2<f32> {
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase - 1 {
-                let s = (variance[(i, j)].max(CRLB_VARIANCE_FLOOR))
-                    + (variance[(i, j + 1)].max(CRLB_VARIANCE_FLOOR));
+                let s = per_pixel_var(variance[(i, j)])
+                    + per_pixel_var(variance[(i, j + 1)]);
                 row[j] = 1.0 / s;
             }
         });
@@ -551,5 +571,45 @@ mod crlb_tests {
         let sum_low: i64 = costs_low.iter().take(64).map(|&c| c as i64).sum();
         let sum_high: i64 = costs_high.iter().take(64).map(|&c| c as i64).sum();
         assert!(sum_low > sum_high * 5, "low-variance cost should dominate");
+    }
+
+    #[test]
+    fn nodata_variance_yields_lower_cost_than_valid() {
+        // Phase-linking writes 0 to CRLB rasters for pixels it didn't pick
+        // (PS/DS thresholding) and for true nodata at scene edges. Those
+        // pixels are *unreliable*, not noiseless, and must get LOW per-edge
+        // cost (≈ free to route 2π discontinuities through them) — the
+        // opposite of the pre-fix behavior, which clamped 0 → 1e-3 → highest
+        // possible cost and caused MCF to route flow through actual PS
+        // pixels (cheaper), corrupting the few good measurements.
+        let m = 8;
+        let n = 8;
+        // Constant smooth IG so alpha=0 everywhere ⇒ max-magnitude cost.
+        let igram = Array2::from_shape_fn((m, n), |_| Complex32::from_polar(1.0, 0.0));
+        let var_nodata = Array2::<f32>::from_elem((m, n), 0.0); // CRLB nodata convention
+        let var_valid = Array2::<f32>::from_elem((m, n), 0.2); // typical PS pixel
+        let costs_nodata = compute_crlb_costs(igram.view(), var_nodata.view(), None);
+        let costs_valid = compute_crlb_costs(igram.view(), var_valid.view(), None);
+        let sum_nodata: i64 = costs_nodata.iter().take(64).map(|c| c.abs() as i64).sum();
+        let sum_valid: i64 = costs_valid.iter().take(64).map(|c| c.abs() as i64).sum();
+        assert!(
+            sum_valid > sum_nodata * 50,
+            "valid CRLB should cost ≫ nodata: valid={sum_valid}, nodata={sum_nodata}"
+        );
+    }
+
+    #[test]
+    fn nan_variance_treated_as_nodata() {
+        let m = 8;
+        let n = 8;
+        let igram = Array2::from_shape_fn((m, n), |_| Complex32::from_polar(1.0, 0.0));
+        let mut var = Array2::<f32>::from_elem((m, n), 0.2);
+        var[(3, 3)] = f32::NAN;
+        var[(3, 4)] = f32::NEG_INFINITY;
+        // Should not panic, should not produce NaN/inf in cost.
+        let costs = compute_crlb_costs(igram.view(), var.view(), None);
+        for c in &costs {
+            assert!(c.abs() < 1_000_000, "cost overflowed: {c}");
+        }
     }
 }

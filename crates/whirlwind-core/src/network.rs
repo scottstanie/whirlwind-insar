@@ -77,10 +77,72 @@ impl Network {
             cost_fwd,
             is_saturated: sat,
         };
+        // NOTE: we deliberately do NOT forbid the "frame-along" arcs of the
+        // residue grid (right/left arcs at residue rows 0 & m; down/up arcs
+        // at residue cols 0 & n). Those arcs have cost 0 because they cross
+        // non-existent pixel edges, and that cost-0 channel along the frame
+        // is *what makes the boundary residues work right* for clean
+        // wrapping inputs (e.g. a smooth ramp whose wrap lines exit the
+        // image with no interior residues): MCF routes the boundary
+        // termination charge along the frame for free without injecting
+        // spurious 2π corrections at interior arcs, and integration's Itoh
+        // pass alone recovers the correct unwrap. Forcing MCF through the
+        // interior would create wrong-sign corrections at row/column edges
+        // that didn't actually wrap. (The helper `forbid_frame_along_arcs`
+        // remains for use by future flow-policy experiments but is not
+        // called on the default path.)
         if let Some(mm) = mask {
             net.forbid_masked_arcs(g, mm);
         }
         net
+    }
+
+    /// Forbid the arcs that run *along* the boundary frame of the residue
+    /// grid. Kept for future flow-policy experiments — not currently called
+    /// from `new_with_mask`; see the comment there for why allowing
+    /// frame-along routing is the right default.
+    #[allow(dead_code)]
+    fn forbid_frame_along_arcs(&mut self, g: &RectangularGridGraph) {
+        let m = g.m; // residue rows: 0..m, frame at 0 and m-1
+        let n = g.n; // residue cols: 0..n, frame at 0 and n-1
+        // Horizontal arcs along the top frame (residue row 0): right(0, j) /
+        // left(0, j+1) for j in 0..n-1.
+        for j in 0..n - 1 {
+            let r = g.right_arc(0, j).unwrap();
+            let l = g.left_arc(0, j + 1).unwrap();
+            self.is_saturated.set(r, true);
+            self.is_saturated.set(l, true);
+            self.is_saturated.set(g.transpose(r), true);
+            self.is_saturated.set(g.transpose(l), true);
+        }
+        // Horizontal arcs along the bottom frame (residue row m-1):
+        for j in 0..n - 1 {
+            let r = g.right_arc(m - 1, j).unwrap();
+            let l = g.left_arc(m - 1, j + 1).unwrap();
+            self.is_saturated.set(r, true);
+            self.is_saturated.set(l, true);
+            self.is_saturated.set(g.transpose(r), true);
+            self.is_saturated.set(g.transpose(l), true);
+        }
+        // Vertical arcs along the left frame (residue col 0): down(i, 0) /
+        // up(i+1, 0) for i in 0..m-1.
+        for i in 0..m - 1 {
+            let d = g.down_arc(i, 0).unwrap();
+            let u = g.up_arc(i + 1, 0).unwrap();
+            self.is_saturated.set(d, true);
+            self.is_saturated.set(u, true);
+            self.is_saturated.set(g.transpose(d), true);
+            self.is_saturated.set(g.transpose(u), true);
+        }
+        // Vertical arcs along the right frame (residue col n-1):
+        for i in 0..m - 1 {
+            let d = g.down_arc(i, n - 1).unwrap();
+            let u = g.up_arc(i + 1, n - 1).unwrap();
+            self.is_saturated.set(d, true);
+            self.is_saturated.set(u, true);
+            self.is_saturated.set(g.transpose(d), true);
+            self.is_saturated.set(g.transpose(u), true);
+        }
     }
 
     /// For each pixel-edge whose endpoints aren't both valid, mark the two
