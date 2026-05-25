@@ -252,11 +252,66 @@ The per-IG 2D unwrap time scales *superlinearly* with pixel count. On Palos Verd
 
 The orders-of-magnitude speedup in Stage 2 over spurt's EMCF is algorithmic (tree projection vs. MCF), not language. The 2D-stage speedup over C++ Whirlwind comes from rayon-parallel cost computation, Dial's bucket-queue Dijkstra with early-exit, and tighter inner loops.
 
-### 9.1 Validation against dolphin
+### 9.1 Validation against dolphin (Palos Verdes, 1024² tile)
 
-On a 1024² Palos Verdes tile, 60 IGs over 23 dates, whirlwind-rs agrees with dolphin's SNAPHU-based unwrapping modulo $2\pi$ at **100% of pixels on every IG**. The residual absolute disagreement after both sides are anchored to the same reference pixel comes from SNAPHU's connected-component integer choices that we do not replicate; both unwrappings are valid solutions of the underlying ambiguity.
+On a 1024 × 1024 Palos Verdes tile, 60 IGs over 23 dates (7 distinct temporal baselines from 3 to 18 days), whirlwind-rs agrees with dolphin's SNAPHU-based per-IG unwrapping modulo $2\pi$ at **100% of pixels on every IG** — both `median % within π/2 (mod 2π)` and `min % within π/2 across IGs` are exactly 100.00%. We do not directly compare against dolphin's `timeseries/*.tif` files because those are SBAS-inverted *displacement* in metres, a separate mathematical object from per-IG phase.
 
-In an injection stress test where 5000 random per-pixel ±1/±2 cycle errors were planted on the unwrapped stack, the tree-based corrector **recovered 100% of non-tree-edge injections** (3131/3131) and **0% of tree-edge injections** (0/1869, by design — tree edges are trusted). Of the 62.9 million *non-injected* edge-pixels, 0.024% were perturbed by tree-edge error propagation, scoping the cost of the tree-trust assumption.
+![wrapped vs ours vs dolphin SNAPHU](docs/figures/fig_palos_verdes_1024_wrapped_vs_unwrapped.png)
+
+![per-IG mod-2π agreement and absolute disagreement vs dolphin SNAPHU](docs/figures/fig_palos_verdes_1024_per_ig_metrics.png)
+
+![|whirlwind − dolphin SNAPHU| mod 2π map](docs/figures/fig_palos_verdes_1024_diff_vs_dolphin.png)
+
+![closure RMS map after correction (≈ 0 by construction)](docs/figures/fig_palos_verdes_1024_closure_rms.png)
+
+![per-acquisition posterior std cube](docs/figures/fig_palos_verdes_1024_posterior_std.png)
+
+![sample-pixel acquisition-phase time series](docs/figures/fig_palos_verdes_1024_displacement_timeseries.png)
+
+| metric | 60 IGs × 1024² | full scene (in progress) |
+|---|---|---|
+| median % within π/2 (mod 2π) | **100.00 %** | _TBD_ |
+| min %  within π/2 (mod 2π)  across IGs | **100.00 %** | _TBD_ |
+| median absolute RMS diff (anchored at same px) | 17.56 rad | _TBD_ |
+| median absolute max diff (anchored)           | 62.83 rad | _TBD_ |
+| median valid pixels per IG                     | 1,048,554 | _TBD_ |
+| Stage-1 (2D unwrap) wall clock, total          | 20.9 s    | _TBD_ |
+| Stage-2 (closure) wall clock                   | 0.7 s     | _TBD_ |
+
+The residual *absolute* disagreement after both sides are anchored to the same reference pixel (~18 rad median RMS) comes from SNAPHU's per-connected-component integer choices that we do not replicate; both unwrappings are valid solutions of the underlying integer-ambiguity problem, and downstream displacement timeseries derived from either should agree to within the noise floor after their respective network inversions.
+
+### 9.2 Injection stress test on the unwrapped stack
+
+5000 random per-pixel integer errors of ±1 or ±2 cycles planted into the 1024² closure-corrected stack:
+
+| | recovered (|Δ| < 0.1 rad of original) |
+|---|---|
+| Non-tree-edge injections  | **3131 / 3131 = 100.00 %** |
+| Tree-edge injections      | 0 / 1869 = 0.00 % *(by design — tree edges are trusted; this scopes the tree-trust assumption)* |
+| Non-injected edge-pixels disturbed | 15,332 / 62.9 M = **0.024 %** |
+
+### 9.3 vs C++ Whirlwind (the WW author asked)
+
+Pixel-identical output (mod $2\pi$) on every test, with the Rust port substantially faster:
+
+| input | C++ Whirlwind | whirlwind-rs | speedup |
+|---|---|---|---|
+| synthetic noisy bump, 256² | 57 ms | 2 ms | 32× |
+| synthetic noisy bump, 512² | 258 ms | 5 ms | 57× |
+| synthetic noisy bump, 1024² | 1009 ms | 15 ms | 68× |
+| synthetic noisy bump, 2048² | 3743 ms | 52 ms | 72× |
+| real Palos Verdes IGs, 1024² (10 IGs median) | ~3.0 s | ~1.0 s | **3.1×** |
+
+Synthetic ≫ real because clean data leaves cost computation as the dominant stage (rayon-parallel in Rust, single-threaded in C++) while noisy data is MCF-bound and both implementations do similar work inside the inner loop. Rust still wins from the Dial bucket queue + early-exit Dijkstra in the noisy regime.
+
+### 9.4 Reproducing this validation
+
+```bash
+./scripts/reproduce.sh           # 1024² tile, ~30 s wall clock, ~5 GB RAM
+./scripts/reproduce.sh --full    # full 4065×3802 scene, ~2-4 h, ~25 GB RAM
+```
+
+The reproducer runs `unwrap_stack.py` → `compare_to_dolphin_unwrapped.py` → `make_figures.py` end-to-end and writes outputs + figures to `/tmp/whirlwind-repro/`.
 
 ## 10. Honest Limitations and Future Work
 
