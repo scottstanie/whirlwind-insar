@@ -10,7 +10,7 @@ use crate::shortest_path::dijkstra_multi_source;
 pub fn run(g: &RectangularGridGraph, net: &mut Network) {
     let dbg = crate::primal_dual::debug_enabled();
     let mut safety = 0;
-    let safety_limit = 4 * g.num_nodes();
+    let safety_limit = 4 * net.num_nodes();
     while net.excess_nodes().next().is_some() {
         if dbg && safety % 50 == 0 {
             let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
@@ -33,7 +33,7 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network) {
             if parc < 0 { break; }
             arcs.push(parc as usize);
             cur = sp.pred_node[cur] as usize;
-            if arcs.len() > g.num_nodes() {
+            if arcs.len() > net.num_nodes() {
                 arcs.clear();
                 break;
             }
@@ -57,7 +57,7 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network) {
             .filter_map(|(&d, &p)| if p { Some(d) } else { None })
             .max()
             .unwrap_or(0);
-        for v in 0..g.num_nodes() {
+        for v in 0..net.num_nodes() {
             let dv = if sp.popped[v] { sp.dist[v] } else { d_max };
             net.potential[v] -= dv;
         }

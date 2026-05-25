@@ -1,6 +1,6 @@
 use ndarray::Array2;
 use num_complex::Complex32;
-use whirlwind_core::{simulate, unwrap};
+use whirlwind_core::{simulate, unwrap, unwrap_crlb_grounded};
 
 /// Constant 2π offset between unwrapped and truth is unobservable; subtract
 /// the modal offset before comparing.
@@ -22,17 +22,15 @@ fn max_abs_err(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
         .fold(0.0_f32, f32::max)
 }
 
-/// Synthetic smooth-ramp regression test. KNOWN-FAILING with the current
-/// boundary-residue + unit-capacity setup: a 6π ramp produces 6 wrap-lines
-/// that all converge on the same image corner; each line needs a unit of
-/// flow through the same frame-along arc, but unit-capacity allows only one.
-/// The overflow flows spill onto interior arcs and create spurious 2π
-/// corrections at pixel edges that did not actually wrap, leading to a
-/// 4-6π misalignment after `align_to_truth`. Real noisy data is unaffected
-/// because residues are scattered. The fix is to allow multi-unit capacity
-/// or to add a virtual ground node; see ATBD-3d §10.3.
+/// Synthetic smooth-ramp regression test. KNOWN-FAILING under [`unwrap`]
+/// (coherence cost, no ground node): a 6π ramp produces 6 wrap-lines
+/// converging at the corner; each needs unit flow through the same
+/// frame-along arc, but unit-capacity allows only one. The overflow spills
+/// onto interior arcs and creates spurious 2π corrections.
+/// The companion test [`diagonal_ramp_512_grounded`] uses
+/// `unwrap_crlb_grounded` with a virtual ground node and PASSES.
 #[test]
-#[ignore = "capacity-1 frame-along arcs can't carry multiple stacked wrap-line flows; see ATBD-3d §10.3"]
+#[ignore = "capacity-1 frame-along arcs can't carry multiple stacked wrap-line flows; use unwrap_crlb_grounded instead (see diagonal_ramp_512_grounded)"]
 fn diagonal_ramp_512() {
     let truth = simulate::diagonal_ramp((512, 512));
     let wrapped = simulate::wrap_phase(&truth);
@@ -46,6 +44,25 @@ fn diagonal_ramp_512() {
         err < 1e-2,
         "max error {err} too large for a smooth ramp"
     );
+}
+
+/// The 6π diagonal ramp test that fails under [`unwrap`]'s capacity-1 setup
+/// passes once a virtual ground node is enabled: each boundary residue
+/// drains to ground independently, no interior arc gets spurious flow,
+/// Itoh integration alone recovers the smooth ramp.
+#[test]
+fn diagonal_ramp_512_grounded() {
+    let truth = simulate::diagonal_ramp((512, 512));
+    let wrapped = simulate::wrap_phase(&truth);
+    let igram = wrapped.mapv(|p| Complex32::new(p.cos(), p.sin()));
+    // Synthetic clean ramp ⇒ low CRLB everywhere.
+    let var = Array2::<f32>::from_elem(igram.dim(), 0.01);
+    // ground_cost = 0: ground is free for the smooth-ramp case (no interior
+    // residues to drag toward boundary).
+    let unw = unwrap_crlb_grounded(igram.view(), var.view(), None, 0).unwrap();
+    let aligned = align_to_truth(&unw, &truth);
+    let err = max_abs_err(&aligned, &truth);
+    assert!(err < 1e-2, "max error {err} too large for grounded smooth ramp");
 }
 
 /// Single planted residue pair: a phase that loops once around an interior
