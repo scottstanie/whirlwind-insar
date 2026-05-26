@@ -5,8 +5,11 @@ from ._native import (
     closure_refine_mcf as closure_refine_mcf,
     compute_residues as compute_residues,
     diagonal_ramp as diagonal_ramp,
+    quality_map as quality_map,
+    quality_triangles as quality_triangles,
     simulate_ifg as simulate_ifg,
     unwrap as unwrap,
     unwrap_crlb as unwrap_crlb,
+    unwrap_crlb_grounded as unwrap_crlb_grounded,
     wrap_phase as wrap_phase,
 )

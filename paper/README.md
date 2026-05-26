@@ -15,36 +15,26 @@ TeX Live / MacTeX installs.
 
 ## Source of truth for content
 
-The `ATBD-3d.md` in the repo root is the working long-form document.
-This letter is a compressed view focused on the publishable claims:
+The repo-root [`ATBD-3d.md`](../ATBD-3d.md) is the working long-form
+document; this letter is a compressed view focused on the publishable
+claims:
 
-1. CRLB-weighted arc cost replacing Lee coherence (§II-A in the letter,
-   §4 in the ATBD).
-2. Residue-grid boundary fix (§II-B in the letter, §10.1 in the ATBD).
-3. Per-pixel quality from closure residuals (§II-C, ATBD §10.5 backlog).
-4. Tiled mode + virtual ground-node MCF (§II-D, ATBD §10.3, §10.6).
+1. CRLB-weighted arc cost replacing Lee coherence (§II-A here, §4 of the ATBD).
+2. Residue-grid boundary fix (§II-B here, §10.1 of the ATBD).
+3. Per-pixel quality from closure residuals (§II-C here, §10.5 of the ATBD).
+4. Tiled mode + virtual ground-node MCF (§II-D here, §10.3 and §10.6 of the ATBD).
 
 Keep the two in sync when claims change.
 
 ## Figures
 
-Symlinked from `docs/figures/` at commit time. Regenerate via
-`scripts/reproduce.sh` and `scripts/bench_tile_memory.py`. Placeholder if
-needed — the letter as written embeds three figures that all exist:
+Copies of the three figures live in `paper/figures/`, mirrored from
+`docs/figures/` so the LaTeX build is self-contained. Regenerate the
+sources with:
 
-- `fig_palos_verdes_full_wrapped_vs_unwrapped.png`
-- `fig_palos_verdes_1024_wrapped_vs_unwrapped.png`
-- `fig_tile_memory.png`
+- `scripts/reproduce.sh --full` — `fig_palos_verdes_full_wrapped_vs_unwrapped.png`
+- `scripts/reproduce.sh` (1024² tile) — `fig_palos_verdes_1024_wrapped_vs_unwrapped.png`
+- `scripts/bench_tile_memory.py` — `fig_tile_memory.png` (memory-profile plot)
 
-## Still TODO before submission
-
-- Numbers for the SBAS-inversion comparison vs SNAPHU+SBAS (not in the
-  current results table).
-- Author affiliations / acknowledgements section.
-- The reference list is a placeholder set; need to be filled in with
-  the actual journal-style citations for SNAPHU, EMI, EVD/SqueeSAR,
-  spurt, LAMBDA, Carballo costs, Whirlwind, and dolphin.
-- A possible §III on tile-stitching robustness (the 256+64 anomaly is
-  an interesting limitation worth a paragraph; covered in ATBD §10.6).
-- Decide whether to also discuss the ground-node grounded variant's
-  failure on real data; currently a paragraph in §II-D.
+After regenerating, copy the new versions into `paper/figures/` before
+rebuilding the PDF.

@@ -1,13 +1,15 @@
 # Tiling for whirlwind-rs — design + artifact analysis
 
-> **Status:** Tiling is not implemented. The single-piece solver is already
-> parallelized internally (cost build, residue compute, potential update,
-> max-reduced-cost scan; see `docs/PERFORMANCE.md`), which covers most of
-> the speedup tiling would give on small-to-medium scenes. The naive
-> overlap-median stitch (stage 1 below) has known failure modes on rugged
-> scenes (Chen & Zebker 2002, Fig 7), so any future tiling effort should
-> probably skip straight to stage 2 (per-region MCF) — at which point
-> stage 1 below is mainly useful as background on why stage 2 is needed.
+> **Status (2026-05):** *Stage 1* is implemented. The CRLB unwrap exposes
+> overlap-median-stitched tiling as `unwrap_crlb_tiled` in Rust and via
+> `tile_size` / `tile_overlap` kwargs on the Python `unwrap_crlb`; see
+> `ATBD-3d.md §10.6` for validation numbers (99.78 % per-pixel agreement
+> with the non-tiled output at `tile_size=512 / overlap=128`). Stage 2
+> (per-region SNAPHU-style secondary MCF) and Stage 3 (single-tile
+> reoptimize) are not implemented; the document below is retained as the
+> original design rationale and a record of the known failure modes
+> (Chen & Zebker 2002, Fig 7) that motivate moving to Stage 2 if the
+> overlap-median stitch is insufficient.
 
 ## Why we need it
 
