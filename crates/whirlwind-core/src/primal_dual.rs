@@ -67,7 +67,7 @@ pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
     // Reusable scratch buffers — kept alive across PD iterations so we don't
     // pay a ~n_nodes × 4-byte allocation per iter (on 8192² that's 268 MiB
     // each, churned tens of times across the run).
-    let n_nodes = g.num_nodes();
+    let n_nodes = net.num_nodes();
     let mut visited_epoch: Vec<u32> = vec![0; n_nodes];
     let mut source_used: Vec<bool> = vec![false; n_nodes];
     let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();

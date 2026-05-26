@@ -1,4 +1,19 @@
-//! Network state for min-cost flow on the residue grid.
+//! Network state for min-cost flow on the residue grid, optionally with a
+//! single virtual *ground* node connected to every boundary residue.
+//!
+//! Layout (forward arc indexing):
+//!     [0 .. nf_grid)              — grid forward arcs (unchanged from grid.rs)
+//!     [nf_grid .. nf_total)       — ground forward arcs, one per boundary node
+//! Reverse arcs sit at the corresponding offsets `+ nf_total`:
+//!     [nf_total .. nf_total + nf_grid) — grid reverses
+//!     [nf_total + nf_grid .. 2*nf_total) — ground reverses
+//!
+//! Centralising the forward-count in `Network::num_forward()` means callers
+//! must use `net.transpose(arc)` (not `g.transpose(arc)`) and `net.num_forward()`
+//! (not `g.num_forward`) whenever they need to flip arc direction. Grid arc
+//! IDs themselves are unchanged, so integration's `g.right_arc(...)` /
+//! `net.arc_flow(...)` flow happens to be backward-compatible — only the
+//! transpose math shifts.
 
 use crate::grid::RectangularGridGraph;
 use bitvec::prelude::*;
@@ -7,8 +22,29 @@ use ndarray::ArrayView2;
 pub struct Network {
     pub excess: Vec<i32>,
     pub potential: Vec<i64>,
-    pub cost_fwd: Vec<i32>, // forward-arc costs only (length = num_forward)
-    pub is_saturated: BitVec, // length = num_arcs; encoding below
+    pub cost_fwd: Vec<i32>,   // length = nf_total (grid + ground forward costs)
+    pub is_saturated: BitVec, // length = 2 * nf_total
+
+    // Grid sub-layout (so we can transpose without holding a &Graph)
+    num_grid_forward: usize,
+    num_grid_nodes: usize,
+
+    // Ground sub-layout (`num_ground == 0` ⇒ no ground node, no ground arcs).
+    //
+    // To allow bidirectional flow at cost `ground_cost` in *both* directions
+    // (so MCF can route any + boundary residue → ground → any − boundary
+    // residue with one Dijkstra pass), we instantiate TWO forward arcs per
+    // boundary node: one (boundary → ground) and one (ground → boundary).
+    // `num_ground` here therefore equals `2 * num_boundary_nodes`. The first
+    // `num_boundary_nodes` ground forward arcs are boundary→ground; the
+    // remaining `num_boundary_nodes` are ground→boundary.
+    num_ground: usize,
+    num_boundary: usize,
+    /// Boundary residue node IDs. Indexed by `i ∈ [0, num_boundary)`.
+    boundary_nodes: Vec<u32>,
+    /// Per-node reverse lookup: `node_to_ground_idx[node] = i` if `node`
+    /// is the i-th boundary node, else `-1`. Empty when ground is disabled.
+    node_to_ground_idx: Vec<i32>,
 }
 
 // Encoding of `is_saturated[fwd]`, `is_saturated[rev = fwd + num_forward]`:
@@ -19,39 +55,48 @@ pub struct Network {
 //                            pixel is invalid) — both directions saturated,
 //                            never carry flow
 //   (fwd=false, rev=false) : unreachable
-//
-// Dijkstra skips any arc with `is_saturated[arc] == true`, so forbidden arcs
-// are naturally invisible. `arc_flow` distinguishes "carries flow" from
-// "forbidden" by requiring `fwd && !rev`.
 
 impl Network {
-    /// Build a network from a residue grid and per-arc costs.
-    ///
-    /// `costs` has length `2 * num_forward`; only the forward half is stored —
-    /// the reverse-arc cost is `-cost_fwd[transpose - num_forward]`.
+    /// Build a network from a residue grid and per-arc grid costs. No ground.
     pub fn new(g: &RectangularGridGraph, residues: ArrayView2<i32>, costs: &[i32]) -> Self {
         Self::new_with_mask(g, residues, costs, None)
     }
 
     /// Build a network and pre-saturate (forbid) arcs that cross a pixel
-    /// edge with at least one masked-out endpoint.
-    ///
-    /// `mask` has shape `(g.m - 1, g.n - 1)` (the pixel grid; `True` = valid,
-    /// `False` = ignore). On Sentinel-1-scale frames with large invalid
-    /// regions (e.g. ocean) this lets Dijkstra skip a substantial chunk of
-    /// the residual graph.
+    /// edge with at least one masked-out endpoint. No ground.
     pub fn new_with_mask(
         g: &RectangularGridGraph,
         residues: ArrayView2<i32>,
         costs: &[i32],
         mask: Option<ArrayView2<bool>>,
     ) -> Self {
+        Self::new_with_mask_and_ground(g, residues, costs, mask, None)
+    }
+
+    /// Build a network with optional `ground_cost`. When `Some(c)`, a virtual
+    /// ground node is appended and connected to every boundary residue (rows
+    /// 0/m, cols 0/n of the residue grid) via unit-capacity forward arcs of
+    /// cost `c`. Lets MCF drain wrap-line termination charges at the image
+    /// boundary without forcing them to pair with distant interior partners.
+    ///
+    /// `c == 0` makes the ground arc free — MCF then *always* prefers ground
+    /// for boundary residues, which is desirable for clean wrapping inputs
+    /// (no interior residues ⇒ Itoh integration alone recovers the unwrap)
+    /// but for noisy data can pull interior residues toward boundary along
+    /// non-physical paths. A moderate positive cost (e.g. comparable to the
+    /// median grid arc cost) balances the two regimes.
+    pub fn new_with_mask_and_ground(
+        g: &RectangularGridGraph,
+        residues: ArrayView2<i32>,
+        costs: &[i32],
+        mask: Option<ArrayView2<bool>>,
+        ground_cost: Option<i32>,
+    ) -> Self {
         assert_eq!(residues.dim(), (g.m, g.n));
         assert_eq!(costs.len(), g.num_arcs());
 
-        // The residue ndarray is row-major and contiguous when freshly built;
-        // when it is we can flatten via `as_slice()` for a single memcpy.
-        let excess: Vec<i32> = if let Some(slice) = residues.as_slice() {
+        // Excess: copy residues; possibly extend by 1 for ground node.
+        let excess_grid: Vec<i32> = if let Some(slice) = residues.as_slice() {
             slice.to_vec()
         } else {
             let mut v = Vec::with_capacity(g.num_nodes());
@@ -62,138 +107,297 @@ impl Network {
             }
             v
         };
-        let cost_fwd = costs[..g.num_forward].to_vec();
 
-        // Saturation pattern: forward arcs start unsaturated (capacity 1, flow 0);
-        // reverse arcs start saturated (capacity 0). `bitvec![1; n]` initializes
-        // the whole thing in one pass and we then clear the forward half via
-        // `fill` which is faster than the per-bit `set` loop.
-        let mut sat = bitvec![1; g.num_arcs()];
-        sat[..g.num_forward].fill(false);
+        // Pre-collect boundary node IDs if ground is enabled. Each is unique;
+        // the four image corners get exactly one entry.
+        let mut boundary_nodes: Vec<u32> = Vec::new();
+        let mut node_to_ground_idx: Vec<i32> = Vec::new();
+        let mut num_ground = 0;
+        let num_grid_nodes = g.num_nodes();
+        if ground_cost.is_some() {
+            node_to_ground_idx = vec![-1; num_grid_nodes + 1];
+            for j in 0..g.n {
+                let id = g.node_id(0, j) as u32;
+                node_to_ground_idx[id as usize] = boundary_nodes.len() as i32;
+                boundary_nodes.push(id);
+            }
+            for j in 0..g.n {
+                let id = g.node_id(g.m - 1, j) as u32;
+                if node_to_ground_idx[id as usize] < 0 {
+                    node_to_ground_idx[id as usize] = boundary_nodes.len() as i32;
+                    boundary_nodes.push(id);
+                }
+            }
+            for i in 1..g.m - 1 {
+                let id = g.node_id(i, 0) as u32;
+                node_to_ground_idx[id as usize] = boundary_nodes.len() as i32;
+                boundary_nodes.push(id);
+                let id = g.node_id(i, g.n - 1) as u32;
+                node_to_ground_idx[id as usize] = boundary_nodes.len() as i32;
+                boundary_nodes.push(id);
+            }
+            // Two forward arcs per boundary node: boundary→ground and
+            // ground→boundary. See struct doc-comment.
+            num_ground = 2 * boundary_nodes.len();
+        }
+        let num_boundary = boundary_nodes.len();
+
+        let nf_grid = g.num_forward;
+        let nf_total = nf_grid + num_ground;
+
+        // Costs: grid forwards then ground forwards.
+        let mut cost_fwd = Vec::with_capacity(nf_total);
+        cost_fwd.extend_from_slice(&costs[..nf_grid]);
+        if let Some(c) = ground_cost {
+            cost_fwd.extend(std::iter::repeat(c).take(num_ground));
+        }
+
+        // Saturation: 2*nf_total bits. Initial: forward unsaturated, reverse
+        // saturated (capacity 1 forward only). Use bitvec! to set all then
+        // clear the forward half.
+        let mut sat = bitvec![1; 2 * nf_total];
+        sat[..nf_total].fill(false);
+
+        // Excess: extend by 1 entry for the ground node if enabled.
+        let mut excess = excess_grid;
+        let n_nodes_total = num_grid_nodes + (num_ground > 0) as usize;
+        if num_ground > 0 {
+            excess.resize(n_nodes_total, 0);
+        }
 
         let mut net = Self {
             excess,
-            potential: vec![0_i64; g.num_nodes()],
+            potential: vec![0_i64; n_nodes_total],
             cost_fwd,
             is_saturated: sat,
+            num_grid_forward: nf_grid,
+            num_grid_nodes,
+            num_ground,
+            num_boundary,
+            boundary_nodes,
+            node_to_ground_idx,
         };
-        // NOTE: we deliberately do NOT forbid the "frame-along" arcs of the
-        // residue grid (right/left arcs at residue rows 0 & m; down/up arcs
-        // at residue cols 0 & n). Those arcs have cost 0 because they cross
-        // non-existent pixel edges, and that cost-0 channel along the frame
-        // is *what makes the boundary residues work right* for clean
-        // wrapping inputs (e.g. a smooth ramp whose wrap lines exit the
-        // image with no interior residues): MCF routes the boundary
-        // termination charge along the frame for free without injecting
-        // spurious 2π corrections at interior arcs, and integration's Itoh
-        // pass alone recovers the correct unwrap. Forcing MCF through the
-        // interior would create wrong-sign corrections at row/column edges
-        // that didn't actually wrap. (The helper `forbid_frame_along_arcs`
-        // remains for use by future flow-policy experiments but is not
-        // called on the default path.)
         if let Some(mm) = mask {
             net.forbid_masked_arcs(g, mm);
         }
         net
     }
 
-    /// Forbid the arcs that run *along* the boundary frame of the residue
-    /// grid. Kept for future flow-policy experiments — not currently called
-    /// from `new_with_mask`; see the comment there for why allowing
-    /// frame-along routing is the right default.
-    #[allow(dead_code)]
-    fn forbid_frame_along_arcs(&mut self, g: &RectangularGridGraph) {
-        let m = g.m; // residue rows: 0..m, frame at 0 and m-1
-        let n = g.n; // residue cols: 0..n, frame at 0 and n-1
-        // Horizontal arcs along the top frame (residue row 0): right(0, j) /
-        // left(0, j+1) for j in 0..n-1.
-        for j in 0..n - 1 {
-            let r = g.right_arc(0, j).unwrap();
-            let l = g.left_arc(0, j + 1).unwrap();
-            self.is_saturated.set(r, true);
-            self.is_saturated.set(l, true);
-            self.is_saturated.set(g.transpose(r), true);
-            self.is_saturated.set(g.transpose(l), true);
-        }
-        // Horizontal arcs along the bottom frame (residue row m-1):
-        for j in 0..n - 1 {
-            let r = g.right_arc(m - 1, j).unwrap();
-            let l = g.left_arc(m - 1, j + 1).unwrap();
-            self.is_saturated.set(r, true);
-            self.is_saturated.set(l, true);
-            self.is_saturated.set(g.transpose(r), true);
-            self.is_saturated.set(g.transpose(l), true);
-        }
-        // Vertical arcs along the left frame (residue col 0): down(i, 0) /
-        // up(i+1, 0) for i in 0..m-1.
-        for i in 0..m - 1 {
-            let d = g.down_arc(i, 0).unwrap();
-            let u = g.up_arc(i + 1, 0).unwrap();
-            self.is_saturated.set(d, true);
-            self.is_saturated.set(u, true);
-            self.is_saturated.set(g.transpose(d), true);
-            self.is_saturated.set(g.transpose(u), true);
-        }
-        // Vertical arcs along the right frame (residue col n-1):
-        for i in 0..m - 1 {
-            let d = g.down_arc(i, n - 1).unwrap();
-            let u = g.up_arc(i + 1, n - 1).unwrap();
-            self.is_saturated.set(d, true);
-            self.is_saturated.set(u, true);
-            self.is_saturated.set(g.transpose(d), true);
-            self.is_saturated.set(g.transpose(u), true);
+    // -- ground introspection ------------------------------------------------
+
+    /// Total forward arc count (grid + ground).
+    #[inline]
+    pub fn num_forward(&self) -> usize {
+        self.num_grid_forward + self.num_ground
+    }
+
+    /// Total arc count (2 * `num_forward()`).
+    #[inline]
+    pub fn num_arcs(&self) -> usize {
+        2 * self.num_forward()
+    }
+
+    /// Total node count, including the ground node when enabled.
+    #[inline]
+    pub fn num_nodes(&self) -> usize {
+        self.num_grid_nodes + (self.num_ground > 0) as usize
+    }
+
+    /// ID of the ground node, if enabled. `None` for ground-disabled networks.
+    #[inline]
+    pub fn ground_node(&self) -> Option<usize> {
+        if self.num_ground > 0 {
+            Some(self.num_grid_nodes)
+        } else {
+            None
         }
     }
 
-    /// For each pixel-edge whose endpoints aren't both valid, mark the two
-    /// forward arcs (one per direction) that cross that edge as forbidden
-    /// (`is_saturated[fwd] = true` AND `is_saturated[rev] = true`).
-    ///
-    /// Geometry (see `crate::grid`):
-    /// - `DOWN(ti, tj)` and `UP(ti+1, tj)` both cross pixel-edge
-    ///   `{(ti, tj-1), (ti, tj)}` (horizontal pixel-edge in row ti).
-    /// - `RIGHT(ti, tj)` and `LEFT(ti, tj+1)` both cross pixel-edge
-    ///   `{(ti-1, tj), (ti, tj)}` (vertical pixel-edge in column tj).
+    /// Flip a forward arc to its reverse and vice versa. Replacement for
+    /// `g.transpose(arc)` that accounts for the appended ground arcs.
+    #[inline]
+    pub fn transpose(&self, arc: usize) -> usize {
+        let nf = self.num_forward();
+        debug_assert!(arc < 2 * nf, "arc {arc} out of bounds (nf={nf})");
+        if arc < nf {
+            arc + nf
+        } else {
+            arc - nf
+        }
+    }
+
+    /// For a boundary residue node, returns the index `i` such that the
+    /// node-to-ground forward arc has index `num_grid_forward + i` and the
+    /// ground-to-node forward arc has index `num_grid_forward + num_boundary + i`.
+    /// `None` for non-boundary nodes / ground-disabled networks.
+    #[inline]
+    pub fn boundary_idx_of(&self, node: usize) -> Option<usize> {
+        let i = *self.node_to_ground_idx.get(node)?;
+        if i < 0 {
+            None
+        } else {
+            Some(i as usize)
+        }
+    }
+
+    /// Forward arc IDs for the two ground-arcs at boundary index `i`:
+    /// `(node→ground, ground→node)`. Each is unit-capacity, cost
+    /// `ground_cost`, so MCF can route both `node → ground` and
+    /// `ground → node` independently in the same solve.
+    #[inline]
+    fn ground_arc_ids(&self, i: usize) -> (usize, usize) {
+        let base = self.num_grid_forward;
+        (base + i, base + self.num_boundary + i)
+    }
+
+    /// Return `(arc, head)` pairs for arcs leaving `node` that are NOT in the
+    /// regular grid (i.e. the ground arcs).
+    pub fn extra_outgoing(&self, node: usize) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        if self.num_ground == 0 {
+            return out;
+        }
+        if Some(node) == self.ground_node() {
+            // From ground: forward arcs ground→boundary[i] for every i, plus
+            // residual reverses of the forward boundary→ground arcs.
+            for i in 0..self.num_boundary {
+                let (b2g, g2b) = self.ground_arc_ids(i);
+                out.push((g2b, self.boundary_nodes[i] as usize));
+                let g2b_residual = self.transpose(b2g); // forward boundary→ground reversed
+                out.push((g2b_residual, self.boundary_nodes[i] as usize));
+            }
+        } else if let Some(i) = self.boundary_idx_of(node) {
+            let (b2g, g2b) = self.ground_arc_ids(i);
+            let g_node = self.ground_node().unwrap();
+            out.push((b2g, g_node));
+            // Residual reverse of the forward ground→boundary arc (so we can
+            // "undo" a previously-pushed g→boundary flow if needed).
+            let g2b_residual = self.transpose(g2b);
+            out.push((g2b_residual, g_node));
+        }
+        out
+    }
+
+    /// Endpoints of a (possibly ground) arc, as `(tail, head)`.
+    pub fn arc_endpoints(&self, g: &RectangularGridGraph, arc: usize) -> (usize, usize) {
+        let nf = self.num_forward();
+        let (fwd_arc, is_reverse) = if arc < nf {
+            (arc, false)
+        } else {
+            (arc - nf, true)
+        };
+        let (t, h) = if fwd_arc < self.num_grid_forward {
+            g.arc_endpoints(fwd_arc)
+        } else {
+            // Ground forward arc. The first `num_boundary` IDs are
+            // boundary→ground; the next `num_boundary` are ground→boundary.
+            let g_node = self.ground_node().unwrap();
+            let off = fwd_arc - self.num_grid_forward;
+            if off < self.num_boundary {
+                (self.boundary_nodes[off] as usize, g_node)
+            } else {
+                let i = off - self.num_boundary;
+                (g_node, self.boundary_nodes[i] as usize)
+            }
+        };
+        if is_reverse { (h, t) } else { (t, h) }
+    }
+
+    // -- forbidding -----------------------------------------------------------
+
+    /// Forbid the arcs that run *along* the boundary frame of the residue
+    /// grid. Kept for future flow-policy experiments — not called by default.
+    #[allow(dead_code)]
+    fn forbid_frame_along_arcs(&mut self, g: &RectangularGridGraph) {
+        let m = g.m;
+        let n = g.n;
+        for j in 0..n - 1 {
+            let r = g.right_arc(0, j).unwrap();
+            let l = g.left_arc(0, j + 1).unwrap();
+            let rt = self.transpose(r);
+            let lt = self.transpose(l);
+            self.is_saturated.set(r, true);
+            self.is_saturated.set(l, true);
+            self.is_saturated.set(rt, true);
+            self.is_saturated.set(lt, true);
+        }
+        for j in 0..n - 1 {
+            let r = g.right_arc(m - 1, j).unwrap();
+            let l = g.left_arc(m - 1, j + 1).unwrap();
+            let rt = self.transpose(r);
+            let lt = self.transpose(l);
+            self.is_saturated.set(r, true);
+            self.is_saturated.set(l, true);
+            self.is_saturated.set(rt, true);
+            self.is_saturated.set(lt, true);
+        }
+        for i in 0..m - 1 {
+            let d = g.down_arc(i, 0).unwrap();
+            let u = g.up_arc(i + 1, 0).unwrap();
+            let dt = self.transpose(d);
+            let ut = self.transpose(u);
+            self.is_saturated.set(d, true);
+            self.is_saturated.set(u, true);
+            self.is_saturated.set(dt, true);
+            self.is_saturated.set(ut, true);
+        }
+        for i in 0..m - 1 {
+            let d = g.down_arc(i, n - 1).unwrap();
+            let u = g.up_arc(i + 1, n - 1).unwrap();
+            let dt = self.transpose(d);
+            let ut = self.transpose(u);
+            self.is_saturated.set(d, true);
+            self.is_saturated.set(u, true);
+            self.is_saturated.set(dt, true);
+            self.is_saturated.set(ut, true);
+        }
+    }
+
     fn forbid_masked_arcs(&mut self, g: &RectangularGridGraph, mask: ArrayView2<bool>) {
         let (m_phase, n_phase) = mask.dim();
         assert_eq!(m_phase + 1, g.m, "mask must be pixel-grid sized (g.m - 1)");
         assert_eq!(n_phase + 1, g.n, "mask must be pixel-grid sized (g.n - 1)");
 
-        // Horizontal pixel-edges (vertical residue-edges = DOWN/UP arcs):
         for ti in 0..m_phase {
             for tj in 1..n_phase {
                 if !mask[(ti, tj - 1)] || !mask[(ti, tj)] {
                     let down = g.down_arc(ti, tj).unwrap();
                     let up = g.up_arc(ti + 1, tj).unwrap();
+                    let dt = self.transpose(down);
+                    let ut = self.transpose(up);
                     self.is_saturated.set(down, true);
                     self.is_saturated.set(up, true);
-                    self.is_saturated.set(g.transpose(down), true);
-                    self.is_saturated.set(g.transpose(up), true);
+                    self.is_saturated.set(dt, true);
+                    self.is_saturated.set(ut, true);
                 }
             }
         }
 
-        // Vertical pixel-edges (horizontal residue-edges = RIGHT/LEFT arcs):
         for ti in 1..m_phase {
             for tj in 0..n_phase {
                 if !mask[(ti - 1, tj)] || !mask[(ti, tj)] {
                     let right = g.right_arc(ti, tj).unwrap();
                     let left = g.left_arc(ti, tj + 1).unwrap();
+                    let rt = self.transpose(right);
+                    let lt = self.transpose(left);
                     self.is_saturated.set(right, true);
                     self.is_saturated.set(left, true);
-                    self.is_saturated.set(g.transpose(right), true);
-                    self.is_saturated.set(g.transpose(left), true);
+                    self.is_saturated.set(rt, true);
+                    self.is_saturated.set(lt, true);
                 }
             }
         }
     }
 
+    // -- arc/flow queries -----------------------------------------------------
+
     #[inline]
-    pub fn arc_cost(&self, g: &RectangularGridGraph, arc: usize) -> i32 {
-        if arc < g.num_forward {
+    pub fn arc_cost(&self, _g: &RectangularGridGraph, arc: usize) -> i32 {
+        let nf = self.num_forward();
+        if arc < nf {
             self.cost_fwd[arc]
         } else {
-            -self.cost_fwd[arc - g.num_forward]
+            -self.cost_fwd[arc - nf]
         }
     }
 
@@ -202,41 +406,33 @@ impl Network {
         self.is_saturated[arc]
     }
 
-    /// "Arc flow" per the Whirlwind convention used by integration:
-    /// 1 iff the forward partner currently carries one unit of flow.
-    ///
-    /// A forbidden arc (mask said one endpoint is invalid) has BOTH
-    /// `is_saturated[fwd]` and `is_saturated[rev]` set, so this returns 0
-    /// for it — it never contributes a cycle to the integration. Compare
-    /// with a normally-flowing arc which has `fwd=true, rev=false`.
+    /// 1 iff the forward partner of `arc` currently carries one unit of flow.
     #[inline]
-    pub fn arc_flow(&self, g: &RectangularGridGraph, arc: usize) -> i32 {
-        let fwd = if arc < g.num_forward { arc } else { arc - g.num_forward };
-        let rev = fwd + g.num_forward;
+    pub fn arc_flow(&self, _g: &RectangularGridGraph, arc: usize) -> i32 {
+        let nf = self.num_forward();
+        let fwd = if arc < nf { arc } else { arc - nf };
+        let rev = fwd + nf;
         if self.is_saturated[fwd] && !self.is_saturated[rev] { 1 } else { 0 }
     }
 
     /// Reduced cost of an arc: `c - π_tail + π_head`.
-    /// (Ahuja convention: ≥ 0 on arcs with residual capacity, by primal-dual invariant.)
     #[inline]
     pub fn reduced_cost(&self, g: &RectangularGridGraph, arc: usize) -> i64 {
-        let (t, h) = g.arc_endpoints(arc);
+        let (t, h) = self.arc_endpoints(g, arc);
         self.arc_cost(g, arc) as i64 - self.potential[t] + self.potential[h]
     }
 
-    /// Reduced cost when the caller already knows tail and head of `arc`.
-    /// Avoids re-deriving them via `g.arc_endpoints` — saves ~5–10 ns per arc
-    /// in the Dijkstra inner loop, which scans ~1B arcs on residue-dense scenes.
+    /// Reduced cost when the caller already knows tail and head.
     #[inline]
     pub fn reduced_cost_with(&self, g: &RectangularGridGraph, arc: usize, t: usize, h: usize) -> i64 {
-        debug_assert_eq!(g.arc_endpoints(arc), (t, h));
+        debug_assert_eq!(self.arc_endpoints(g, arc), (t, h));
         self.arc_cost(g, arc) as i64 - self.potential[t] + self.potential[h]
     }
 
     /// Push 1 unit of flow on `arc`. Toggles saturation of arc and its transpose.
-    pub fn push_unit(&mut self, g: &RectangularGridGraph, arc: usize) {
+    pub fn push_unit(&mut self, _g: &RectangularGridGraph, arc: usize) {
         debug_assert!(!self.is_saturated[arc], "cannot push on saturated arc");
-        let t = g.transpose(arc);
+        let t = self.transpose(arc);
         self.is_saturated.set(arc, true);
         self.is_saturated.set(t, false);
     }
