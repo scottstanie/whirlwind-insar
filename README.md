@@ -32,11 +32,17 @@ unwrapped stack + per-pixel quality map + per-date posterior σ cube.
 - **[`paper/whirlwind3d.pdf`](paper/whirlwind3d.pdf)** — IEEE GRSL letter
   draft (5 pp.) covering the publishable claims; build with
   `cd paper && latexmk -pdf whirlwind3d.tex`.
-- **[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)** — per-stage timings,
+- **[`PERFORMANCE.md`](PERFORMANCE.md)** — per-stage timings,
   scaling, memory model, mask-acceleration numbers.
-- **[`docs/TILING_DESIGN.md`](docs/TILING_DESIGN.md)** — design notes for
+- **[`TILING_DESIGN.md`](TILING_DESIGN.md)** — design notes for
   the tiled solver (Stage 1 implemented; Stages 2–3 deferred).
-- **[`docs/ENV_VARS.md`](docs/ENV_VARS.md)** — debug / research env vars.
+- **[`ENV_VARS.md`](ENV_VARS.md)** — debug / research env vars.
+
+The same docs are also published as a Material-themed mkdocs site (see
+`mkdocs.yml`; build locally with `uv run mkdocs serve`). The Rust crate
+API is documented inline via doc-comments and rendered by `cargo doc
+--open` (or, once published, on
+[docs.rs/whirlwind-core](https://docs.rs/whirlwind-core)).
 
 ## Layout
 
@@ -166,7 +172,7 @@ Single-IG throughput is **~50–105 Mpx/s** on clean / lightly-noisy data
 (cost-build-bound) and **~1 Mpx/s** on uniform-noisy residue-dense
 scenes (Dijkstra-bound). Memory ~115 bytes/pixel working set — a 100 Mpx
 Sentinel-1 IW frame fits in ~11.5 GiB single-piece, or tile to cap. See
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for the full per-stage
+[`PERFORMANCE.md`](PERFORMANCE.md) for the full per-stage
 timing breakdown and the discussion of why we don't ship the
 rayon-parallel Dijkstra backend.
 
@@ -180,7 +186,7 @@ this, the arbitrary phase values in masked regions (typically
 residues at every mask boundary that dominate the MCF problem.
 
 On a 4096² γ=0.7 land + 35 % blob-water-mask scene this is **0.54 s with
-mask vs 75 s without (139×)**. See `docs/PERFORMANCE.md` for details.
+mask vs 75 s without (139×)**. See `PERFORMANCE.md` for details.
 
 ## Status
 

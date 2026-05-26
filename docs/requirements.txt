@@ -1,0 +1,5 @@
+# Documentation build dependencies (used by Read the Docs and by
+# `uv sync --group docs` for local previews).
+mkdocs>=1.6
+mkdocs-material>=9.5
+pymdown-extensions>=10
