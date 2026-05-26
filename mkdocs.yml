@@ -1,0 +1,99 @@
+# whirlwind-rs documentation site.
+#
+# Build:    uv run mkdocs build           # writes ./site/
+# Serve:    uv run mkdocs serve           # http://127.0.0.1:8000/
+#
+# The repo's canonical README and ATBDs live at the repo root for GitHub
+# rendering. The `docs/` directory contains symlinks to those files
+# (docs/README.md -> ../README.md, docs/ATBD-3d.md -> ../ATBD-3d.md, etc.)
+# so the mkdocs site renders the same content without duplication and any
+# cross-doc links of the form `[X](X.md)` resolve correctly in both
+# contexts.
+
+site_name: whirlwind-rs
+site_description: >-
+  Bayesian minimum-cost-flow phase unwrapper for InSAR — both individual
+  interferograms and full phase-linked time-series stacks.
+site_author: Scott Staniewicz
+repo_url: https://github.com/scottstanie/whirlwind-rs
+repo_name: scottstanie/whirlwind-rs
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+
+# `docs/paper/` is a symlink to the top-level paper/ so the PDF link in
+# README resolves in mkdocs. `docs/requirements.txt` and
+# `docs/comparison_to_dolphin.json` are auxiliary files mkdocs would
+# otherwise copy into the site without referencing.
+exclude_docs: |
+  paper/README.md
+  paper/whirlwind3d.tex
+  paper/.gitignore
+  paper/figures/
+  requirements.txt
+  comparison_to_dolphin.json
+
+nav:
+  - Overview: README.md
+  - 'ATBD — 3D / time series': ATBD-3d.md
+  - 'ATBD — 2D MCF core': ATBD-whirlwind.md
+  - Performance: PERFORMANCE.md
+  - Tiling design: TILING_DESIGN.md
+  - Environment variables: ENV_VARS.md
+
+theme:
+  name: material
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  # Render LaTeX from `pymdownx.arithmatex` via MathJax.
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/scottstanie/whirlwind-rs

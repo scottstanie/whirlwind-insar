@@ -43,6 +43,11 @@ real-data = [
 dev = [
     "memory-profiler>=0.61.0",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10",
+]
 
 [tool.uv]
 default-groups = ["test", "bench"]

@@ -26,7 +26,7 @@ The tree-based closure correction described in §5 turned out to *amplify* the s
 2. [Mathematical Background](#2-mathematical-background)
 3. [Algorithm Overview](#3-algorithm-overview)
 4. [Stage 1: CRLB-Weighted 2D Unwrap](#4-stage-1-crlb-weighted-2d-unwrap)
-5. [Stage 2: Tree-Based Closure Correction](#5-stage-2-tree-based-closure-correction)
+5. [Stage 2: Tree-Based Closure Correction](#5-stage-2-tree-based-closure-correction-optional-off-by-default)
 6. [Reference-Pixel Anchoring](#6-reference-pixel-anchoring)
 7. [Per-Date Posterior Uncertainty](#7-per-date-posterior-uncertainty)
 8. [Implementation](#8-implementation)
@@ -262,15 +262,15 @@ The orders-of-magnitude speedup in Stage 2 over spurt's EMCF is algorithmic (tre
 
 60 IGs over 23 dates (7 baselines, 3–18 days) on a 1024² tile. Whirlwind-rs agrees with dolphin's SNAPHU output modulo 2π at **100 % of pixels on every IG**, and the *absolute* per-IG agreement (both sides anchored at the same reference pixel) is shown below. We do not compare against `timeseries/*.tif` since that is SBAS-inverted displacement in metres, a different mathematical object.
 
-![wrapped vs ours vs dolphin SNAPHU — mid-stack IG](docs/figures/fig_palos_verdes_1024_wrapped_vs_unwrapped.png)
+![wrapped vs ours vs dolphin SNAPHU — mid-stack IG](figures/fig_palos_verdes_1024_wrapped_vs_unwrapped.png)
 
 The middle panel (whirlwind-rs) and the right panel (dolphin SNAPHU) share the same large-scale spatial structure and broadly the same range; the centre IG's per-pixel agreement is well under 1 rad RMS.
 
-![per-IG mod-2π agreement (left, 100 %) and absolute RMS disagreement (right, median 2.29 rad)](docs/figures/fig_palos_verdes_1024_per_ig_metrics.png)
+![per-IG mod-2π agreement (left, 100 %) and absolute RMS disagreement (right, median 2.29 rad)](figures/fig_palos_verdes_1024_per_ig_metrics.png)
 
 The right panel shows a bimodal pattern across the 60 IGs: about half are within 3 rad of SNAPHU, the other half cluster around 5–6 rad. The 5–6 rad cluster comes from a single ±2π disagreement on one or two connected regions per IG; the wrapped phase is *identical*, but our MCF and SNAPHU happened to pick different integer ambiguities for that region.
 
-![|whirlwind − dolphin SNAPHU| mod 2π map for a typical IG (median ≈ 1.6×10⁻⁶ rad)](docs/figures/fig_palos_verdes_1024_diff_vs_dolphin.png)
+![|whirlwind − dolphin SNAPHU| mod 2π map for a typical IG (median ≈ 1.6×10⁻⁶ rad)](figures/fig_palos_verdes_1024_diff_vs_dolphin.png)
 
 #### Aggregate metrics on the 1024² tile
 
@@ -293,15 +293,15 @@ The "before" column reflects the residue-boundary bug described in §10.1; both 
 
 Anchored at dolphin's own reference pixel (225, 2633).
 
-![full-scene: wrapped vs ours vs dolphin SNAPHU](docs/figures/fig_palos_verdes_full_wrapped_vs_unwrapped.png)
+![full-scene: wrapped vs ours vs dolphin SNAPHU](figures/fig_palos_verdes_full_wrapped_vs_unwrapped.png)
 
 The whirlwind-rs panel (middle) and the dolphin SNAPHU panel (right) share the same colour scale and the same large-scale spatial structure: the blue (negative) regions in the lower right and the red (positive) regions in the upper centre match across the two unwrappings.
 
-![full-scene: per-IG mod-2π agreement and absolute disagreement](docs/figures/fig_palos_verdes_full_per_ig_metrics.png)
+![full-scene: per-IG mod-2π agreement and absolute disagreement](figures/fig_palos_verdes_full_per_ig_metrics.png)
 
 100 % mod-2π agreement on every one of the 150 IGs; the per-IG absolute RMS clusters tightly around 2–3 rad with a handful of outliers in the 6–7 rad band (one connected region off by ±2π).
 
-![full-scene: |whirlwind − dolphin SNAPHU| mod 2π map](docs/figures/fig_palos_verdes_full_diff_vs_dolphin.png)
+![full-scene: |whirlwind − dolphin SNAPHU| mod 2π map](figures/fig_palos_verdes_full_diff_vs_dolphin.png)
 
 #### Aggregate metrics — full scene
 
@@ -414,11 +414,11 @@ The 256+64 anomaly (3.5 % match while neighbours both clear 97 %) is the dominan
 **Full-scene behaviour at large tile sizes.** Re-running the full
 4065 × 3802 / 150-IG scene at `tile_size=1500` reproduces the per-IG
 unwrapped output panel cleanly at the large scale
-(`docs/figures/fig_palos_verdes_full_tiled_1500_wrapped_vs_unwrapped.png`),
+(`figures/fig_palos_verdes_full_tiled_1500_wrapped_vs_unwrapped.png`),
 but the per-pixel quality map shows the integer-ambiguity disagreement
 the median-stitch leaves behind:
 `K=0: 0.0 %  /  K=1: 0.4 %  /  K>1: 99.6 %`
-(`docs/figures/fig_palos_verdes_full_tiled_1500_quality.png`). Visible
+(`figures/fig_palos_verdes_full_tiled_1500_quality.png`). Visible
 blocky structure aligns with the tile grid — each tile adopts its own
 local integer basis and the per-tile choices disagree across boundaries
 by ≥ 2 cycles at almost every pixel. The wrapped-phase agreement is
