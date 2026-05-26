@@ -225,6 +225,32 @@ fn quality_map<'py>(
     Ok(out.into_pyarray(py))
 }
 
+/// Unwrap an interferogram with a virtual ground node attached to every
+/// boundary residue.
+///
+/// Fixes the unit-capacity stacking limitation of `unwrap_crlb` for clean
+/// wrapping inputs (smooth ramps; tile boundaries). `ground_cost = 0` makes
+/// ground free, which is right for inputs with no interior residues. For
+/// noisy real data a moderate positive cost (≈ median grid arc cost) keeps
+/// internal routing for the bulk of residues while still letting
+/// boundary-only wrap-lines drain to ground.
+#[pyfunction]
+#[pyo3(signature = (igram, variance, mask = None, ground_cost = 0))]
+fn unwrap_crlb_grounded<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    variance: PyReadonlyArray2<'py, f32>,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    ground_cost: i32,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    let ig = igram.as_array();
+    let v = variance.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let unw = py.detach(|| whirlwind_core::unwrap_crlb_grounded(ig, v, m, ground_cost));
+    let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(unw.into_pyarray(py))
+}
+
 /// Per-pixel quality from temporal triangles (3-cycles).
 ///
 /// Same idea as `quality_map` but uses only triangles instead of the
@@ -341,6 +367,7 @@ fn closure_refine_mcf<'py>(
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_crlb_grounded, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;
     m.add_function(wrap_pyfunction!(diagonal_ramp, m)?)?;
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;

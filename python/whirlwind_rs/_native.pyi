@@ -36,6 +36,21 @@ def unwrap_crlb(
     reconciliation. Bounds per-IG MCF memory use to tile-size scale.
     """
 
+def unwrap_crlb_grounded(
+    igram: NDArray[np.complex64],
+    variance: NDArray[np.float32],
+    mask: NDArray[np.bool_] | None = ...,
+    ground_cost: int = ...,
+) -> NDArray[np.float32]:
+    """CRLB 2D unwrap with a virtual ground node on every boundary residue.
+
+    Fixes the capacity-1 stacking limit of ``unwrap_crlb`` for inputs with
+    boundary-only wrap-lines (e.g. smooth ramps; tile-boundary residues).
+    ``ground_cost = 0`` makes ground free; positive cost biases MCF toward
+    internal pairing for the bulk of residues on noisy data.
+    """
+
+
 def compute_residues(wrapped_phase: NDArray[np.float32]) -> NDArray[np.int32]:
     """Compute the integer residue grid from a wrapped-phase array."""
 

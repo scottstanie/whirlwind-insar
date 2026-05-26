@@ -10,6 +10,7 @@ from ._native import (
     simulate_ifg,
     unwrap,
     unwrap_crlb,
+    unwrap_crlb_grounded,
     wrap_phase,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "simulate_ifg",
     "unwrap",
     "unwrap_crlb",
+    "unwrap_crlb_grounded",
     "wrap_phase",
 ]

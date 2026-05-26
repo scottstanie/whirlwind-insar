@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// at 4096² where E ≈ 32M.
 fn max_reduced_cost_par(g: &RectangularGridGraph, net: &Network) -> i64 {
     use rayon::prelude::*;
-    (0..g.num_arcs())
+    (0..net.num_arcs())
         .into_par_iter()
         .map(|a| {
             if net.is_arc_saturated(a) {
@@ -58,7 +58,7 @@ fn collect_sinks(net: &Network) -> (Vec<bool>, usize) {
 /// sinks cluster (real interferograms) this trims a large tail off late
 /// primal-dual iterations.
 pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
-    let n_nodes = g.num_nodes();
+    let n_nodes = net.num_nodes();
     let mut sp = ShortestPaths::new(n_nodes);
 
     let max_rc = max_reduced_cost_par(g, net);
@@ -121,19 +121,14 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
             }
         }
 
-        let (ui, uj) = g.node_ij(u);
-        let out = g.outgoing(ui, uj);
         // Tail of every outgoing arc is u; pre-load π[u] and source[u] once.
         let pot_u = net.potential[u];
         let src_u = sp.source[u];
         let u_i32 = u as i32;
-        for &(arc, v) in out.iter() {
+        let mut relax = |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
             if net.is_arc_saturated(arc) {
-                continue;
+                return;
             }
-            // Inline reduced_cost: arc_cost(arc) - π[u] + π[v].
-            // u and v come straight from outgoing()'s (arc, head) pair, so
-            // we never need arc_endpoints' integer-divide-by-n math here.
             let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
             debug_assert!(rc >= 0, "negative reduced cost on arc {arc}: {rc}");
             let nd = cur_dist + rc;
@@ -144,8 +139,18 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
                 sp.source[v] = src_u;
                 let b = (nd as usize) % k;
                 buckets[b].push((v, nd));
-                pending += 1;
+                *pending += 1;
             }
+        };
+        if u < g.num_nodes() {
+            let (ui, uj) = g.node_ij(u);
+            let out = g.outgoing(ui, uj);
+            for &(arc, v) in out.iter() {
+                relax(arc, v, &mut sp, &mut pending);
+            }
+        }
+        for &(arc, v) in net.extra_outgoing(u).iter() {
+            relax(arc, v, &mut sp, &mut pending);
         }
     }
     sp
@@ -164,7 +169,7 @@ type Proposal = (usize, i64, u32, i32, u32);
 /// but each large-enough bucket is relaxed via rayon. See module docs for the
 /// race-freedom argument.
 pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
-    let n_nodes = g.num_nodes();
+    let n_nodes = net.num_nodes();
     let mut sp = ShortestPaths::new(n_nodes);
 
     let max_rc = max_reduced_cost_par(g, net);
@@ -229,12 +234,11 @@ pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
                 if is_sink[u] {
                     sinks_popped_this_bucket += 1;
                 }
-                let (ui, uj) = g.node_ij(u);
-                let out = g.outgoing(ui, uj);
                 let pot_u = net.potential[u];
-                for &(arc, v) in out.iter() {
+                let src_u = sp.source[u];
+                let mut relax = |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
                     if net.is_arc_saturated(arc) {
-                        continue;
+                        return;
                     }
                     let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
                     let nd = cur_dist + rc;
@@ -242,11 +246,21 @@ pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
                         sp.dist[v] = nd;
                         sp.pred_arc[v] = arc as i32;
                         sp.pred_node[v] = u as i32;
-                        sp.source[v] = sp.source[u];
+                        sp.source[v] = src_u;
                         let b = (nd as usize) % k;
                         buckets[b].push((v, nd));
-                        pending += 1;
+                        *pending += 1;
                     }
+                };
+                if u < g.num_nodes() {
+                    let (ui, uj) = g.node_ij(u);
+                    let out = g.outgoing(ui, uj);
+                    for &(arc, v) in out.iter() {
+                        relax(arc, v, &mut sp, &mut pending);
+                    }
+                }
+                for &(arc, v) in net.extra_outgoing(u).iter() {
+                    relax(arc, v, &mut sp, &mut pending);
                 }
             }
         } else {
@@ -283,19 +297,27 @@ pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
                         if is_sink[u] {
                             nsinks += 1;
                         }
-                        let (ui, uj) = g.node_ij(u);
-                        let out = g.outgoing(ui, uj);
                         let src = sp_source_snap[u];
                         let pot_u = net.potential[u];
-                        for &(arc, v) in out.iter() {
+                        let consider = |arc: usize, v: usize, props: &mut Vec<Proposal>| {
                             if net.is_arc_saturated(arc) {
-                                continue;
+                                return;
                             }
                             let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
                             let nd = cur_dist + rc;
                             if nd < sp_dist_snap[v] {
                                 props.push((v, nd, arc as u32, src, u as u32));
                             }
+                        };
+                        if u < g.num_nodes() {
+                            let (ui, uj) = g.node_ij(u);
+                            let out = g.outgoing(ui, uj);
+                            for &(arc, v) in out.iter() {
+                                consider(arc, v, &mut props);
+                            }
+                        }
+                        for &(arc, v) in net.extra_outgoing(u).iter() {
+                            consider(arc, v, &mut props);
                         }
                         (props, pops, nsinks)
                     },
