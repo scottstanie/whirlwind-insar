@@ -226,11 +226,11 @@ Stage 1 parallelises across IGs via a Python `ThreadPoolExecutor`; rayon paralle
 
 Stage 2 streams rows through a **stripe-parallel pattern**: each chunk of 64 rows is processed in parallel via rayon, written into the output `Array3`s, then dropped. This caps the intermediate-buffer memory at $\sim$400 MB on a full Palos Verdes scene (the alternative — collecting all *m* rows before scattering — peaks at 25 GB, which on a 48 GB Mac triggers heavy swap thrashing).
 
-### 8.3 Per-IG scaling behaviour
+### 8.3 Per-IG scaling behaviour {#per-ig-scaling-behaviour}
 
 The per-IG 2D unwrap time scales *superlinearly* with pixel count. On Palos Verdes, the median per-IG wall-clock is ~1.3 s at 1024×1024 (~1 Mpx) and ~86 s at the full 4065×3802 (~15.45 Mpx) — a 66× slowdown for a 15× pixel increase, i.e. ~4.4× per-pixel slowdown at full scale. The cause is cache pressure: at 1 Mpx the working set (complex IG + cost arrays + residue grid) fits comfortably in L2/L3 caches; at 15 Mpx the working set spills to DRAM and every random access (Dial bucket-queue, primal-dual augmenting paths) pays the DRAM latency. This is not a fundamental scaling limit, but it does mean that **a 150-IG full-scene 3D run takes roughly 2-4 hours wall-clock on a laptop** depending on how aggressive the outer Python-thread parallelism is. Spatial tiling (see §10.4) is the principled fix.
 
-### 8.3 Output products
+### 8.4 Output products
 
 | File | Type | Meaning |
 |---|---|---|
@@ -410,6 +410,21 @@ What works well on Palos-Verdes 1024² test data:
 | 128 + 32  | 0.10 s             | 97.1 % |
 
 The 256+64 anomaly (3.5 % match while neighbours both clear 97 %) is the dominant failure mode: smaller tiles ⇒ more independent per-tile integer-ambiguity choices ⇒ the overlap median picks a different 2π multiple for one specific tile, creating a fictitious wrap-line at its boundary. Larger tiles + larger overlaps suppress this; the recommended default is **tile_size ≥ 1024 with overlap ~tile_size/8**. The capped-memory benefit kicks in at scenes where the full residue / cost / network would not fit (per-tile RAM scales as O(tile_size²)).
+
+**Full-scene behaviour at large tile sizes.** Re-running the full
+4065 × 3802 / 150-IG scene at `tile_size=1500` reproduces the per-IG
+unwrapped output panel cleanly at the large scale
+(`docs/figures/fig_palos_verdes_full_tiled_1500_wrapped_vs_unwrapped.png`),
+but the per-pixel quality map shows the integer-ambiguity disagreement
+the median-stitch leaves behind:
+`K=0: 0.0 %  /  K=1: 0.4 %  /  K>1: 99.6 %`
+(`docs/figures/fig_palos_verdes_full_tiled_1500_quality.png`). Visible
+blocky structure aligns with the tile grid — each tile adopts its own
+local integer basis and the per-tile choices disagree across boundaries
+by ≥ 2 cycles at almost every pixel. The wrapped-phase agreement is
+preserved (every IG still matches SNAPHU mod 2π), but the absolute
+per-IG offsets are not stack-coherent at this tile size on full-scene
+data. Regenerate with `./scripts/reproduce.sh --full --tile 1500`.
 
 Still TODO: a virtual-ground-node MCF (§10.5) would replace the median-stitch with a globally-consistent integer assignment and make the choice of tile size irrelevant; today's stitching is a working heuristic.
 
