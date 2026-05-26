@@ -1,0 +1,188 @@
+name: Release
+
+# Builds abi3 wheels + sdist with maturin and publishes to PyPI on tag.
+#
+# Triggers:
+#   - push a tag matching v*  (e.g. v0.1.0)                    -> build + publish
+#   - manual workflow_dispatch                                  -> build only (no publish)
+#
+# PyPI auth: trusted publishing (OIDC). Configure once at
+#   https://pypi.org/manage/account/publishing/
+# with:
+#   PyPI project name: whirlwind-rs
+#   Owner:             scottstanie
+#   Repository:        whirlwind-rs
+#   Workflow:          release.yml
+#   Environment:       pypi
+#
+# The python package lives at crates/whirlwind-py/. Because pyo3 is built
+# with abi3-py39 we ship one wheel per (platform, arch) — not one per
+# Python minor — which keeps the matrix small.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: wheel / linux-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: build wheels (manylinux)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: auto
+          working-directory: crates/whirlwind-py
+          sccache: "true"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: crates/whirlwind-py/dist
+
+  musllinux:
+    name: wheel / musllinux-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: build wheels (musllinux)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: musllinux_1_2
+          working-directory: crates/whirlwind-py
+          sccache: "true"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-musllinux-${{ matrix.target }}
+          path: crates/whirlwind-py/dist
+
+  macos:
+    name: wheel / macos-${{ matrix.target }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: build wheels (macos)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          working-directory: crates/whirlwind-py
+          sccache: "true"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: crates/whirlwind-py/dist
+
+  windows:
+    name: wheel / windows-${{ matrix.target }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.target }}
+
+      - name: build wheels (windows)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          working-directory: crates/whirlwind-py
+          sccache: "true"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.target }}
+          path: crates/whirlwind-py/dist
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: crates/whirlwind-py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-sdist
+          path: crates/whirlwind-py/dist
+
+  publish:
+    name: publish to PyPI
+    needs: [linux, musllinux, macos, windows, sdist]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/whirlwind-rs
+    permissions:
+      id-token: write   # required for PyPI trusted publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: list artifacts
+        run: ls -lah dist
+
+      - name: publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
