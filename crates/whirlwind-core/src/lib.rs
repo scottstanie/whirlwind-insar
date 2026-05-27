@@ -14,6 +14,7 @@ pub mod grid;
 pub mod integrate;
 pub mod network;
 pub mod primal_dual;
+pub mod residual_graph;
 pub mod residue;
 pub mod shortest_path;
 pub mod simulate;
@@ -21,6 +22,7 @@ pub mod ssp;
 pub mod tile;
 
 pub use conncomp::ConnCompParams;
+pub use residual_graph::ResidualGraph;
 
 use ndarray::{Array2, ArrayView2};
 use num_complex::Complex32;

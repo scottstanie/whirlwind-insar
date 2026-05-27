@@ -16,6 +16,7 @@
 //! transpose math shifts.
 
 use crate::grid::RectangularGridGraph;
+use crate::residual_graph::ResidualGraph;
 use bitvec::prelude::*;
 use ndarray::ArrayView2;
 
@@ -71,6 +72,76 @@ impl Network {
         mask: Option<ArrayView2<bool>>,
     ) -> Self {
         Self::new_with_mask_and_ground(g, residues, costs, mask, None)
+    }
+
+    /// Topology-agnostic constructor. Use this when the residue graph is not
+    /// a dense rectangular raster (e.g. the sparse triangulated graph used by
+    /// `unwrap_sparse`).
+    ///
+    /// * `excess` — per-node integer winding count. Must satisfy
+    ///   `excess.len() == num_nodes` and `excess.iter().sum() == 0`.
+    /// * `costs` — per-forward-arc integer cost. Must satisfy
+    ///   `costs.len() == num_forward`.
+    /// * `forbidden_fwd` — optional bitset of forward arcs to pre-saturate
+    ///   (both directions). Length `num_forward`. Useful when the caller
+    ///   wants to disallow flow on specific edges before the solve.
+    ///
+    /// For warm-starting from a precomputed arc-level integer estimate
+    /// (e.g. spurt PR #97's B_perp model), call [`Network::warm_start`] on
+    /// the returned network before invoking the solver.
+    pub fn from_topology(
+        num_nodes: usize,
+        num_forward: usize,
+        excess: Vec<i32>,
+        costs: Vec<i32>,
+        forbidden_fwd: Option<&BitSlice>,
+    ) -> Self {
+        assert_eq!(excess.len(), num_nodes, "excess length must match num_nodes");
+        assert_eq!(costs.len(), num_forward, "costs length must match num_forward");
+
+        let nf = num_forward;
+        let mut sat = bitvec![1; 2 * nf];
+        sat[..nf].fill(false);
+
+        if let Some(forbidden) = forbidden_fwd {
+            assert_eq!(forbidden.len(), nf, "forbidden_fwd length must match num_forward");
+            for a in 0..nf {
+                if forbidden[a] {
+                    sat.set(a, true);
+                    sat.set(a + nf, true);
+                }
+            }
+        }
+
+        Self {
+            excess,
+            potential: vec![0_i64; num_nodes],
+            cost_fwd: costs,
+            is_saturated: sat,
+            num_grid_forward: nf,
+            num_grid_nodes: num_nodes,
+            num_ground: 0,
+            num_boundary: 0,
+            boundary_nodes: Vec::new(),
+            node_to_ground_idx: Vec::new(),
+        }
+    }
+
+    /// Warm-start the network with an integer per-forward-arc flow vector.
+    /// Entries must be in `{-1, 0, +1}`: +1 pre-pushes one unit on the forward
+    /// arc; -1 does the same on the reverse partner. Excess is adjusted so
+    /// the MCF invariant holds. Reserved for future B_perp-fit ambiguity
+    /// warm-starts (spurt PR #97). Must be called before any solver invocation.
+    pub fn warm_start<G: ResidualGraph>(&mut self, g: &G, flow: &[i32]) {
+        assert_eq!(flow.len(), self.num_grid_forward);
+        for (a, &f) in flow.iter().enumerate() {
+            match f {
+                0 => {}
+                1 => self.push_unit(g, a),
+                -1 => self.push_unit(g, self.transpose(a)),
+                _ => panic!("warm_start entries must be in {{-1, 0, +1}}; got {f}"),
+            }
+        }
     }
 
     /// Build a network with optional `ground_cost`. When `Some(c)`, a virtual
@@ -279,7 +350,7 @@ impl Network {
     }
 
     /// Endpoints of a (possibly ground) arc, as `(tail, head)`.
-    pub fn arc_endpoints(&self, g: &RectangularGridGraph, arc: usize) -> (usize, usize) {
+    pub fn arc_endpoints<G: ResidualGraph>(&self, g: &G, arc: usize) -> (usize, usize) {
         let nf = self.num_forward();
         let (fwd_arc, is_reverse) = if arc < nf {
             (arc, false)
@@ -392,7 +463,7 @@ impl Network {
     // -- arc/flow queries -----------------------------------------------------
 
     #[inline]
-    pub fn arc_cost(&self, _g: &RectangularGridGraph, arc: usize) -> i32 {
+    pub fn arc_cost<G: ResidualGraph>(&self, _g: &G, arc: usize) -> i32 {
         let nf = self.num_forward();
         if arc < nf {
             self.cost_fwd[arc]
@@ -408,7 +479,7 @@ impl Network {
 
     /// 1 iff the forward partner of `arc` currently carries one unit of flow.
     #[inline]
-    pub fn arc_flow(&self, _g: &RectangularGridGraph, arc: usize) -> i32 {
+    pub fn arc_flow<G: ResidualGraph>(&self, _g: &G, arc: usize) -> i32 {
         let nf = self.num_forward();
         let fwd = if arc < nf { arc } else { arc - nf };
         let rev = fwd + nf;
@@ -417,20 +488,26 @@ impl Network {
 
     /// Reduced cost of an arc: `c - π_tail + π_head`.
     #[inline]
-    pub fn reduced_cost(&self, g: &RectangularGridGraph, arc: usize) -> i64 {
+    pub fn reduced_cost<G: ResidualGraph>(&self, g: &G, arc: usize) -> i64 {
         let (t, h) = self.arc_endpoints(g, arc);
         self.arc_cost(g, arc) as i64 - self.potential[t] + self.potential[h]
     }
 
     /// Reduced cost when the caller already knows tail and head.
     #[inline]
-    pub fn reduced_cost_with(&self, g: &RectangularGridGraph, arc: usize, t: usize, h: usize) -> i64 {
+    pub fn reduced_cost_with<G: ResidualGraph>(
+        &self,
+        g: &G,
+        arc: usize,
+        t: usize,
+        h: usize,
+    ) -> i64 {
         debug_assert_eq!(self.arc_endpoints(g, arc), (t, h));
         self.arc_cost(g, arc) as i64 - self.potential[t] + self.potential[h]
     }
 
     /// Push 1 unit of flow on `arc`. Toggles saturation of arc and its transpose.
-    pub fn push_unit(&mut self, _g: &RectangularGridGraph, arc: usize) {
+    pub fn push_unit<G: ResidualGraph>(&mut self, _g: &G, arc: usize) {
         debug_assert!(!self.is_saturated[arc], "cannot push on saturated arc");
         let t = self.transpose(arc);
         self.is_saturated.set(arc, true);

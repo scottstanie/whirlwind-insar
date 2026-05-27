@@ -1,8 +1,8 @@
 //! Primal-dual min-cost-flow loop. Multi-source Dijkstra, augment, update
 //! potentials, repeat. Falls back to per-source SSP after `max_iter` iters.
 
-use crate::grid::RectangularGridGraph;
 use crate::network::Network;
+use crate::residual_graph::ResidualGraph;
 use crate::shortest_path::dijkstra_multi_source;
 use crate::ssp;
 use rayon::prelude::*;
@@ -56,7 +56,7 @@ fn reset_timings() {
     LAST_TIMINGS.with(|c| *c.borrow_mut() = PDTimings::default());
 }
 
-pub fn run(g: &RectangularGridGraph, net: &mut Network, max_iter: usize) {
+pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     reset_timings();
     let dbg = debug_enabled();
     // Note: we do NOT require `net.is_balanced()` here. The boundary-zeroing
