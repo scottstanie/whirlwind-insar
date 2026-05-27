@@ -118,13 +118,15 @@ def unwrap_with_conncomp(
     """MCF unwrap + SNAPHU-style connected components (Carballo cost).
 
     Pre-filters the wrapped phase with the Goldstein adaptive filter
-    (Goldstein & Werner 1998) before unwrapping. On a 40 MHz NISAR HH
-    GSLC this raises agreement-with-SNAPHU from 80% → 99.5% within
-    ±π/2 by stripping spatial-frequency phase noise that the Carballo
-    cost's 7×7 box-filtered gradient estimate can't reach.
+    (Goldstein & Werner 1998) to inform the MCF, then *applies the
+    resulting 2π·k integer-cycle field to the original wrapped phase*.
+    The output therefore preserves every per-pixel phase value the
+    caller passed in; Goldstein only decides which 2π cycle each pixel
+    sits on. Set ``goldstein_alpha=0`` to skip the filter entirely.
 
-    To disable Goldstein (e.g. on already-filtered or synthetic data),
-    pass ``goldstein_alpha=0``.
+    Validated on a 40 MHz NISAR HH GSLC: agreement with SNAPHU
+    80% → 99.5% within ±π/2 vs the no-filter baseline, while keeping
+    the original wrapped phase under the integration.
 
     Parameters
     ----------
@@ -144,20 +146,32 @@ def unwrap_with_conncomp(
     goldstein_psize : int, default 64
         Goldstein FFT patch size.
     """
-    if goldstein_alpha > 0:
-        igram = goldstein(igram, alpha=goldstein_alpha, psize=goldstein_psize)
-        if mask is not None:
-            igram = igram.copy()
-            igram[~mask] = 0
-    return _unwrap_with_conncomp_native(
-        igram,
-        corr,
-        nlooks,
-        mask=mask,
-        cost_threshold=cost_threshold,
-        min_size_frac=min_size_frac,
-        max_ncomps=max_ncomps,
+    if goldstein_alpha <= 0:
+        return _unwrap_with_conncomp_native(
+            igram, corr, nlooks,
+            mask=mask, cost_threshold=cost_threshold,
+            min_size_frac=min_size_frac, max_ncomps=max_ncomps,
+        )
+
+    ig_filt = goldstein(igram, alpha=goldstein_alpha, psize=goldstein_psize)
+    if mask is not None:
+        ig_filt = ig_filt.copy()
+        ig_filt[~mask] = 0
+    unw_filt, cc = _unwrap_with_conncomp_native(
+        ig_filt, corr, nlooks,
+        mask=mask, cost_threshold=cost_threshold,
+        min_size_frac=min_size_frac, max_ncomps=max_ncomps,
     )
+    # unw_filt = angle(ig_filt) + 2π·k exactly, modulo float roundoff.
+    # Recover k and reapply to the *original* wrapped phase so the output
+    # carries the user's input phase detail rather than Goldstein's
+    # filtered version.
+    tau = np.float32(2 * np.pi)
+    k = np.round((unw_filt - np.angle(ig_filt)) / tau).astype(np.float32)
+    unw = (np.angle(igram).astype(np.float32) + tau * k).astype(np.float32)
+    if mask is not None:
+        unw[~mask] = 0.0
+    return unw, cc
 
 
 def goldstein(
