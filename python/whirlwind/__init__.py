@@ -165,13 +165,16 @@ def unwrap_with_conncomp(
         mask=mask, cost_threshold=cost_threshold,
         min_size_frac=min_size_frac, max_ncomps=max_ncomps,
     )
-    # unw_filt = angle(ig_filt) + 2π·k exactly, modulo float roundoff.
-    # Recover k and reapply to the *original* wrapped phase so the output
-    # carries the user's input phase detail rather than Goldstein's
-    # filtered version.
+    # Transfer the integer 2π·k field from the filtered unwrap onto the
+    # *original* wrapped phase, rounding against the original (not the
+    # filtered) phase to avoid the dolphin-#364 artefact:
+    # any pixel where Goldstein moved phase across the ±π discontinuity
+    # would otherwise pick up a spurious ±2π cycle, producing visible
+    # outlines along fringe boundaries.
     tau = np.float32(2 * np.pi)
-    k = np.round((unw_filt - np.angle(ig_filt)) / tau).astype(np.float32)
-    unw = (np.angle(igram).astype(np.float32) + tau * k).astype(np.float32)
+    phase_orig = np.angle(igram).astype(np.float32)
+    k = np.round((unw_filt - phase_orig) / tau).astype(np.float32)
+    unw = (phase_orig + tau * k).astype(np.float32)
     if mask is not None:
         unw[~mask] = 0.0
     return unw, cc
