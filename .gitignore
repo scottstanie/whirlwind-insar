@@ -10,3 +10,6 @@ scripts/out/
 .DS_Store
 .vscode/
 site/
+*.npy
+*.npz
+paper/*.pdf

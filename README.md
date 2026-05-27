@@ -29,8 +29,8 @@ unwrapped stack + per-pixel quality map + per-date posterior σ cube.
 - **[`ATBD-whirlwind.md`](ATBD-whirlwind.md)** — algorithm theoretical
   basis for the underlying 2D MCF unwrap (Carballo cost, residue grid,
   primal-dual SSP, integration). The 3D pipeline reuses this 2D core.
-- **[`paper/whirlwind3d.pdf`](paper/whirlwind3d.pdf)** — IEEE GRSL letter
-  draft (5 pp.) covering the publishable claims; build with
+- **`paper/whirlwind3d.tex`** — IEEE GRSL letter draft (5 pp.) covering
+  the publishable claims; build the PDF with
   `cd paper && latexmk -pdf whirlwind3d.tex`.
 - **[`PERFORMANCE.md`](PERFORMANCE.md)** — per-stage timings,
   scaling, memory model, mask-acceleration numbers.
