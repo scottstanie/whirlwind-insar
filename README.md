@@ -59,7 +59,7 @@ API is documented inline via doc-comments and rendered by `cargo doc
 ## Prerequisites
 
 - Rust ≥ 1.85 (workspace is on edition 2024). `rustup update stable`.
-- Python ≥ 3.9.
+- Python ≥ 3.11.
 - [uv](https://docs.astral.sh/uv/) is the recommended way to set up the
   dev environment (test + bench deps including snaphu/kamui for
   cross-library comparison). Alternatively, plain `pip install maturin

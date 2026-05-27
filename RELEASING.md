@@ -72,7 +72,7 @@ and after acceptance the feedstock auto-updates on every PyPI release.
    build:
      number: 0
      script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
-     skip: true  # [py<39]
+     skip: true  # [py<311]
 
    requirements:
      build:

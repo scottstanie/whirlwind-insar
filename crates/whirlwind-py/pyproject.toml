@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "whirlwind-rs"
 version = "0.1.0"
 description = "Bayesian min-cost-flow phase unwrapper for InSAR (Rust)"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [{ name = "Scott Staniewicz", email = "scott.stanie@utexas.edu" }]
 license = { text = "MIT" }
 license-files = ["LICENSE"]
