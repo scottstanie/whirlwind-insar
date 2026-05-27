@@ -3,8 +3,8 @@
 pub mod dial;
 pub mod heap;
 
-use crate::grid::RectangularGridGraph;
 use crate::network::Network;
+use crate::residual_graph::ResidualGraph;
 use std::sync::OnceLock;
 
 /// Backend selector for the multi-source Dijkstra.
@@ -75,8 +75,8 @@ impl ShortestPaths {
 ///
 /// Backend is selected once per process via `backend()` (env-var
 /// `WHIRLWIND_DIJKSTRA`).
-pub fn dijkstra_multi_source(
-    g: &RectangularGridGraph,
+pub fn dijkstra_multi_source<G: ResidualGraph>(
+    g: &G,
     net: &Network,
 ) -> ShortestPaths {
     match backend() {

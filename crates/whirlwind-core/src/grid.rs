@@ -19,6 +19,8 @@
 //!
 //! where `n_v = (m-1)*n` and `n_h = m*(n-1)`.
 
+use crate::residual_graph::ResidualGraph;
+
 /// Direction of a forward arc. Order matches the arc-ID partition above.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dir {
@@ -166,7 +168,7 @@ impl RectangularGridGraph {
 
     /// Yield (arc_id, head_id) pairs for all outgoing arcs from `(i, j)`,
     /// including residual reverse arcs of forward arcs pointing INTO this node.
-    pub fn outgoing(&self, i: usize, j: usize) -> SmallVec8 {
+    pub fn outgoing_ij(&self, i: usize, j: usize) -> SmallVec8 {
         let mut out = SmallVec8::default();
         // Forward arcs out of (i, j):
         if let Some(a) = self.down_arc(i, j) {
@@ -202,6 +204,28 @@ impl RectangularGridGraph {
             out.push((self.transpose(right_into), self.node_id(i, j - 1)));
         }
         out
+    }
+}
+
+impl ResidualGraph for RectangularGridGraph {
+    #[inline]
+    fn num_nodes(&self) -> usize {
+        RectangularGridGraph::num_nodes(self)
+    }
+    #[inline]
+    fn num_forward(&self) -> usize {
+        self.num_forward
+    }
+    #[inline]
+    fn arc_endpoints(&self, arc: usize) -> (usize, usize) {
+        RectangularGridGraph::arc_endpoints(self, arc)
+    }
+    fn outgoing(&self, node: usize, out: &mut Vec<(usize, usize)>) {
+        let (i, j) = self.node_ij(node);
+        let buf = self.outgoing_ij(i, j);
+        for &(a, h) in buf.iter() {
+            out.push((a, h));
+        }
     }
 }
 
@@ -259,17 +283,17 @@ mod tests {
         // Top-left (0, 0): forward DOWN + RIGHT (2). Reverses of forward UP
         // from (1, 0) and forward LEFT from (0, 1) — both exist (they're the
         // ones pointing INTO (0, 0)). So total = 4.
-        let out = g.outgoing(0, 0);
+        let out = g.outgoing_ij(0, 0);
         assert_eq!(out.len, 4);
         // Bottom-right (2, 2): symmetric — also 4.
-        let out = g.outgoing(2, 2);
+        let out = g.outgoing_ij(2, 2);
         assert_eq!(out.len, 4);
     }
 
     #[test]
     fn outgoing_makes_sense_for_interior() {
         let g = RectangularGridGraph::new(5, 5);
-        let out = g.outgoing(2, 2);
+        let out = g.outgoing_ij(2, 2);
         // 4 forward (D, U, R, L) + 4 reverse partners-of-forward-into = 8
         assert_eq!(out.len, 8);
     }

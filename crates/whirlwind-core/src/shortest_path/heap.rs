@@ -5,13 +5,13 @@
 //! and ~O((V+E) log V).
 
 use super::ShortestPaths;
-use crate::grid::RectangularGridGraph;
 use crate::network::Network;
+use crate::residual_graph::ResidualGraph;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
-    let n_nodes = g.num_nodes();
+pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
+    let n_nodes = net.num_nodes();
     let mut sp = ShortestPaths::new(n_nodes);
     let mut heap: BinaryHeap<Reverse<(i64, usize)>> = BinaryHeap::new();
 
@@ -36,6 +36,7 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
         return sp;
     }
 
+    let mut buf: Vec<(usize, usize)> = Vec::with_capacity(8);
     while let Some(Reverse((d, u))) = heap.pop() {
         if sp.popped[u] {
             continue;
@@ -53,10 +54,15 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
         // sp.source[u] is already coherent with pred_node[u]: either u was a
         // seed (set above), or it was set at relaxation time below.
 
-        let (ui, uj) = g.node_ij(u);
-        let out = g.outgoing(ui, uj);
         let pot_u = net.potential[u];
-        for &(arc, v) in out.iter() {
+        buf.clear();
+        if u < g.num_nodes() {
+            g.outgoing(u, &mut buf);
+        }
+        for &(arc, v) in net.extra_outgoing(u).iter() {
+            buf.push((arc, v));
+        }
+        for &(arc, v) in buf.iter() {
             if net.is_arc_saturated(arc) {
                 continue;
             }

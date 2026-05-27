@@ -15,15 +15,15 @@
 //!   single-shortest-path ties — each (u, qd) pair is processed at most once.
 
 use super::ShortestPaths;
-use crate::grid::RectangularGridGraph;
 use crate::network::Network;
+use crate::residual_graph::ResidualGraph;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Compute the per-arc bucket count `k = max_unsaturated_reduced_cost + 1`.
 /// Parallelized via rayon — O(E) but trivially data-parallel and ~5× faster
 /// at 4096² where E ≈ 32M.
-fn max_reduced_cost_par(g: &RectangularGridGraph, net: &Network) -> i64 {
+fn max_reduced_cost_par<G: ResidualGraph>(g: &G, net: &Network) -> i64 {
     use rayon::prelude::*;
     (0..net.num_arcs())
         .into_par_iter()
@@ -57,7 +57,7 @@ fn collect_sinks(net: &Network) -> (Vec<bool>, usize) {
 /// further relaxation can't change a finalized distance. On scenes where
 /// sinks cluster (real interferograms) this trims a large tail off late
 /// primal-dual iterations.
-pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
+pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
     let n_nodes = net.num_nodes();
     let mut sp = ShortestPaths::new(n_nodes);
 
@@ -87,6 +87,7 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
     let mut cur_bucket = 0_usize;
     let mut cur_dist: i64 = 0;
     let mut bucket_advances: usize = 0;
+    let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
 
     while pending > 0 {
         // Advance to the next non-empty bucket. After K consecutive empty
@@ -142,12 +143,12 @@ pub fn run(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
                 *pending += 1;
             }
         };
+        out_buf.clear();
         if u < g.num_nodes() {
-            let (ui, uj) = g.node_ij(u);
-            let out = g.outgoing(ui, uj);
-            for &(arc, v) in out.iter() {
-                relax(arc, v, &mut sp, &mut pending);
-            }
+            g.outgoing(u, &mut out_buf);
+        }
+        for &(arc, v) in out_buf.iter() {
+            relax(arc, v, &mut sp, &mut pending);
         }
         for &(arc, v) in net.extra_outgoing(u).iter() {
             relax(arc, v, &mut sp, &mut pending);
@@ -168,7 +169,7 @@ type Proposal = (usize, i64, u32, i32, u32);
 /// Parallel Dial's multi-source Dijkstra. Functionally equivalent to [`run`],
 /// but each large-enough bucket is relaxed via rayon. See module docs for the
 /// race-freedom argument.
-pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
+pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
     let n_nodes = net.num_nodes();
     let mut sp = ShortestPaths::new(n_nodes);
 
@@ -217,6 +218,7 @@ pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
 
         if current.len() < PAR_THRESHOLD {
             // Serial fast path — same logic as `run`.
+            let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
             for (u, qd) in current {
                 if visited[u].load(Ordering::Relaxed) {
                     continue;
@@ -252,12 +254,12 @@ pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
                         *pending += 1;
                     }
                 };
+                out_buf.clear();
                 if u < g.num_nodes() {
-                    let (ui, uj) = g.node_ij(u);
-                    let out = g.outgoing(ui, uj);
-                    for &(arc, v) in out.iter() {
-                        relax(arc, v, &mut sp, &mut pending);
-                    }
+                    g.outgoing(u, &mut out_buf);
+                }
+                for &(arc, v) in out_buf.iter() {
+                    relax(arc, v, &mut sp, &mut pending);
                 }
                 for &(arc, v) in net.extra_outgoing(u).iter() {
                     relax(arc, v, &mut sp, &mut pending);
@@ -275,23 +277,24 @@ pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
             // Per-thread fold returns (proposals, popped_nodes, sinks_popped).
             // Popped nodes are accumulated in fold-local Vecs and applied to
             // sp.popped serially after the reduce.
-            let (proposals, popped_nodes, sinks_popped) = current
+            let (proposals, popped_nodes, sinks_popped, _) = current
                 .par_iter()
                 .fold(
-                    || (Vec::<Proposal>::new(), Vec::<u32>::new(), 0_usize),
-                    |(mut props, mut pops, mut nsinks): (Vec<Proposal>, Vec<u32>, usize),
-                     &(u, qd)| {
+                    || (Vec::<Proposal>::new(), Vec::<u32>::new(), 0_usize, Vec::<(usize, usize)>::with_capacity(8)),
+                    |(mut props, mut pops, mut nsinks, mut out_buf): (
+                        Vec<Proposal>, Vec<u32>, usize, Vec<(usize, usize)>,
+                    ), &(u, qd)| {
                         if visited_ref[u].load(Ordering::Relaxed) {
-                            return (props, pops, nsinks);
+                            return (props, pops, nsinks, out_buf);
                         }
                         if sp_dist_snap[u] != qd || qd != cur_dist {
-                            return (props, pops, nsinks);
+                            return (props, pops, nsinks, out_buf);
                         }
                         if visited_ref[u]
                             .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
                             .is_err()
                         {
-                            return (props, pops, nsinks);
+                            return (props, pops, nsinks, out_buf);
                         }
                         pops.push(u as u32);
                         if is_sink[u] {
@@ -309,25 +312,25 @@ pub fn run_parallel(g: &RectangularGridGraph, net: &Network) -> ShortestPaths {
                                 props.push((v, nd, arc as u32, src, u as u32));
                             }
                         };
+                        out_buf.clear();
                         if u < g.num_nodes() {
-                            let (ui, uj) = g.node_ij(u);
-                            let out = g.outgoing(ui, uj);
-                            for &(arc, v) in out.iter() {
-                                consider(arc, v, &mut props);
-                            }
+                            g.outgoing(u, &mut out_buf);
+                        }
+                        for &(arc, v) in out_buf.iter() {
+                            consider(arc, v, &mut props);
                         }
                         for &(arc, v) in net.extra_outgoing(u).iter() {
                             consider(arc, v, &mut props);
                         }
-                        (props, pops, nsinks)
+                        (props, pops, nsinks, out_buf)
                     },
                 )
                 .reduce(
-                    || (Vec::new(), Vec::new(), 0_usize),
-                    |(mut pa, mut popa, sa), (pb, popb, sb)| {
+                    || (Vec::new(), Vec::new(), 0_usize, Vec::new()),
+                    |(mut pa, mut popa, sa, ob_a), (pb, popb, sb, _ob_b)| {
                         pa.extend(pb);
                         popa.extend(popb);
-                        (pa, popa, sa + sb)
+                        (pa, popa, sa + sb, ob_a)
                     },
                 );
 

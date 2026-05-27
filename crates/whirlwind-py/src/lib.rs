@@ -573,6 +573,48 @@ fn maybe_init_thread_pool_from_env() {
     }
 }
 
+/// Sparse / irregular-grid unwrap over a Delaunay triangulation of the
+/// "good" pixels. Useful for spurt-style workflows where you've selected
+/// <10% of pixels by coherence and want to unwrap only those, getting
+/// better results than dense unwrap-then-mask.
+///
+/// Inputs:
+///   points: float64 (n, 2) — `(x, y)` of each valid pixel.
+///   wrapped_phase: float32 (n,) — wrapped phase per pixel.
+///   variance: float32 (n,) — CRLB phase variance σ² per pixel (rad²).
+///   max_edge_length: float or None — see `unwrap_sparse` rustdocs. Set this
+///     to a few times the median nearest-neighbor distance; without it,
+///     long convex-hull edges produce garbage.
+///
+/// Returns: float32 (n,) unwrapped phase. NaN at pixels disconnected from
+/// the seed (pixel 0) by the short-edge subgraph.
+#[pyfunction]
+#[pyo3(signature = (points, wrapped_phase, variance, max_edge_length = None))]
+fn unwrap_sparse<'py>(
+    py: Python<'py>,
+    points: PyReadonlyArray2<'py, f64>,
+    wrapped_phase: PyReadonlyArray1<'py, f32>,
+    variance: PyReadonlyArray1<'py, f32>,
+    max_edge_length: Option<f64>,
+) -> PyResult<Bound<'py, numpy::PyArray1<f32>>> {
+    let pts_view = points.as_array();
+    if pts_view.shape()[1] != 2 {
+        return Err(PyValueError::new_err("points must have shape (n, 2)"));
+    }
+    let n = pts_view.shape()[0];
+    let mut pts: Vec<(f64, f64)> = Vec::with_capacity(n);
+    for i in 0..n {
+        pts.push((pts_view[(i, 0)], pts_view[(i, 1)]));
+    }
+    let wp = wrapped_phase.as_array().to_vec();
+    let v = variance.as_array().to_vec();
+    let out = py.detach(|| {
+        whirlwind_core::sparse::unwrap_sparse(&pts, &wp, &v, max_edge_length)
+    });
+    let out = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(numpy::PyArray1::from_vec(py, out))
+}
+
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     maybe_init_thread_pool_from_env();
@@ -583,6 +625,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_crlb_grounded, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_with_conncomp, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_with_conncomp, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;
     m.add_function(wrap_pyfunction!(diagonal_ramp, m)?)?;
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;

@@ -30,6 +30,7 @@ rand_distr = "0.4"
 thiserror = "2.0"
 anyhow = "1.0"
 rustfft = "6"
+delaunator = "1.0"
 
 [profile.release]
 lto = "thin"

@@ -3,11 +3,11 @@
 //! Simpler but slower than primal-dual: pick one excess node, run single-source
 //! Dijkstra, augment along shortest path to nearest deficit, repeat.
 
-use crate::grid::RectangularGridGraph;
 use crate::network::Network;
+use crate::residual_graph::ResidualGraph;
 use crate::shortest_path::dijkstra_multi_source;
 
-pub fn run(g: &RectangularGridGraph, net: &mut Network) {
+pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
     let dbg = crate::primal_dual::debug_enabled();
     let mut safety = 0;
     let safety_limit = 4 * net.num_nodes();
