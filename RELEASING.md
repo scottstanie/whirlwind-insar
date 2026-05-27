@@ -8,8 +8,8 @@ crates.io; this doc covers PyPI and conda-forge.
 
 ```bash
 # 1. Bump versions in:
-#      Cargo.toml                                  (workspace.package.version)
-#      crates/whirlwind-py/pyproject.toml          (project.version)
+#      Cargo.toml      (workspace.package.version)
+#      pyproject.toml  (project.version)
 #    Commit, open PR, merge to main.
 
 # 2. Tag the release commit on main and push the tag.
@@ -37,7 +37,7 @@ GitHub secrets. To set it up:
    release.
 2. On PyPI → *Manage* → *Publishing* → *Add a new pending publisher*
    (or *Add a publisher* if the project already exists), enter:
-   - **PyPI project name:** `whirlwind-rs`
+   - **PyPI project name:** `whirlwind-insar`
    - **Owner:** `scottstanie`
    - **Repository name:** `whirlwind-rs`
    - **Workflow name:** `release.yml`
@@ -55,7 +55,7 @@ and after acceptance the feedstock auto-updates on every PyPI release.
 
 1. Wait for the first PyPI release to be live.
 2. Fork [`conda-forge/staged-recipes`][staged] and add a recipe under
-   `recipes/whirlwind-rs/meta.yaml`. Skeleton:
+   `recipes/whirlwind-insar/meta.yaml`. Skeleton:
 
    ```yaml
    {% set name = "whirlwind-insar" %}
@@ -107,7 +107,7 @@ and after acceptance the feedstock auto-updates on every PyPI release.
    ```
 
 3. Open a PR to `staged-recipes`. Reviewers will merge once linting
-   passes; conda-forge bot then creates `conda-forge/whirlwind-rs-feedstock`
+   passes; conda-forge bot then creates `conda-forge/whirlwind-insar-feedstock`
    and grants you maintainer rights.
 
 After the feedstock exists, **no further action is needed in this
@@ -121,7 +121,7 @@ merge) and conda-forge ships the new build.
 
 1. Open a release-bump PR:
    - Bump `version` in `Cargo.toml` (workspace.package).
-   - Bump `version` in `crates/whirlwind-py/pyproject.toml`.
+   - Bump `version` in `pyproject.toml` (project).
    - Run `cargo update -p whirlwind-core -p whirlwind-cli -p whirlwind-py`
      to refresh `Cargo.lock` with the new versions.
    - Update the changelog if there is one.
@@ -137,7 +137,7 @@ merge) and conda-forge ships the new build.
 4. Watch the `Release` workflow. On success, the artifacts are visible
    under the workflow run and on PyPI.
 5. Within a few hours, `regro-cf-autotick-bot` opens a PR against
-   `conda-forge/whirlwind-rs-feedstock`. Review and merge.
+   `conda-forge/whirlwind-insar-feedstock`. Review and merge.
 
 ## Re-running a failed release
 
