@@ -46,12 +46,10 @@ enum Cmd {
     /// `[-π, π]`). Internally the unwrapper only reads `arg(z)` from the
     /// IG — the magnitude is unused — so wrapped phase is the full input.
     ///
-    /// If you have a complex-valued GeoTIFF, extract the phase first via
+    /// If you have a complex-valued GeoTIFF, you can extract the phase first via
     ///
-    ///     gdal_translate DERIVED_SUBDATASET:PHASE:input.tif wrapped.tif
+    ///     gdal_translate DERIVED_SUBDATASET:PHASE:complex.int.tif wrapped.tif
     ///
-    /// (any of GDAL's derived subdataset functions over a complex raster:
-    /// AMPLITUDE, PHASE, REAL, IMAG, INTENSITY, LOGAMPLITUDE).
     Unwrap {
         /// wrapped-phase TIFF (float32, radians)
         #[arg(long)]
@@ -143,7 +141,12 @@ fn cmd_unwrap(phase: PathBuf, cor: PathBuf, nlooks: f32, out: PathBuf) -> Result
 
 fn read_f32_tiff(path: &Path) -> Result<Array2<f32>> {
     let r = BufReader::new(File::open(path).with_context(|| format!("open {}", path.display()))?);
-    let mut d = Decoder::new(r)?;
+    // Default `Limits` cap decoding_buffer_size at 256 MiB, which rejects
+    // any single-band raster bigger than ~64 Mpx of f32 (or ~32 Mpx of f64).
+    // NISAR-scale and full-frame Sentinel-1 inputs routinely exceed that, so
+    // lift the limit — this is a local CLI on trusted inputs, not a
+    // network-facing decoder.
+    let mut d = Decoder::new(r)?.with_limits(tiff::decoder::Limits::unlimited());
     let (w, h) = d.dimensions()?;
     let buf = match d.read_image()? {
         DecodingResult::F32(v) => v,
