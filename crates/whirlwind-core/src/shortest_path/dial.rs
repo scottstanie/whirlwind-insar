@@ -373,7 +373,11 @@ mod tests {
     use rand::SeedableRng;
 
     /// Serial and parallel Dial's must produce identical shortest-path
-    /// *distances* for the same network. (Pred chains can vary on ties.)
+    /// *distances* for nodes both runs popped. (Pred chains can vary on
+    /// ties; `dist[]` for unpopped nodes is implementation-defined because
+    /// the early-exit triggers mid-bucket in `run` but only at end-of-bucket
+    /// in `run_parallel`, so the parallel version may relax a few more
+    /// non-sink nodes before exiting.)
     #[test]
     fn parallel_and_serial_agree_on_distances() {
         let m = 64;
@@ -394,11 +398,13 @@ mod tests {
 
         assert_eq!(sp_serial.dist.len(), sp_parallel.dist.len());
         for i in 0..sp_serial.dist.len() {
-            assert_eq!(
-                sp_serial.dist[i], sp_parallel.dist[i],
-                "dist mismatch at node {i}: serial={} parallel={}",
-                sp_serial.dist[i], sp_parallel.dist[i]
-            );
+            if sp_serial.popped[i] && sp_parallel.popped[i] {
+                assert_eq!(
+                    sp_serial.dist[i], sp_parallel.dist[i],
+                    "dist mismatch at popped node {i}: serial={} parallel={}",
+                    sp_serial.dist[i], sp_parallel.dist[i]
+                );
+            }
         }
     }
 }
