@@ -23,7 +23,38 @@ pub use conncomp::ConnCompParams;
 
 use ndarray::{Array2, ArrayView2};
 use num_complex::Complex32;
+use std::sync::OnceLock;
 use thiserror::Error;
+
+/// Optional ground-node cost for the Carballo top-level entry points
+/// (`unwrap`, `unwrap_with_components`). When `WHIRLWIND_GROUND_COST` is
+/// set to an integer, the MCF graph gets a virtual ground node connected
+/// to every image-boundary residue with unit-capacity arcs of that cost.
+/// Unset = legacy behavior (no ground). Read once per process.
+fn ground_cost_env() -> Option<i32> {
+    static V: OnceLock<Option<i32>> = OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("WHIRLWIND_GROUND_COST")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    })
+}
+
+/// `WHIRLWIND_DATA_GROUND_COST` — when set, route MCF wrap-line terminations
+/// to a virtual ground node connected to **data-boundary** residues
+/// (residue cells adjacent to any masked-out pixel) in addition to
+/// image-boundary residues. The supplied integer is the per-arc ground
+/// cost. Required for scenes whose data region is interior to the raster
+/// (NISAR GSLCs, tilted swaths) — image-only grounding does nothing
+/// there.
+fn data_ground_cost_env() -> Option<i32> {
+    static V: OnceLock<Option<i32>> = OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("WHIRLWIND_DATA_GROUND_COST")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    })
+}
 
 #[derive(Debug, Error)]
 pub enum UnwrapError {
@@ -101,7 +132,14 @@ pub fn unwrap_with_components(
     let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
     let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
+    let mut net = match (mask, data_ground_cost_env()) {
+        (Some(mm), Some(gc)) => network::Network::new_with_mask_and_full_ground(
+            &graph, residues.view(), &costs, mm, gc,
+        ),
+        _ => network::Network::new_with_mask_and_ground(
+            &graph, residues.view(), &costs, mask, ground_cost_env(),
+        ),
+    };
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mask.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)

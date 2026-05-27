@@ -23,8 +23,24 @@ use std::f32::consts::TAU;
 use std::sync::OnceLock;
 
 /// Scale factor used when converting float Carballo costs to integers.
-/// Integer costs enable Dial's bucket-queue Dijkstra; 100 keeps the
-/// quantization error ≤ 0.005 per arc.
+/// Integer costs enable Dial's bucket-queue Dijkstra; the default `100`
+/// keeps the quantization error ≤ 0.005 per arc but produces only
+/// ~314 distinct cost levels (= γ_max · π · scale), causing massive
+/// tie-densities (~80k arcs per level on a 25M-edge graph) and
+/// LP-degenerate MCF solutions. `WHIRLWIND_COST_SCALE` env-var overrides
+/// this (e.g. `10000` for ~3 orders of magnitude lower tie density at
+/// the cost of slightly more memory for the bucket queue).
+pub fn cost_scale() -> f32 {
+    static SCALE: OnceLock<f32> = OnceLock::new();
+    *SCALE.get_or_init(|| {
+        std::env::var("WHIRLWIND_COST_SCALE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100.0)
+    })
+}
+
+#[deprecated(note = "use cost_scale() to honor the WHIRLWIND_COST_SCALE override")]
 pub const COST_SCALE: f32 = 100.0;
 
 /// Compute 7x7 box-filtered phase gradients (vertical & horizontal).
@@ -32,7 +48,123 @@ pub const COST_SCALE: f32 = 100.0;
 pub fn smooth_phase_gradients(
     igram: ArrayView2<Complex32>,
 ) -> (Array2<f32>, Array2<f32>) {
-    smooth_phase_gradients_with_mask(igram, None)
+    if use_complex_smoothing() {
+        smooth_phase_gradients_complex(igram)
+    } else {
+        smooth_phase_gradients_with_mask(igram, None)
+    }
+}
+
+/// Complex-domain phase-gradient smoothing.
+///
+/// Replaces the angle-domain box filter with a magnitude-weighted vector
+/// mean: smooth the real and imaginary parts of `z = IG[i+1,j] * conj(IG[i,j])`
+/// separately, then take `angle` of the result. This handles wraparound
+/// across ±π correctly — averaging angles `[+π−ε, +π−ε, −π+ε, −π+ε, ...]`
+/// in a 7×7 window straddling a fringe gives ≈ 0 (wrong), while averaging
+/// the complex pre-images gives a vector pointing in the correct mean
+/// direction (right).
+///
+/// Crucially, this is also the **maximum-likelihood phase-gradient
+/// estimator under additive Gaussian noise on the SLCs** — it weights
+/// each contribution by its SNR (the magnitude of the complex product).
+/// Pixels with high coherence dominate; low-coherence pixels contribute
+/// proportionally less, instead of being treated as fully reliable angles.
+///
+/// Gated behind `WHIRLWIND_COMPLEX_SMOOTHING=1` until validated on enough
+/// real data.
+fn smooth_phase_gradients_complex(
+    igram: ArrayView2<Complex32>,
+) -> (Array2<f32>, Array2<f32>) {
+    let (m, n) = igram.dim();
+    // Vertical edge: z = IG[i+1, j] * conj(IG[i, j])
+    let mut re_dy = Array2::<f32>::zeros((m - 1, n));
+    let mut im_dy = Array2::<f32>::zeros((m - 1, n));
+    re_dy
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .zip(im_dy.axis_iter_mut(Axis(0)).into_par_iter())
+        .enumerate()
+        .for_each(|(i, (mut rrow, mut irow))| {
+            for j in 0..n {
+                let z = igram[(i + 1, j)] * igram[(i, j)].conj();
+                rrow[j] = z.re;
+                irow[j] = z.im;
+            }
+        });
+    // Horizontal edge: z = IG[i, j+1] * conj(IG[i, j])
+    let mut re_dx = Array2::<f32>::zeros((m, n - 1));
+    let mut im_dx = Array2::<f32>::zeros((m, n - 1));
+    re_dx
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .zip(im_dx.axis_iter_mut(Axis(0)).into_par_iter())
+        .enumerate()
+        .for_each(|(i, (mut rrow, mut irow))| {
+            for j in 0..n - 1 {
+                let z = igram[(i, j + 1)] * igram[(i, j)].conj();
+                rrow[j] = z.re;
+                irow[j] = z.im;
+            }
+        });
+
+    let re_dy_s = box_filter_2d(re_dy.view(), 7);
+    let im_dy_s = box_filter_2d(im_dy.view(), 7);
+    let re_dx_s = box_filter_2d(re_dx.view(), 7);
+    let im_dx_s = box_filter_2d(im_dx.view(), 7);
+
+    let mut phase_dy = Array2::<f32>::zeros(re_dy_s.dim());
+    ndarray::Zip::from(&mut phase_dy)
+        .and(&re_dy_s)
+        .and(&im_dy_s)
+        .for_each(|p, &r, &im| {
+            *p = im.atan2(r);
+        });
+    let mut phase_dx = Array2::<f32>::zeros(re_dx_s.dim());
+    ndarray::Zip::from(&mut phase_dx)
+        .and(&re_dx_s)
+        .and(&im_dx_s)
+        .for_each(|p, &r, &im| {
+            *p = im.atan2(r);
+        });
+    (phase_dy, phase_dx)
+}
+
+fn use_complex_smoothing() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_COMPLEX_SMOOTHING").is_ok())
+}
+
+/// Exponent on coherence in the Carballo cost: `c = γ^p · (π − α)`.
+/// `p = 1` is the original Carballo form. `p > 1` amplifies the
+/// contrast between high-coh and medium-coh edges — high-coh edges
+/// become disproportionately expensive to cut, which can prevent the
+/// MCF from creating false cycle slips through coherent regions when
+/// linear γ-weighting leaves it tie-prone. Env-gated:
+/// `WHIRLWIND_COH_POWER=2.0` (etc.).
+fn coh_power() -> f32 {
+    static V: OnceLock<f32> = OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("WHIRLWIND_COH_POWER")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1.0)
+    })
+}
+
+/// Exponent on the `(π − α)` factor of the Carballo cost. `q = 1` (the
+/// Carballo default) gives a linear cost in α; `q = 2` gives a quadratic
+/// `γ · (π − α)² / π` (same endpoints, strictly convex in α, so the LP
+/// has a unique optimum and topology-cycle ties are broken). Env-gated:
+/// `WHIRLWIND_ALPHA_POWER=2.0`.
+fn alpha_power() -> f32 {
+    static V: OnceLock<f32> = OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("WHIRLWIND_ALPHA_POWER")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1.0)
+    })
 }
 
 /// Same as [`smooth_phase_gradients`] but mask-aware: at pixels whose
@@ -197,6 +329,7 @@ pub fn compute_carballo_costs(
     let m = m_phase + 1;
     let n = n_phase + 1;
     let g = RectangularGridGraph::new(m, n);
+    let scale = cost_scale();
 
     // Note on mask handling for smoothing: empirically the *biased*
     // smoothing (averaging in the 0+0j values from masked pixels) acts as
@@ -301,6 +434,8 @@ pub fn compute_carballo_costs(
     // Bellman-Ford pre-pass for initial potentials would fix that.
     let use_llr = use_llr_cost();
     let lut = lut::get_or_build(nlooks);
+    let p_coh = coh_power();
+    let q_alpha = alpha_power();
 
     // Cost of pushing +2π through this arc, given a smoothed gradient α
     // and edge coherence γ. The opposite direction is `cost_dir(-α, γ)`.
@@ -311,7 +446,17 @@ pub fn compute_carballo_costs(
             -((p1.max(1e-30)).ln() - (p0.max(1e-30)).ln())
         } else {
             let pi = std::f32::consts::PI;
-            (gamma * (pi - alpha)).max(0.0)
+            let g = if (p_coh - 1.0).abs() < 1e-6 { gamma } else { gamma.powf(p_coh) };
+            let base = (pi - alpha).max(0.0);
+            // (π − α)^q / π^(q−1) keeps the cost endpoints fixed at 0/γπ
+            // regardless of q, so the relative scale vs the COST_SCALE
+            // integer ceiling is preserved across choices of q.
+            let shaped = if (q_alpha - 1.0).abs() < 1e-6 {
+                base
+            } else {
+                base.powf(q_alpha) / pi.powf(q_alpha - 1.0)
+            };
+            g * shaped
         }
     };
 
@@ -365,8 +510,8 @@ pub fn compute_carballo_costs(
                 } else {
                     (cost_dir(-alpha, gamma), cost_dir(alpha, gamma))
                 };
-                right_row[j] = (c_rt * COST_SCALE).round() as i32;
-                left_row[j] = (c_lt * COST_SCALE).round() as i32;
+                right_row[j] = (c_rt * scale).round() as i32;
+                left_row[j] = (c_lt * scale).round() as i32;
             }
         });
 
@@ -393,8 +538,8 @@ pub fn compute_carballo_costs(
                     (cost_dir(alpha, gamma), cost_dir(-alpha, gamma))
                 };
                 let col = j + 1;
-                down_row[col] = (c_dn * COST_SCALE).round() as i32;
-                up_row[col] = (c_up * COST_SCALE).round() as i32;
+                down_row[col] = (c_dn * scale).round() as i32;
+                up_row[col] = (c_up * scale).round() as i32;
             }
         });
 
@@ -551,6 +696,7 @@ pub fn compute_crlb_costs(
         (m_phase, n_phase)
     );
     let m = m_phase + 1;
+    let scale = cost_scale();
     let n = n_phase + 1;
     let g = RectangularGridGraph::new(m, n);
 
@@ -629,8 +775,8 @@ pub fn compute_crlb_costs(
                 } else {
                     (cost_dir(-alpha, w), cost_dir(alpha, w))
                 };
-                right_row[j] = (c_rt * COST_SCALE).round() as i32;
-                left_row[j] = (c_lt * COST_SCALE).round() as i32;
+                right_row[j] = (c_rt * scale).round() as i32;
+                left_row[j] = (c_lt * scale).round() as i32;
             }
         });
 
@@ -653,8 +799,8 @@ pub fn compute_crlb_costs(
                     (cost_dir(alpha, w), cost_dir(-alpha, w))
                 };
                 let col = j + 1;
-                down_row[col] = (c_dn * COST_SCALE).round() as i32;
-                up_row[col] = (c_up * COST_SCALE).round() as i32;
+                down_row[col] = (c_dn * scale).round() as i32;
+                up_row[col] = (c_up * scale).round() as i32;
             }
         });
 

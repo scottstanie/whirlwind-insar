@@ -104,11 +104,69 @@ def unwrap_crlb_stack(
     return unw_out, cc_out
 
 
+def goldstein_prefilter(
+    igram: "NDArray[np.complex64]",
+    alpha: float = 0.7,
+    win: int = 64,
+    step: int | None = None,
+) -> "NDArray[np.complex64]":
+    """Adaptive (Goldstein) phase pre-filter for the wrapped interferogram.
+
+    Multiplies the FFT magnitude of each overlapping block by ``|F|^alpha``
+    and inverse-transforms. The result is a phase-only image (magnitudes
+    discarded — the filter operates on unit-amplitude phasors so SLC
+    amplitude does not bias toward a low-pass filter on coherent areas).
+
+    For noisy real-data interferograms (NISAR, multilooked Sentinel-1, etc.)
+    pre-filtering with the defaults before calling
+    :func:`unwrap_with_conncomp` brings ww into close agreement with SNAPHU
+    on coherent regions. Without it, high-frequency phase noise leaks into
+    the 7×7 smoothed-gradient estimate that feeds the Carballo cost, and
+    the MCF picks a topologically different "cut" than SNAPHU's
+    variance-aware ``smooth`` cost would. Validated on a 40 MHz NISAR HH
+    GSLC: 80% → 99.5% within ±π/2 vs SNAPHU.
+
+    Parameters
+    ----------
+    igram : complex64
+        Wrapped interferogram. Mask out-of-data pixels to ``0+0j``
+        beforehand (consistent with the rest of the ww API).
+    alpha : float, default 0.7
+        FFT-magnitude exponent. 0 = identity; 1 = strongest filter.
+    win : int, default 64
+        Square block size for the windowed FFT.
+    step : int, optional
+        Stride between block top-lefts. Defaults to ``win // 2``
+        (50% overlap, recommended).
+    """
+    h, w = igram.shape
+    if step is None:
+        step = win // 2
+    mag = np.abs(igram)
+    z = np.where(mag > 0, igram / np.maximum(mag, 1e-30), 0).astype(np.complex64)
+    w1 = 0.5 * (1 - np.cos(2 * np.pi * np.arange(win) / (win - 1)))
+    w2 = (w1[:, None] * w1[None, :]).astype(np.float32)
+    out = np.zeros_like(z)
+    wsum = np.zeros((h, w), dtype=np.float32)
+    for i0 in range(0, h - win + 1, step):
+        for j0 in range(0, w - win + 1, step):
+            block = z[i0 : i0 + win, j0 : j0 + win]
+            f = np.fft.fft2(block)
+            f_filt = f * (np.abs(f) ** alpha)
+            block_filt = np.fft.ifft2(f_filt).astype(np.complex64)
+            out[i0 : i0 + win, j0 : j0 + win] += block_filt * w2
+            wsum[i0 : i0 + win, j0 : j0 + win] += w2
+    valid = wsum > 0
+    out[valid] /= wsum[valid]
+    return out.astype(np.complex64)
+
+
 __all__ = [
     "closure_correct",
     "closure_refine_mcf",
     "compute_residues",
     "diagonal_ramp",
+    "goldstein_prefilter",
     "quality_map",
     "quality_triangles",
     "simulate_ifg",
