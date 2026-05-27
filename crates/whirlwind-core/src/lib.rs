@@ -7,6 +7,7 @@
 //! 4. Integrate the flow-corrected wrapped gradients to recover unwrapped phase.
 
 pub mod closure;
+pub mod conncomp;
 pub mod cost;
 pub mod grid;
 pub mod integrate;
@@ -17,6 +18,8 @@ pub mod shortest_path;
 pub mod simulate;
 pub mod ssp;
 pub mod tile;
+
+pub use conncomp::ConnCompParams;
 
 use ndarray::{Array2, ArrayView2};
 use num_complex::Complex32;
@@ -75,6 +78,40 @@ pub fn unwrap(
     Ok(unw)
 }
 
+/// [`unwrap`] + SNAPHU-style connected components from the same MCF solve.
+///
+/// Equivalent to running `unwrap` and then growing components on the resulting
+/// MCF network — but does the (expensive) solve only once. See
+/// [`conncomp::grow_components`] for the cut/region-growing rules.
+pub fn unwrap_with_components(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    params: ConnCompParams,
+) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
+    primal_dual::run(&graph, &mut net, 50);
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    let comps = conncomp::grow_components(&graph, &net, mask, &params);
+    Ok((unw, comps))
+}
+
 /// Top-level phase unwrap (CRLB-weighted cost — for phase-linked IGs).
 ///
 /// For interferograms formed from phase-linked SLCs (Dolphin, EVD, EMI),
@@ -109,6 +146,35 @@ pub fn unwrap_crlb(
         integrate::integrate(wrapped_phase.view(), &graph, &net)
     };
     Ok(unw)
+}
+
+/// [`unwrap_crlb`] + SNAPHU-style connected components from the same solve.
+pub fn unwrap_crlb_with_components(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    params: ConnCompParams,
+) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != variance.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_crlb_costs(igram, variance, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
+    primal_dual::run(&graph, &mut net, 50);
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    let comps = conncomp::grow_components(&graph, &net, mask, &params);
+    Ok((unw, comps))
 }
 
 /// Top-level CRLB-weighted phase unwrap with a virtual ground node.

@@ -51,6 +51,39 @@ def unwrap_crlb_grounded(
     """
 
 
+def unwrap_with_conncomp(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float,
+    mask: NDArray[np.bool_] | None = ...,
+    cost_threshold: int = ...,
+    min_size_frac: float = ...,
+    max_ncomps: int = ...,
+) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
+    """Carballo unwrap + SNAPHU-style connected components from one MCF solve.
+
+    Returns ``(unwrapped_phase, components)``. ``components`` is uint32 with
+    0 = background (cut off, masked, or smaller than ``min_size_frac``);
+    valid components are renumbered 1..=K by descending size, capped at
+    ``max_ncomps``. A pixel edge is a cut when an underlying MCF arc is
+    mask-forbidden, carries flow (branch cut), or has raw cost
+    ≤ ``cost_threshold``.
+    """
+
+
+def unwrap_crlb_with_conncomp(
+    igram: NDArray[np.complex64],
+    variance: NDArray[np.float32],
+    mask: NDArray[np.bool_] | None = ...,
+    cost_threshold: int = ...,
+    min_size_frac: float = ...,
+    max_ncomps: int = ...,
+) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
+    """CRLB unwrap + SNAPHU-style connected components. See
+    :func:`unwrap_with_conncomp` for component semantics.
+    """
+
+
 def compute_residues(wrapped_phase: NDArray[np.float32]) -> NDArray[np.int32]:
     """Compute the integer residue grid from a wrapped-phase array."""
 

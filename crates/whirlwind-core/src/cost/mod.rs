@@ -32,6 +32,25 @@ pub const COST_SCALE: f32 = 100.0;
 pub fn smooth_phase_gradients(
     igram: ArrayView2<Complex32>,
 ) -> (Array2<f32>, Array2<f32>) {
+    smooth_phase_gradients_with_mask(igram, None)
+}
+
+/// Same as [`smooth_phase_gradients`] but mask-aware: at pixels whose
+/// 7×7 window overlaps masked-out pixels, the average is taken over the
+/// *valid* pixels only (rather than including masked zeros). This is
+/// critical for real-data mask boundaries — without it, masked pixels
+/// (set to `0+0j`) drag the smoothed gradient toward 0 within 3 pixels
+/// of the boundary, biasing the cost field and inducing block-2π errors
+/// in coherent regions near the boundary.
+///
+/// Implementation uses the algebraic identity `mean_valid = sum / count`
+/// with two separable box-filter passes (one on `phase * valid`, one on
+/// `valid` itself), then a per-pixel divide. Same O(k) complexity as the
+/// unmasked path; ~2× the work.
+pub fn smooth_phase_gradients_with_mask(
+    igram: ArrayView2<Complex32>,
+    pixel_mask: Option<ArrayView2<bool>>,
+) -> (Array2<f32>, Array2<f32>) {
     let (m, n) = igram.dim();
     // Vertical gradient: angle(igram[i+1, j] * conj(igram[i, j])), shape (m-1, n).
     let mut phase_dy = Array2::<f32>::zeros((m - 1, n));
@@ -57,9 +76,66 @@ pub fn smooth_phase_gradients(
                 row[j] = z.arg();
             }
         });
-    let phase_dy_s = box_filter_2d(phase_dy.view(), 7);
-    let phase_dx_s = box_filter_2d(phase_dx.view(), 7);
-    (phase_dy_s, phase_dx_s)
+
+    let Some(mask) = pixel_mask else {
+        let phase_dy_s = box_filter_2d(phase_dy.view(), 7);
+        let phase_dx_s = box_filter_2d(phase_dx.view(), 7);
+        return (phase_dy_s, phase_dx_s);
+    };
+
+    // Per-edge validity (1.0 where both endpoint pixels are valid).
+    let mut valid_dy = Array2::<f32>::zeros((m - 1, n));
+    valid_dy
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n {
+                row[j] = if mask[(i, j)] && mask[(i + 1, j)] { 1.0 } else { 0.0 };
+            }
+        });
+    let mut valid_dx = Array2::<f32>::zeros((m, n - 1));
+    valid_dx
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n - 1 {
+                row[j] = if mask[(i, j)] && mask[(i, j + 1)] { 1.0 } else { 0.0 };
+            }
+        });
+    // Zero phase gradient where the edge is invalid so it contributes 0
+    // to the sum (rather than leaking the wrapped-phase angle of 0+0j).
+    ndarray::Zip::from(&mut phase_dy).and(&valid_dy).for_each(|p, &v| {
+        if v == 0.0 { *p = 0.0; }
+    });
+    ndarray::Zip::from(&mut phase_dx).and(&valid_dx).for_each(|p, &v| {
+        if v == 0.0 { *p = 0.0; }
+    });
+
+    let sum_dy = box_filter_2d(phase_dy.view(), 7);
+    let cnt_dy = box_filter_2d(valid_dy.view(), 7);
+    let sum_dx = box_filter_2d(phase_dx.view(), 7);
+    let cnt_dx = box_filter_2d(valid_dx.view(), 7);
+
+    // mean = sum / count; both passes already include a /(k^2) factor that
+    // cancels, so the ratio is the unbiased mean over valid pixels.
+    let mut out_dy = Array2::<f32>::zeros(sum_dy.dim());
+    ndarray::Zip::from(&mut out_dy)
+        .and(&sum_dy)
+        .and(&cnt_dy)
+        .for_each(|o, &s, &c| {
+            *o = if c > 1e-6 { s / c } else { 0.0 };
+        });
+    let mut out_dx = Array2::<f32>::zeros(sum_dx.dim());
+    ndarray::Zip::from(&mut out_dx)
+        .and(&sum_dx)
+        .and(&cnt_dx)
+        .for_each(|o, &s, &c| {
+            *o = if c > 1e-6 { s / c } else { 0.0 };
+        });
+
+    (out_dy, out_dx)
 }
 
 /// Separable box filter with size `k` (must be odd), nearest-edge replication.
@@ -122,9 +198,38 @@ pub fn compute_carballo_costs(
     let n = n_phase + 1;
     let g = RectangularGridGraph::new(m, n);
 
+    // Note on mask handling for smoothing: empirically the *biased*
+    // smoothing (averaging in the 0+0j values from masked pixels) acts as
+    // an implicit boundary penalty — it pulls the smoothed gradient
+    // toward 0 near the boundary, which makes the Carballo cost
+    // ~γ·π there (high), discouraging MCF from routing through the
+    // boundary. Using mask-aware (unbiased) smoothing — see
+    // `smooth_phase_gradients_with_mask` — removes that implicit fence
+    // and worsens 2π block errors on real NISAR data. Kept here for
+    // possible future use; not the default.
     let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
     // phase_dy_s: (m_phase-1, n_phase) = (m-2, n-1)
     // phase_dx_s: (m_phase, n_phase-1) = (m-1, n-2)
+
+    // Optionally remap per-pixel coherence to a bias-corrected estimate.
+    // When the env var is unset we still own a copy of `corr` so the
+    // downstream view binding has a uniform lifetime; the allocation is
+    // small (one float per pixel) compared to the per-edge cost arrays.
+    let corr_owned: Array2<f32> = if coh_bias_correct_enabled() {
+        let mut out = Array2::<f32>::zeros(corr.dim());
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, mut row)| {
+                for j in 0..n_phase {
+                    row[j] = correct_coh_bias(corr[(i, j)], nlooks);
+                }
+            });
+        out
+    } else {
+        corr.to_owned()
+    };
+    let corr_use = corr_owned.view();
 
     // Per-edge coherence (minimum of the two endpoint pixels).
     let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase)); // vertical edges in pixel space
@@ -134,7 +239,7 @@ pub fn compute_carballo_costs(
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase {
-                row[j] = corr[(i, j)].min(corr[(i + 1, j)]);
+                row[j] = corr_use[(i, j)].min(corr_use[(i + 1, j)]);
             }
         });
     let mut cor_dx = Array2::<f32>::zeros((m_phase, n_phase - 1)); // horizontal edges
@@ -144,7 +249,7 @@ pub fn compute_carballo_costs(
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase - 1 {
-                row[j] = corr[(i, j)].min(corr[(i, j + 1)]);
+                row[j] = corr_use[(i, j)].min(corr_use[(i, j + 1)]);
             }
         });
     let mask_dy = mask.map(|m_| {
@@ -172,23 +277,33 @@ pub fn compute_carballo_costs(
         out
     });
 
-    // For now use a SNAPHU-style topological cost rather than the Carballo
-    // LLR. The full Bayesian LLR can go negative for arcs at wrap lines, which
-    // breaks Dijkstra; the cleanest fix is to either run a Bellman-Ford pass
-    // for initial potentials, or pick a cost that's structurally non-negative.
-    // This simple cost still encodes the right intuition: high cost in smooth
-    // high-coherence regions (don't unwrap there); low cost near wrap lines.
+    // Per-direction topological cost (Carballo-style, sign-aware).
     //
-    //   cost = γ_edge · (π − |α_smooth|)
+    //   c_{+}(α, γ) = γ · max(0, π − α)
+    //   c_{−}(α, γ) = γ · max(0, π + α) = c_{+}(−α, γ)
     //
-    // which is 0 when |α|=π (free to unwrap at a wrap line), and γ·π when α=0
-    // (avoid unwrapping in smooth interior). We still consume `lut` lazily so
-    // the analytical Lee PDF code path stays exercised by tests; the LLR is
-    // retained behind a `WHIRLWIND_LLR_COST=1` env knob for experiments.
+    // `c_{+}` is the cost of pushing +2π through the arc; it is 0 when
+    // α = +π (true wrap line in the + direction), γ·π when α = 0 (smooth
+    // interior — never cut here), and γ·2π when α = −π (perversely add +2π
+    // where the wrap is in the opposite direction — strongly avoid).
+    // `c_{−}` is the mirror image. The asymmetry is essential: MCF must
+    // see different costs for DOWN vs UP arcs at a single pixel edge,
+    // otherwise the LP is degenerate and arbitrary tie-breaking flips the
+    // unwrap topology under tiny input perturbations.
+    //
+    // The earlier symmetric `γ · (π − |α|)` form lost this distinction and
+    // produced block-2π errors in coherent regions on real NISAR data; see
+    // `paper/binary_vs_continuous.md` "Posterior reliability" section.
+    //
+    // The full Bayesian LLR (using the Lee 1994 PDF) is retained behind
+    // `WHIRLWIND_LLR_COST=1` for experiments. It can go negative at wrap
+    // lines, which currently breaks our Dijkstra-based SSP path; a
+    // Bellman-Ford pre-pass for initial potentials would fix that.
     let use_llr = use_llr_cost();
     let lut = lut::get_or_build(nlooks);
 
-    // Per-arc cost as a closure; reads `lut` (Sync) and a copied `use_llr` bool.
+    // Cost of pushing +2π through this arc, given a smoothed gradient α
+    // and edge coherence γ. The opposite direction is `cost_dir(-α, γ)`.
     let cost_dir = |alpha: f32, gamma: f32| -> f32 {
         if use_llr {
             let p0 = lut.eval(alpha, gamma);
@@ -196,7 +311,7 @@ pub fn compute_carballo_costs(
             -((p1.max(1e-30)).ln() - (p0.max(1e-30)).ln())
         } else {
             let pi = std::f32::consts::PI;
-            (gamma * (pi - alpha.abs())).max(0.0)
+            (gamma * (pi - alpha)).max(0.0)
         }
     };
 
@@ -302,6 +417,62 @@ fn use_llr_cost() -> bool {
     *FLAG.get_or_init(|| std::env::var("WHIRLWIND_LLR_COST").is_ok())
 }
 
+/// Cached env-var lookup for the multilook-coherence bias correction toggle.
+///
+/// Sample coherence estimated from L looks is biased upward — especially at
+/// low true coherence — and the Lee 1994 PDF used in our cost LUT is
+/// conditioned on *true* coherence, not the sample estimate. Plugging the
+/// raw sample in inflates γ on noisy pixels, raises their edge cost, and
+/// under-uses them as cheap residue-routing channels. Setting
+/// `WHIRLWIND_COH_BIAS_CORRECT=1` applies the Touzi/Bessel-style
+/// closed-form bias correction `γ_corr² = max(0, (L·γ̂² − 1)/(L − 1))` to
+/// every pixel's coherence before edges are built. Default is off
+/// (current behavior). Has no effect on the CRLB cost path (which already
+/// works with unbiased per-acquisition phase variance).
+///
+/// **Experimental — not a default-on improvement.** When evaluated on the
+/// synthetic `bridge_between_blobs` scenario (see
+/// `scripts/binary_vs_continuous_synth.py`) the correction fixes a 2π
+/// blob-to-blob misroute (RMSE 4.45 → 0.15, 5521 cycle errors → 0). When
+/// evaluated on uniform-coherence ramps from `scripts/coh_bias_ab.py`
+/// (γ̂ = 0.3, L = 5) it makes things noticeably worse (RMSE 13.5 → 28.3,
+/// 38k → 59k cycle errors). Mechanism: the closed-form correction floors
+/// γ to 0 wherever `γ̂² < 1/L`, which on uniformly-low-coh scenes wipes
+/// out the cost gradient that MCF was using for routing — the only signal
+/// left is the `(π − |α|)` term, scaled by zero. A softer correction
+/// (e.g. shrinkage with a non-zero floor, or a Bayesian-posterior
+/// integration over γ_true) might be a clean fix; not yet implemented.
+fn coh_bias_correct_enabled() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_COH_BIAS_CORRECT").is_ok())
+}
+
+/// Touzi/Bessel-style closed-form bias correction for sample multilook
+/// coherence. Returns the bias-corrected estimate `γ_corr ∈ [0, 1]`.
+///
+/// Derivation: to first order, `E[|γ̂|²] ≈ |γ|² + (1 − |γ|²)/L`, so an
+/// approximately unbiased estimator is
+/// `|γ|²_corr = (L·|γ̂|² − 1) / (L − 1)`, clamped below at 0. For `L ≤ 1`
+/// the correction is degenerate (a single look gives no coherence
+/// information); fall back to the raw value to avoid producing NaN.
+#[inline]
+pub fn correct_coh_bias(gamma: f32, nlooks: f32) -> f32 {
+    if !gamma.is_finite() {
+        return 0.0;
+    }
+    if !(nlooks > 1.0) {
+        return gamma.clamp(0.0, 1.0);
+    }
+    let g2 = (gamma as f64).clamp(0.0, 1.0).powi(2);
+    let l = nlooks as f64;
+    let corr_sq = (l * g2 - 1.0) / (l - 1.0);
+    if corr_sq <= 0.0 {
+        0.0
+    } else {
+        corr_sq.sqrt() as f32
+    }
+}
+
 // =========================================================================
 // CRLB-weighted cost (for phase-linked inputs)
 // =========================================================================
@@ -383,6 +554,7 @@ pub fn compute_crlb_costs(
     let n = n_phase + 1;
     let g = RectangularGridGraph::new(m, n);
 
+    // See note in `compute_carballo_costs` re: biased vs mask-aware smoothing.
     let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
 
     // Per-edge inverse variance. For vertical edges (between (i,j) and (i+1,j)),
@@ -531,6 +703,64 @@ fn build_inv_var_dx(variance: ArrayView2<f32>) -> Array2<f32> {
             }
         });
     out
+}
+
+#[cfg(test)]
+mod coh_bias_tests {
+    use super::*;
+
+    #[test]
+    fn bias_correction_identity_at_unit_coh() {
+        // γ=1 → no noise → correction is identity at any L>1.
+        for &l in &[2.0_f32, 5.0, 10.0, 100.0] {
+            assert!((correct_coh_bias(1.0, l) - 1.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn bias_correction_floors_at_zero() {
+        // γ̂² < 1/L is consistent with γ_true = 0; correction returns 0.
+        // For L=5: 1/L = 0.2 ⇒ γ̂ = 0.4 sits right at the floor.
+        assert_eq!(correct_coh_bias(0.1, 5.0), 0.0);
+        assert_eq!(correct_coh_bias(0.3, 5.0), 0.0);
+        // At γ̂ = sqrt(1/L) the correction is exactly 0.
+        let edge = (1.0_f32 / 5.0).sqrt();
+        assert!(correct_coh_bias(edge, 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bias_correction_reduces_intermediate_coh() {
+        // Bias is meaningful at moderate γ̂ and small L.
+        let raw = 0.7_f32;
+        let corrected = correct_coh_bias(raw, 5.0);
+        assert!(corrected < raw, "expected {corrected} < {raw}");
+        // Formula check: γ_corr² = (L·γ̂² − 1)/(L − 1) = (5·0.49 − 1)/4 = 0.3625
+        // ⇒ γ_corr ≈ 0.6021
+        assert!((corrected - 0.6021_f32).abs() < 1e-3, "got {corrected}");
+    }
+
+    #[test]
+    fn bias_correction_vanishes_for_large_L() {
+        // L→∞ ⇒ correction is the identity at every γ̂.
+        for &g in &[0.3_f32, 0.5, 0.7, 0.9] {
+            let corrected = correct_coh_bias(g, 10_000.0);
+            assert!((corrected - g).abs() < 1e-3, "L=large, γ={g}, got {corrected}");
+        }
+    }
+
+    #[test]
+    fn bias_correction_degenerate_at_small_L() {
+        // L ≤ 1 is degenerate; return raw to avoid producing NaN.
+        assert_eq!(correct_coh_bias(0.5, 1.0), 0.5);
+        assert_eq!(correct_coh_bias(0.5, 0.5), 0.5);
+    }
+
+    #[test]
+    fn bias_correction_clamps_out_of_range_input() {
+        assert!(!correct_coh_bias(f32::NAN, 5.0).is_nan());
+        assert_eq!(correct_coh_bias(-0.2, 5.0), 0.0);
+        assert!(correct_coh_bias(1.5, 5.0) <= 1.0);
+    }
 }
 
 #[cfg(test)]

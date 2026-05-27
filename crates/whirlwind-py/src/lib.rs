@@ -7,6 +7,20 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+/// Unwrap an interferogram with the Carballo/SNAPHU-style coherence cost.
+///
+/// Suitable for boxcar-multilooked IGs where ``corr`` is the sample
+/// coherence γ̂. For phase-linked IGs (Dolphin/EVD/EMI), use
+/// :func:`unwrap_crlb` instead — the CRLB variance is the proper per-pixel
+/// noise weight there.
+///
+/// * ``igram`` — complex64, shape ``(m, n)``.
+/// * ``corr`` — float32 sample coherence in ``[0, 1]``, shape ``(m, n)``.
+/// * ``nlooks`` — effective number of looks (≥ 1) used to estimate ``corr``.
+/// * ``mask`` — optional bool, shape ``(m, n)``. ``False`` pixels are
+///   excluded (their incident arcs are forbidden).
+///
+/// Returns the unwrapped phase as float32 ``(m, n)``.
 #[pyfunction]
 #[pyo3(signature = (igram, corr, nlooks, mask = None))]
 fn unwrap<'py>(
@@ -25,6 +39,12 @@ fn unwrap<'py>(
     Ok(unw.into_pyarray(py))
 }
 
+/// Compute the integer residue grid from a wrapped-phase array.
+///
+/// For an ``(m, n)`` wrapped-phase image, returns an
+/// ``(m + 1, n + 1)`` int32 grid placed on pixel corners. Each entry is
+/// the closed-loop residue (in cycles) of the four wrapped-gradient steps
+/// around that corner; non-zero values are the residues MCF must pair.
 #[pyfunction]
 fn compute_residues<'py>(
     py: Python<'py>,
@@ -35,6 +55,10 @@ fn compute_residues<'py>(
     res.into_pyarray(py)
 }
 
+/// Diagonal phase ramp ``(i + j) / max(m, n) * 2π * cycles`` for testing.
+///
+/// Returns an ``(m, n)`` float32 unwrapped-phase array suitable for use
+/// as ground truth in unwrapping benchmarks.
 #[pyfunction]
 fn diagonal_ramp<'py>(
     py: Python<'py>,
@@ -44,6 +68,10 @@ fn diagonal_ramp<'py>(
     whirlwind_core::simulate::diagonal_ramp((m, n)).into_pyarray(py)
 }
 
+/// Wrap an unwrapped-phase array into ``(-π, π]``.
+///
+/// Convenience for tests / synthetic generation: returns
+/// ``angle(exp(1j * unw))`` element-wise as float32, same shape as input.
 #[pyfunction]
 fn wrap_phase<'py>(
     py: Python<'py>,
@@ -53,6 +81,16 @@ fn wrap_phase<'py>(
     whirlwind_core::simulate::wrap_phase(&arr).into_pyarray(py)
 }
 
+/// Simulate a multilook complex interferogram + sample coherence.
+///
+/// Draws Lee-PDF phase noise around ``truth`` at per-pixel coherence
+/// ``gamma`` with ``nlooks`` looks, returning ``(igram, corr)`` where:
+///
+/// * ``igram`` — complex64 ``exp(1j * (truth + noise))``, shape of truth.
+/// * ``corr`` — float32 sample coherence (biased upward at low γ; matches
+///   the multilook estimator). Shape of truth.
+///
+/// Reproducible: same ``seed`` ⇒ same outputs.
 #[pyfunction]
 fn simulate_ifg<'py>(
     py: Python<'py>,
@@ -363,11 +401,111 @@ fn closure_refine_mcf<'py>(
     Ok(dict)
 }
 
+/// Carballo-cost unwrap returning ``(unwrapped_phase, conn_components)``.
+///
+/// SNAPHU-style components grown from the same MCF solve. A pixel edge is
+/// treated as a *cut* when (a) one of its underlying arcs is forbidden by
+/// the input mask, or (b) the minimum raw forward cost across the two
+/// underlying arcs is ≤ ``cost_threshold``. BFS through non-cut edges
+/// labels components; components covering less than ``min_size_frac`` of
+/// valid pixels are dropped, and the largest ``max_ncomps`` (by size) are
+/// kept and renumbered ``1..=N``. Background / dropped pixels are ``0``.
+///
+/// Defaults are SNAPHU-equivalent. ``cost_threshold = 50`` (in integer
+/// Carballo units with ``COST_SCALE = 100``) corresponds roughly to
+/// γ̂ ≈ 0.3 at average local phase smoothness — i.e. "cut clearly
+/// decorrelated noise, keep everything else." Set higher (≈100 ≈ γ̂ ≈ 0.6)
+/// for an aggressive spurt-style mask; set to 0 for connectivity from the
+/// input mask alone (no cost-based cutting).
+///
+/// * ``igram`` — complex64, shape ``(m, n)``.
+/// * ``corr`` — float32 sample coherence in ``[0, 1]``, shape ``(m, n)``.
+/// * ``nlooks`` — effective number of looks (≥ 1).
+/// * ``mask`` — optional bool, shape ``(m, n)``.
+/// * ``cost_threshold`` — see above.
+/// * ``min_size_frac`` — drop components below this fraction of valid pixels.
+/// * ``max_ncomps`` — keep at most this many components.
+#[pyfunction]
+#[pyo3(signature = (
+    igram, corr, nlooks, mask = None,
+    cost_threshold = 50, min_size_frac = 0.01, max_ncomps = 64,
+))]
+fn unwrap_with_conncomp<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    corr: PyReadonlyArray2<'py, f32>,
+    nlooks: f32,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    cost_threshold: i32,
+    min_size_frac: f32,
+    max_ncomps: u32,
+) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
+    let ig = igram.as_array();
+    let co = corr.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let params = whirlwind_core::ConnCompParams {
+        cost_threshold,
+        min_size_frac,
+        max_ncomps,
+    };
+    let out = py.detach(|| whirlwind_core::unwrap_with_components(ig, co, nlooks, m, params));
+    let (unw, comps) = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
+}
+
+/// CRLB-cost unwrap returning ``(unwrapped_phase, conn_components)``.
+///
+/// CRLB-path twin of :func:`unwrap_with_conncomp` for phase-linked IGs
+/// (Dolphin/EVD/EMI). Uses per-pixel CRLB variance σ²_IG = σ²_a + σ²_b
+/// (typically ``crlb_<date_a>.tif + crlb_<date_b>.tif``) as the noise
+/// weight instead of sample coherence.
+///
+/// Cut rule and parameter semantics match :func:`unwrap_with_conncomp`.
+/// Note that the cost units differ from the Carballo path: CRLB-derived
+/// costs are scaled differently, so ``cost_threshold`` is not directly
+/// comparable to the Carballo path's threshold. For typical Dolphin
+/// outputs the default ``50`` is still a reasonable "exclude clearly
+/// decorrelated" cutoff.
+///
+/// * ``igram`` — complex64, shape ``(m, n)``.
+/// * ``variance`` — float32 σ²_IG in rad², shape ``(m, n)``.
+/// * ``mask`` — optional bool, shape ``(m, n)``.
+/// * ``cost_threshold``, ``min_size_frac``, ``max_ncomps`` — see
+///   :func:`unwrap_with_conncomp`.
+#[pyfunction]
+#[pyo3(signature = (
+    igram, variance, mask = None,
+    cost_threshold = 50, min_size_frac = 0.01, max_ncomps = 64,
+))]
+fn unwrap_crlb_with_conncomp<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    variance: PyReadonlyArray2<'py, f32>,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    cost_threshold: i32,
+    min_size_frac: f32,
+    max_ncomps: u32,
+) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
+    let ig = igram.as_array();
+    let v = variance.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let params = whirlwind_core::ConnCompParams {
+        cost_threshold,
+        min_size_frac,
+        max_ncomps,
+    };
+    let out = py.detach(|| whirlwind_core::unwrap_crlb_with_components(ig, v, m, params));
+    let (unw, comps) = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
+}
+
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_grounded, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_with_conncomp, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_crlb_with_conncomp, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;
     m.add_function(wrap_pyfunction!(diagonal_ramp, m)?)?;
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;
