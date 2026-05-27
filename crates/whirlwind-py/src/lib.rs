@@ -522,8 +522,62 @@ fn goldstein<'py>(
     Ok(out.into_pyarray(py))
 }
 
+/// Set the number of threads used by ww's internal parallel work.
+///
+/// Initialises rayon's global thread pool. **Must be called before the
+/// first parallel ww function** (`unwrap*`, `goldstein`, etc.) —
+/// rayon's global pool can only be initialised once per process.
+///
+/// Raises ``RuntimeError`` if the pool is already initialised (either
+/// by a prior call, by the ``WHIRLWIND_NUM_THREADS`` /
+/// ``RAYON_NUM_THREADS`` env vars read at module import, or by an
+/// earlier rayon-using call).
+///
+/// Precedence at process startup, highest to lowest:
+///   1. ``WHIRLWIND_NUM_THREADS`` env var
+///   2. ``RAYON_NUM_THREADS`` env var
+///   3. ``whirlwind_rs.set_num_threads(n)`` (if neither env var was set)
+///   4. rayon default (= all logical CPUs)
+#[pyfunction]
+fn set_num_threads(n: usize) -> PyResult<()> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(n)
+        .build_global()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
+}
+
+/// Return the size of the rayon thread pool whirlwind-rs uses.
+///
+/// If called before any parallel work has happened *and* no env var was
+/// set, this returns rayon's default (= all logical CPUs).
+#[pyfunction]
+fn num_threads() -> usize {
+    rayon::current_num_threads()
+}
+
+/// Read `WHIRLWIND_NUM_THREADS` then `RAYON_NUM_THREADS` (first match
+/// wins) and initialise rayon's global pool to that thread count.
+/// Failures are silently dropped: rayon's `build_global` returns Err
+/// when the pool is already set (e.g. another rayon-using extension
+/// beat us to it), which is fine — we just defer to whoever did.
+fn maybe_init_thread_pool_from_env() {
+    let n = std::env::var("WHIRLWIND_NUM_THREADS")
+        .ok()
+        .or_else(|| std::env::var("RAYON_NUM_THREADS").ok())
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0);
+    if let Some(n) = n {
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global();
+    }
+}
+
 #[pymodule]
 fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    maybe_init_thread_pool_from_env();
+    m.add_function(wrap_pyfunction!(set_num_threads, m)?)?;
+    m.add_function(wrap_pyfunction!(num_threads, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_grounded, m)?)?;

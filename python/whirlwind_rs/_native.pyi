@@ -190,3 +190,18 @@ def goldstein(
     1. Input normalised to unit magnitude before filtering.
     2. Hann overlap-add window (smoother than triangle).
     """
+
+
+def set_num_threads(n: int) -> None:
+    """Set the rayon thread pool size used for all parallel ww work.
+
+    Must be called *before* the first parallel ww function. Raises
+    ``RuntimeError`` if the pool is already initialised (by an earlier
+    call, by env vars, or by an earlier rayon call). Precedence:
+    ``WHIRLWIND_NUM_THREADS`` > ``RAYON_NUM_THREADS`` > this function
+    > rayon default (all logical CPUs).
+    """
+
+
+def num_threads() -> int:
+    """Return the current rayon thread pool size used by ww."""

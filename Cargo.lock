@@ -703,6 +703,7 @@ dependencies = [
  "numpy",
  "pyo3",
  "rand",
+ "rayon",
  "whirlwind-core",
 ]
 
