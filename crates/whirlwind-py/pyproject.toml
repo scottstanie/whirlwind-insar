@@ -3,7 +3,7 @@ requires = ["maturin>=1.8,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "whirlwind-unwrap"
+name = "whirlwind-insar"
 version = "0.1.0"
 description = "Bayesian min-cost-flow phase unwrapper for InSAR (Rust-backed; `import whirlwind`)"
 requires-python = ">=3.11"

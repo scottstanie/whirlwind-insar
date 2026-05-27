@@ -82,7 +82,7 @@ wheels = [
 ]
 
 [[package]]
-name = "whirlwind-unwrap"
+name = "whirlwind-insar"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

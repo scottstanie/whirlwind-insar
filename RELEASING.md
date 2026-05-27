@@ -58,7 +58,7 @@ and after acceptance the feedstock auto-updates on every PyPI release.
    `recipes/whirlwind-rs/meta.yaml`. Skeleton:
 
    ```yaml
-   {% set name = "whirlwind-unwrap" %}
+   {% set name = "whirlwind-insar" %}
    {% set version = "0.1.0" %}
 
    package:
@@ -95,11 +95,11 @@ and after acceptance the feedstock auto-updates on every PyPI release.
        - pip
 
    about:
-     home: https://github.com/scottstanie/whirlwind-rs
+     home: https://github.com/scottstanie/whirlwind
      license: MIT
      license_file: LICENSE   # add a LICENSE file to the repo if missing
      summary: Bayesian min-cost-flow phase unwrapper for InSAR
-     dev_url: https://github.com/scottstanie/whirlwind-rs
+     dev_url: https://github.com/scottstanie/whirlwind
 
    extra:
      recipe-maintainers:

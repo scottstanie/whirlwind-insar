@@ -15,8 +15,8 @@ site_description: >-
   Bayesian minimum-cost-flow phase unwrapper for InSAR — both individual
   interferograms and full phase-linked time-series stacks.
 site_author: Scott Staniewicz
-repo_url: https://github.com/scottstanie/whirlwind-rs
-repo_name: scottstanie/whirlwind-rs
+repo_url: https://github.com/scottstanie/whirlwind
+repo_name: scottstanie/whirlwind
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -96,4 +96,4 @@ extra_javascript:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/scottstanie/whirlwind-rs
+      link: https://github.com/scottstanie/whirlwind
