@@ -354,6 +354,71 @@ mod tests {
     }
 
     #[test]
+    fn flow_from_unwrap_roundtrips_through_integrate() {
+        use crate::cost;
+        use crate::integrate as integ;
+        use crate::network::Network;
+        use crate::residue;
+        use ndarray::Array2;
+
+        // Unwrap a moderate-noise IG, extract its flow via flow_from_unwrap,
+        // and re-integrate via integrate_with_initial_flow on a freshly-built
+        // warm-started network whose PD-flow is all-zero. The result must
+        // reproduce the original unwrap, proving that the (init_flow ↔
+        // unwrap) round-trip is exact and that the warm-start excess
+        // adjustment balances residue charges in aggregate.
+        let m = 48;
+        let n = 56;
+        let truth: Array2<f32> = Array2::from_shape_fn((m, n), |(i, j)| {
+            0.4 * i as f32 + 0.25 * j as f32
+                + 4.0 * ((i as f32 / 12.0).sin() * (j as f32 / 10.0).cos())
+        });
+        let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let var = Array2::<f32>::from_elem((m, n), 0.05);
+
+        let unw0 = crate::unwrap_crlb(igram.view(), var.view(), None).unwrap();
+
+        let wrapped = igram.mapv(|z| z.arg());
+        let graph = RectangularGridGraph::new(m + 1, n + 1);
+        let (flow, n_clamped) =
+            integ::flow_from_unwrap(wrapped.view(), unw0.view(), &graph);
+        assert_eq!(
+            n_clamped, 0,
+            "smooth unwrap should not need any |k|>1 clamping"
+        );
+
+        let residues = residue::compute_with_mask(wrapped.view(), None);
+        let costs = cost::compute_crlb_costs(igram.view(), var.view(), None);
+        let net = Network::new_with_initial_flow(
+            &graph,
+            residues.view(),
+            &costs,
+            None,
+            &flow,
+        );
+        // Total excess should be zero (init_flow + residues balance globally).
+        assert!(
+            net.is_balanced(),
+            "warm-started net should be globally balanced (Σ excess == 0)"
+        );
+
+        // Re-integrate via the combined-flow integration — net is fresh
+        // (PD never ran), so the result is determined entirely by the
+        // init flow we extracted, and must round-trip back to the unwrap.
+        let reintegrated =
+            integ::integrate_with_initial_flow(wrapped.view(), &graph, &net, &flow);
+        let max_err = unw0
+            .iter()
+            .zip(reintegrated.iter())
+            .map(|(&a, &b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_err < 1e-3,
+            "flow round-trip should reproduce unwrap (max err {max_err})"
+        );
+    }
+
+    #[test]
     fn tiled_unwrap_matches_single_tile_on_smooth_input() {
         use ndarray::Array2;
         // Smooth phase ramp that has no wraps — non-tiled unwrap is trivial,

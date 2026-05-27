@@ -73,6 +73,64 @@ impl Network {
         Self::new_with_mask_and_ground(g, residues, costs, mask, None)
     }
 
+    /// Build a network with residue charges pre-balanced by the divergence
+    /// of an externally-provided unit flow on the grid arcs.
+    ///
+    /// `initial_flow` has one entry per forward grid arc, each in `{0, 1}`:
+    /// 1 means "one unit of forward flow exists on this arc by external
+    /// fiat" (e.g. derived from a warm-start unwrap via
+    /// [`crate::integrate::flow_from_unwrap`]). For each such unit the
+    /// constructor adjusts excess by `excess[tail] -= 1`,
+    /// `excess[head] += 1` — i.e. subtracts the divergence of the initial
+    /// flow from the residue charges, so PD only needs to route the
+    /// residual imbalance.
+    ///
+    /// **Important:** the saturation bitvec is *not* modified. Saturating
+    /// forward arcs to fully encode the warm-start would expose residual
+    /// reverse arcs (cost `-c`) and break Dial Dijkstra's non-negative
+    /// reduced-cost invariant. Recovering valid potentials in general
+    /// requires Klein's cycle-cancelling algorithm (the warm-start flow
+    /// from a stitched tiled unwrap typically contains negative cycles in
+    /// the residual graph), which we have not implemented. So this
+    /// constructor is currently useful as a primitive for *building*
+    /// alternative polish strategies (e.g. Stage 2 secondary MCF) but
+    /// cannot by itself reproduce the non-tiled MCF answer through PD.
+    /// Callers should pair it with
+    /// [`crate::integrate::integrate_with_initial_flow`] to combine the
+    /// warm-start flow with PD's routed corrections.
+    pub fn new_with_initial_flow(
+        g: &RectangularGridGraph,
+        residues: ArrayView2<i32>,
+        costs: &[i32],
+        mask: Option<ArrayView2<bool>>,
+        initial_flow: &[i8],
+    ) -> Self {
+        let mut net = Self::new_with_mask(g, residues, costs, mask);
+        assert_eq!(
+            initial_flow.len(),
+            g.num_forward,
+            "initial_flow length {} != num_forward {}",
+            initial_flow.len(),
+            g.num_forward,
+        );
+        for (arc, &v) in initial_flow.iter().enumerate() {
+            if v == 0 {
+                continue;
+            }
+            assert!(
+                v == 1,
+                "initial_flow values must be 0 or 1, got {v} at arc {arc}",
+            );
+            if net.is_saturated[arc] {
+                continue;
+            }
+            let (t, h) = g.arc_endpoints(arc);
+            net.excess[t] -= 1;
+            net.excess[h] += 1;
+        }
+        net
+    }
+
     /// Build a network with optional `ground_cost`. When `Some(c)`, a virtual
     /// ground node is appended and connected to every boundary residue (rows
     /// 0/m, cols 0/n of the residue grid) via unit-capacity forward arcs of

@@ -5,11 +5,20 @@
 > `tile_size` / `tile_overlap` kwargs on the Python `unwrap_crlb`; see
 > `ATBD-3d.md §10.6` for validation numbers (99.78 % per-pixel agreement
 > with the non-tiled output at `tile_size=512 / overlap=128`). Stage 2
-> (per-region SNAPHU-style secondary MCF) and Stage 3 (single-tile
-> reoptimize) are not implemented; the document below is retained as the
-> original design rationale and a record of the known failure modes
-> (Chen & Zebker 2002, Fig 7) that motivate moving to Stage 2 if the
-> overlap-median stitch is insufficient.
+> (per-region SNAPHU-style secondary MCF) and Stage 3 (warm-started
+> full-image reoptimize) are not implemented; the document below is
+> retained as the original design rationale and a record of the known
+> failure modes (Chen & Zebker 2002, Fig 7) that motivate moving to
+> Stage 2 if the overlap-median stitch is insufficient.
+>
+> **Primitives for a future Stage 3** are committed and tested:
+> `integrate::flow_from_unwrap` (unwrap → per-arc cycle counts),
+> `Network::new_with_initial_flow` (residue charges pre-balanced by warm
+> start divergence, *bitvec not modified*), and
+> `integrate::integrate_with_initial_flow` (combined warm-start + PD-flow
+> integration). They round-trip exactly through the existing
+> primal-dual but do not by themselves give a working polish — see
+> "Stage 3 was harder than the 50-LOC estimate" below.
 
 ## Why we need it
 
@@ -112,11 +121,29 @@ This is the actual port of Chen-Zebker 2002 §III–IV. Pseudocode is in their p
 
 The amount of new code is moderate (~600 LOC). Stage 2 is what the user runs when stage-1 diagnostics show low confidence. The two stages can share most of the codebase.
 
-### Stage 3: single-tile reoptimize (further deferred)
+### Stage 3: warm-started full-image reoptimize (further deferred)
 
 SNAPHU's `-S` mode. Once we have a tiled solution as the initial flow, run the primal-dual once over the *full* graph starting from that flow. Memory is back to single-piece, but wall time is short because the initial flow is near-optimal.
 
+**Status (2026-05):** Attempted; the 50-LOC estimate below was wrong. See "Stage 3 was harder than the 50-LOC estimate" for what we learned.
+
 Implementation requirement: `primal_dual::run` needs to accept a *starting flow* (currently it always starts from zero flow). One field added to `Network` (initial saturation bitmap from the tiled result) plus a few lines to skip the "all forward unsaturated" initialization. Maybe 50 LOC.
+
+### Stage 3 was harder than the 50-LOC estimate
+
+The estimate above missed two interacting constraints in our codebase:
+
+1. **Unit-capacity model.** Each forward grid arc has capacity 1; reverse residual arcs have cost `-c`. Once a forward arc is saturated by a warm start, its residual reverse becomes available with negative cost.
+2. **Dial Dijkstra requires non-negative reduced costs.** With the default zero potentials, a saturated warm-start arc immediately violates this — `c - π[tail] + π[head] = -c < 0` on the residual reverse — and `primal_dual::run` asserts on the first iteration.
+
+We tried two workarounds, both committed and reverted from the public API in this branch:
+
+- **(G) Don't saturate the bitvec.** Apply only the divergence of the warm-start flow to `excess`. PD then routes the residual imbalance on the standard residual graph (no negative reduced costs). Integration combines warm-start + PD flow.
+  - *Correct in the feasibility sense* — `div(init + corr) = residue`. The new primitives (`flow_from_unwrap`, `Network::new_with_initial_flow`, `integrate_with_initial_flow`) implement this and round-trip exactly through PD.
+  - *But not equivalent to a true warm-start*. PD's min-cost routing pairs warm-start divergence sources with sinks by shortest path. When two stitching errors' divergence pairs match up *across* stitches instead of locally, PD routes flow through a corridor; every edge along the corridor gets its cycle count shifted by 1, leaving a 2π error in some region. The test `polished_tiled_matches_non_tiled_on_smooth_input` (since deleted) hit this on a 64² ramp with 4×4 tiles: the median stitch left 6 source/sink pairs, PD balanced them all but one pair routed non-locally and the unwrap was 2π off at one pixel relative to non-tiled.
+- **(C) Saturate the bitvec *and* recompute potentials by SPFA.** The proper fix: for every unsaturated arc to satisfy `π[head] ≥ π[tail] - c`, compute `π = -d` where `d` is the shortest-path distance in the residual graph with arc weights = signed arc cost. SPFA converges to a valid potential function as long as the residual graph has no negative cycles. In practice on the test data, the warm-start flow from `flow_from_unwrap` on a median-stitched unwrap contained negative cycles in the residual graph (SPFA detected one immediately): the seed flow can be cost-reduced by cancelling a cycle. The standard MCF fix is **Klein's cycle-cancelling algorithm** (repeatedly find a negative cycle, push one unit around it to cancel, run BF to re-detect), which is itself a non-trivial implementation effort and runs in time competitive with just calling `unwrap_crlb` from scratch on the full image.
+
+**Recommendation.** If we want a working "polish" without implementing Klein's cycle cancellation, the simplest path is to **not warm-start at all**: tile (cheap memory, fast user feedback), then for users who want guaranteed equivalence with non-tiled, call `unwrap_crlb` directly on the full image (no memory benefit, but correctness is trivial). That's not a "polish" in the warm-start sense — it's just "two paths, pick one." The genuine warm-start polish that recovers `unwrap_crlb`'s answer faster than `unwrap_crlb` itself appears to require either Stage 2 (region-grow on conncomps + secondary MCF on a coarsened graph) or Klein + BF.
 
 ## Detailed plan for stage 1
 
