@@ -24,7 +24,7 @@ enum Cmd {
         /// shape as MxN (e.g. 256x256)
         #[arg(long, default_value = "256x256")]
         shape: String,
-        /// output directory (writes igram.tif, cor.tif, truth.tif)
+        /// output directory (writes wrapped.tif, cor.tif, truth.tif)
         #[arg(long)]
         out: PathBuf,
         /// "ramp" or "bump"
@@ -40,16 +40,22 @@ enum Cmd {
         #[arg(long, default_value_t = 42)]
         seed: u64,
     },
-    /// Unwrap an interferogram. Inputs are plain float TIFFs (complex stored as
-    /// 2-channel float32: real, imag) — for proper GeoTIFFs use the Python
-    /// binding via rasterio.
+    /// Unwrap an interferogram.
+    ///
+    /// Takes the wrapped phase as a single float32 TIFF (radians, range
+    /// `[-π, π]`). Internally the unwrapper only reads `arg(z)` from the
+    /// IG — the magnitude is unused — so wrapped phase is the full input.
+    ///
+    /// If you have a complex-valued GeoTIFF, extract the phase first via
+    ///
+    ///     gdal_translate DERIVED_SUBDATASET:PHASE:input.tif wrapped.tif
+    ///
+    /// (any of GDAL's derived subdataset functions over a complex raster:
+    /// AMPLITUDE, PHASE, REAL, IMAG, INTENSITY, LOGAMPLITUDE).
     Unwrap {
-        /// real-part TIFF (float32)
+        /// wrapped-phase TIFF (float32, radians)
         #[arg(long)]
-        igram_re: PathBuf,
-        /// imag-part TIFF (float32)
-        #[arg(long)]
-        igram_im: PathBuf,
+        phase: PathBuf,
         /// coherence TIFF (float32)
         #[arg(long)]
         cor: PathBuf,
@@ -74,12 +80,11 @@ fn main() -> Result<()> {
             seed,
         } => cmd_simulate(shape, out, pattern, nlooks, coherence, seed),
         Cmd::Unwrap {
-            igram_re,
-            igram_im,
+            phase,
             cor,
             nlooks,
             out,
-        } => cmd_unwrap(igram_re, igram_im, cor, nlooks, out),
+        } => cmd_unwrap(phase, cor, nlooks, out),
     }
 }
 
@@ -110,37 +115,26 @@ fn cmd_simulate(
     let (igram, cor) = whirlwind_core::simulate::simulate_ifg(&truth, &gamma, nlooks, &mut rng);
 
     std::fs::create_dir_all(&out)?;
-    write_f32_tiff(&out.join("igram_re.tif"), igram.mapv(|c| c.re).view())?;
-    write_f32_tiff(&out.join("igram_im.tif"), igram.mapv(|c| c.im).view())?;
+    write_f32_tiff(&out.join("wrapped.tif"), igram.mapv(|c| c.arg()).view())?;
     write_f32_tiff(&out.join("cor.tif"), cor.view())?;
     write_f32_tiff(&out.join("truth.tif"), truth.view())?;
-    write_f32_tiff(
-        &out.join("wrapped.tif"),
-        igram.mapv(|c| c.arg()).view(),
-    )?;
     eprintln!("wrote {} (shape {m}x{n}, pattern {pattern})", out.display());
     Ok(())
 }
 
-fn cmd_unwrap(
-    igram_re: PathBuf,
-    igram_im: PathBuf,
-    cor: PathBuf,
-    nlooks: f32,
-    out: PathBuf,
-) -> Result<()> {
-    let re = read_f32_tiff(&igram_re)?;
-    let im = read_f32_tiff(&igram_im)?;
+fn cmd_unwrap(phase: PathBuf, cor: PathBuf, nlooks: f32, out: PathBuf) -> Result<()> {
+    let ph = read_f32_tiff(&phase)?;
     let co = read_f32_tiff(&cor)?;
-    if re.dim() != im.dim() || re.dim() != co.dim() {
+    if ph.dim() != co.dim() {
         return Err(anyhow!(
-            "shape mismatch: re={:?} im={:?} cor={:?}",
-            re.dim(),
-            im.dim(),
+            "shape mismatch: phase={:?} cor={:?}",
+            ph.dim(),
             co.dim()
         ));
     }
-    let igram = Array2::from_shape_fn(re.dim(), |(i, j)| Complex32::new(re[(i, j)], im[(i, j)]));
+    // The unwrapper consumes a complex IG and internally takes arg(z); the
+    // magnitude is never used. Reconstruct as unit-magnitude exp(i·phase).
+    let igram = ph.mapv(|p| Complex32::from_polar(1.0, p));
     let unw = whirlwind_core::unwrap(igram.view(), co.view(), nlooks, None)?;
     write_f32_tiff(&out, unw.view())?;
     eprintln!("wrote {}", out.display());
