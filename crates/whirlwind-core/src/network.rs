@@ -127,11 +127,33 @@ impl Network {
         }
     }
 
-    /// Warm-start the network with an integer per-forward-arc flow vector.
-    /// Entries must be in `{-1, 0, +1}`: +1 pre-pushes one unit on the forward
-    /// arc; -1 does the same on the reverse partner. Excess is adjusted so
-    /// the MCF invariant holds. Reserved for future B_perp-fit ambiguity
-    /// warm-starts (spurt PR #97). Must be called before any solver invocation.
+    /// **Experimental / not yet safe to call.** Toggles per-arc saturation
+    /// from an integer flow vector, intended as a hook for spurt-PR-#97-style
+    /// B⊥ ambiguity warm-starts. Entries must be in `{-1, 0, +1}`.
+    ///
+    /// # Known issues — do not use in production
+    ///
+    /// 1. **Excess is NOT adjusted.** Despite the "warm-start" framing, this
+    ///    function only toggles `is_saturated`. To preserve the MCF
+    ///    invariant `sum(excess) == 0`, the caller must already have pre-
+    ///    balanced `excess` by `div(flow)` when building the network via
+    ///    [`Network::from_topology`].
+    /// 2. **Breaks Dial's reduced-cost invariant.** Even with pre-balanced
+    ///    excess, the residual reverse of a warm-started forward arc has
+    ///    cost `−fwd_cost`; under default zero potentials the reduced cost
+    ///    is `−fwd_cost − 0 + 0 < 0`, which trips the `debug_assert!` in
+    ///    `primal_dual::run::relax` on the first iteration. A correct
+    ///    warm-start workflow needs an SPFA / Bellman-Ford pre-pass to
+    ///    recompute valid potentials, plus Klein cycle-cancellation when
+    ///    the warm-start flow contains negative residual cycles.
+    ///
+    /// See PR #7's "Stage 3 was harder than the 50-LOC estimate" section in
+    /// `docs/TILING_DESIGN.md` for the full analysis.
+    ///
+    /// Until that machinery lands, prefer the [`Network::from_topology`]
+    /// `excess` parameter for "apply div(warm-start) without saturating
+    /// arcs" — which is what `unwrap_sparse` currently does.
+    #[doc(hidden)]
     pub fn warm_start<G: ResidualGraph>(&mut self, g: &G, flow: &[i32]) {
         assert_eq!(flow.len(), self.num_grid_forward);
         for (a, &f) in flow.iter().enumerate() {
