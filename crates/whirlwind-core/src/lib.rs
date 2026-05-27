@@ -9,6 +9,7 @@
 pub mod closure;
 pub mod conncomp;
 pub mod cost;
+pub mod goldstein;
 pub mod grid;
 pub mod integrate;
 pub mod network;

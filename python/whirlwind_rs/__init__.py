@@ -11,6 +11,7 @@ from ._native import (
     closure_refine_mcf,
     compute_residues,
     diagonal_ramp,
+    goldstein,
     quality_map,
     quality_triangles,
     simulate_ifg,
@@ -174,82 +175,11 @@ def unwrap_with_conncomp(
     return unw, cc
 
 
-def goldstein(
-    phase: "NDArray[np.complex64] | NDArray[np.float64]",
-    alpha: float = 0.7,
-    psize: int = 64,
-) -> "NDArray[np.complex64]":
-    """Goldstein adaptive phase filter (Goldstein & Werner 1998).
-
-    Closely follows ``dolphin.goldstein`` (reflect padding,
-    ``|F|^alpha`` magnitude shaping) with two changes that matter for
-    *unwrapping* (vs visualisation):
-    1. **Input is normalised to unit magnitude** before filtering. With
-       raw SLC magnitudes, bright pixels (urban) dominate the FFT spectral
-       peak, so ``|F|^alpha`` enhances *amplitude* structure instead of
-       *phase* structure.
-    2. **Hann (cosine) overlap-add window** instead of triangle. Triangle
-       has discontinuous slope at the block centre, which leaks more
-       cross-block phase artifacts into the gradient estimate.
-
-    Ablation on the NISAR HH test scene (agreement with SNAPHU within
-    ±π/2): raw dolphin = 87% → unit-mag + triangle = 93% → unit-mag +
-    Hann = 99.5%. Goldstein is on by default in
-    :func:`unwrap_with_conncomp`.
-
-    Parameters
-    ----------
-    phase : complex64 or float
-        Wrapped interferogram (complex) or wrapped phase (real, will be
-        promoted to ``exp(i·phase)``).
-    alpha : float, default 0.7
-        ``[0, 1]``. 0 = identity, 1 = maximum filtering.
-    psize : int, default 64
-        Square FFT patch size.
-    """
-    if alpha < 0:
-        raise ValueError(f"alpha must be >= 0, got {alpha}")
-    if np.iscomplexobj(phase):
-        data = phase.astype(np.complex64)
-    else:
-        data = np.exp(1j * phase).astype(np.complex64)
-    empty_mask = np.isnan(data) | (data == 0)
-    if np.all(empty_mask):
-        return data
-    # Normalise to unit magnitude — see docstring on why this matters for
-    # unwrapping vs visualisation.
-    mag = np.abs(data)
-    data = np.where(mag > 0, data / np.maximum(mag, 1e-30), 0).astype(np.complex64)
-
-    nrows, ncols = data.shape
-    step = psize // 2
-    pad_top = step
-    pad_left = step
-    pad_bottom = step + (step - (nrows % step)) % step
-    pad_right = step + (step - (ncols % step)) % step
-    data_padded = np.pad(
-        data, ((pad_top, pad_bottom), (pad_left, pad_right)), mode="reflect"
-    )
-    # Hann window — smoother taper than triangle. On NISAR HH the
-    # triangle/Hann choice moves the diff from 92.9% → 99.5% within ±π/2.
-    w1 = 0.5 * (1 - np.cos(2 * np.pi * np.arange(psize) / (psize - 1)))
-    weight = (w1[:, None] * w1[None, :]).astype(np.float32)
-    out = np.zeros(data_padded.shape, dtype=np.complex64)
-    weight_sum = np.zeros(data_padded.shape, dtype=np.float32)
-    pr, pc = data_padded.shape
-    for i in range(0, pr - psize + 1, step):
-        for j in range(0, pc - psize + 1, step):
-            block = data_padded[i : i + psize, j : j + psize]
-            f = np.fft.fft2(block)
-            f = (np.abs(f) ** alpha) * f
-            block_filt = np.fft.ifft2(f).astype(np.complex64)
-            out[i : i + psize, j : j + psize] += weight * block_filt
-            weight_sum[i : i + psize, j : j + psize] += weight
-    valid = weight_sum > 0
-    out[valid] = out[valid] / weight_sum[valid]
-    out = out[pad_top : pad_top + nrows, pad_left : pad_left + ncols]
-    out[empty_mask] = 0
-    return out
+# goldstein() is the Rust-backed native binding re-exported from
+# ``._native``. See crates/whirlwind-core/src/goldstein.rs for the
+# implementation and the ww-specific choices (unit-magnitude
+# normalisation, Hann window) that move agreement-with-SNAPHU from
+# 87% → 99.5% within ±π/2 on the NISAR HH test scene.
 
 
 __all__ = [
