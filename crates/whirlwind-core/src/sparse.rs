@@ -26,6 +26,7 @@ use crate::network::Network;
 use crate::primal_dual;
 use crate::residual_graph::ResidualGraph;
 use crate::triangulated::TriangulatedGraph;
+use bitvec::prelude::*;
 use delaunator::Point;
 use std::f32::consts::TAU;
 
@@ -69,14 +70,14 @@ pub fn unwrap_sparse(
     ).ok_or(SparseUnwrapError::DegenerateTriangulation)?;
 
     let residues = compute_triangle_residues(&g, wrapped_phase);
-    let costs = compute_edge_costs(&g, variance);
+    let (costs, forbidden) = compute_edge_costs(&g, variance);
 
     let mut net = Network::from_topology(
         g.num_nodes(),
         g.num_forward(),
         residues,
         costs,
-        None,
+        Some(&forbidden),
     );
 
     primal_dual::run(&g, &mut net, 50);
@@ -121,31 +122,46 @@ pub fn compute_triangle_residues(
     excess
 }
 
-/// Per-edge integer cost vector for the MCF. Length = `num_forward = 2 * E`,
-/// with the canonical and reversed forward arcs each getting the same cost
-/// (symmetric CRLB recipe — direction-dependent costs are reserved for a
-/// future Carballo-style implementation that needs the smoothed phase
-/// gradient on each triangulation edge).
+/// Per-edge integer cost vector for the MCF and a `forbidden_fwd` bitset
+/// marking edges whose endpoint variance is non-finite (those edges are
+/// pre-saturated so MCF cannot route flow through them).
+///
+/// Length of `costs` = `num_forward = 2 * E`, with the canonical and reversed
+/// forward arcs each getting the same cost (symmetric CRLB recipe —
+/// direction-dependent costs are reserved for a future Carballo-style
+/// implementation that needs the smoothed phase gradient on each
+/// triangulation edge).
 ///
 /// Recipe: `cost(edge) = round((σ²_a + σ²_b) / 2 * COST_SCALE)`, clamped
-/// non-negative.
-pub fn compute_edge_costs(g: &TriangulatedGraph, variance: &[f32]) -> Vec<i32> {
+/// non-negative. Edges with non-finite variance at either endpoint are
+/// flagged in `forbidden_fwd`; their cost is set to 0 (any value works since
+/// MCF won't use them) and both forward arcs are forbidden.
+///
+/// Returns `(costs, forbidden_fwd)`.
+pub fn compute_edge_costs(g: &TriangulatedGraph, variance: &[f32]) -> (Vec<i32>, BitVec) {
     let e = g.num_edges();
-    let mut costs = vec![0_i32; 2 * e];
+    let nf = 2 * e;
+    let mut costs = vec![0_i32; nf];
+    let mut forbidden = bitvec![0; nf];
     for i in 0..e {
         let (pa, pb) = g.edge_pixel_pair(i);
         let va = variance[pa as usize];
         let vb = variance[pb as usize];
-        // Treat NaN / non-finite as "noisy" (zero cost) so MCF freely flows
-        // across edges touching bad pixels — same convention as the dense
-        // CRLB path treats NaN nodata.
-        let va = if va.is_finite() { va } else { 0.0 };
-        let vb = if vb.is_finite() { vb } else { 0.0 };
+        if !va.is_finite() || !vb.is_finite() {
+            // Pre-saturate both forward arcs of this edge (canonical at index
+            // `i` and reversed at index `i + e`). MCF will skip these arcs
+            // entirely. Without this guard, treating NaN as `var=0` produced
+            // a *cheap* edge — MCF then preferentially routes flow through
+            // unreliable pixels, the opposite of what we want.
+            forbidden.set(i, true);
+            forbidden.set(i + e, true);
+            continue;
+        }
         let c = ((0.5 * (va + vb)) * COST_SCALE).round().max(0.0) as i32;
         costs[i] = c;
         costs[i + e] = c;
     }
-    costs
+    (costs, forbidden)
 }
 
 /// Integrate the flow-corrected wrapped gradients into per-pixel unwrapped
@@ -382,5 +398,49 @@ mod tests {
         // Tolerance: integer-cycle errors would be ≥ 2π ≈ 6.28, so anything
         // under 1 rad means MCF + integration recovered the ramp correctly.
         assert!(max_err < 0.5, "wrapping-ramp recovery error: {max_err}");
+    }
+
+    /// Edges whose endpoints have non-finite variance must be pre-saturated
+    /// so MCF doesn't route flow through unreliable pixels. Without this,
+    /// the old NaN-as-zero-cost convention silently *preferred* those edges.
+    #[test]
+    fn nan_variance_edges_are_forbidden() {
+        // 5 points: 4 in a square plus 1 in the middle. Give the middle point
+        // NaN variance; every edge incident to it should be forbidden.
+        let pts = vec![
+            Point { x: 0.0, y: 0.0 },
+            Point { x: 1.0, y: 0.0 },
+            Point { x: 0.0, y: 1.0 },
+            Point { x: 1.0, y: 1.0 },
+            Point { x: 0.5, y: 0.5 },
+        ];
+        let g = TriangulatedGraph::new(&pts).unwrap();
+        let variance = vec![1.0, 1.0, 1.0, 1.0, f32::NAN];
+        let (_costs, forbidden) = compute_edge_costs(&g, &variance);
+
+        let e = g.num_edges();
+        let nf = 2 * e;
+        assert_eq!(forbidden.len(), nf);
+
+        let mut n_forbidden = 0;
+        let mut n_incident_to_nan = 0;
+        for i in 0..e {
+            let (pa, pb) = g.edge_pixel_pair(i);
+            let touches_nan = pa == 4 || pb == 4;
+            if touches_nan {
+                n_incident_to_nan += 1;
+                assert!(forbidden[i],     "edge {i} touching NaN-variance pixel must be forbidden (fwd)");
+                assert!(forbidden[i + e], "edge {i} touching NaN-variance pixel must be forbidden (rev)");
+            } else {
+                assert!(!forbidden[i],     "edge {i} (no NaN) must not be forbidden (fwd)");
+                assert!(!forbidden[i + e], "edge {i} (no NaN) must not be forbidden (rev)");
+            }
+            if forbidden[i] { n_forbidden += 1; }
+        }
+        assert!(n_incident_to_nan >= 1, "test setup: expected at least one edge incident to pixel 4");
+        assert_eq!(
+            n_forbidden, n_incident_to_nan,
+            "exactly the edges incident to the NaN-variance pixel should be forbidden"
+        );
     }
 }
