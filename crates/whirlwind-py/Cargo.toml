@@ -15,5 +15,5 @@ whirlwind-core = { path = "../whirlwind-core" }
 ndarray.workspace = true
 num-complex.workspace = true
 rand.workspace = true
-pyo3 = { version = "0.28", features = ["extension-module", "abi3-py39"] }
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py311"] }
 numpy = "0.28"
