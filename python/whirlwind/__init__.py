@@ -21,6 +21,7 @@ from ._native import (
     unwrap_crlb,
     unwrap_crlb_grounded,
     unwrap_crlb_with_conncomp,
+    unwrap_sparse,
     wrap_phase,
 )
 from ._native import unwrap_with_conncomp as _unwrap_with_conncomp_native
@@ -203,6 +204,7 @@ __all__ = [
     "unwrap_crlb_grounded",
     "unwrap_crlb_stack",
     "unwrap_crlb_with_conncomp",
+    "unwrap_sparse",
     "unwrap_with_conncomp",
     "wrap_phase",
 ]
