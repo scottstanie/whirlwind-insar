@@ -57,7 +57,7 @@ enum Cmd {
         /// coherence TIFF (float32)
         #[arg(long)]
         cor: PathBuf,
-        /// optional valid-pixel mask (TIFF, u8/u16/f32/f64).
+        /// optional valid-pixel mask (TIFF, u8/u16/i8/i16/f32/f64).
         /// Any nonzero value = valid (SNAPHU convention). Pre-saturates arcs
         /// crossing masked pixels so MCF skips them — critical for large
         /// real scenes with water / shadow / decorrelated regions, where
@@ -68,6 +68,37 @@ enum Cmd {
         /// number of looks
         #[arg(long, default_value_t = 1.0)]
         nlooks: f32,
+        /// Goldstein adaptive-filter strength in [0, 1]. Default 0.5.
+        /// Set to 0 to skip the prefilter entirely. When > 0, the wrapped
+        /// phase is Goldstein-filtered before MCF (≈ 2× faster on noisy
+        /// scenes, fewer ±2π errors at wrap-line boundaries), then the
+        /// resulting integer cycle field is transferred back to the
+        /// *original* wrapped phase (dolphin PR #364 convention — avoids
+        /// spurious 2π jumps at fringe boundaries).
+        #[arg(long, default_value_t = 0.5)]
+        goldstein_alpha: f32,
+        /// Goldstein FFT patch size (even, ≥ 4). Larger = stronger spatial
+        /// smoothing in the filter.
+        #[arg(long, default_value_t = 64)]
+        goldstein_psize: usize,
+        /// Optional connected-components output TIFF (uint16). When set,
+        /// runs SNAPHU-style component growing from the same MCF solve and
+        /// writes a per-pixel component label (0 = background / unassigned,
+        /// 1..N = kept components). Phase is unwrapped consistently within
+        /// each component, but the relative 2π·k offset between components
+        /// is undefined.
+        #[arg(long)]
+        conncomp: Option<PathBuf>,
+        /// Drop connected components smaller than this fraction of valid
+        /// pixels. Default 1e-4 (≈ 5000 px on a 50 Mpx scene), small enough
+        /// to keep isolated islands. Only matters when `--conncomp` is set.
+        #[arg(long, default_value_t = 1e-4)]
+        min_component_frac: f32,
+        /// Carballo cost threshold for the conncomp cut rule. Pixel edges
+        /// whose min raw forward cost ≤ this are treated as cuts. Lower =
+        /// more cuts = more (smaller) components. Default 50 (SNAPHU-equiv).
+        #[arg(long, default_value_t = 50)]
+        cost_threshold: i32,
         /// output unwrapped phase TIFF
         #[arg(long)]
         out: PathBuf,
@@ -90,8 +121,24 @@ fn main() -> Result<()> {
             cor,
             mask,
             nlooks,
+            goldstein_alpha,
+            goldstein_psize,
+            conncomp,
+            min_component_frac,
+            cost_threshold,
             out,
-        } => cmd_unwrap(phase, cor, mask, nlooks, out),
+        } => cmd_unwrap(
+            phase,
+            cor,
+            mask,
+            nlooks,
+            goldstein_alpha,
+            goldstein_psize,
+            conncomp,
+            min_component_frac,
+            cost_threshold,
+            out,
+        ),
     }
 }
 
@@ -129,11 +176,17 @@ fn cmd_simulate(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_unwrap(
     phase: PathBuf,
     cor: PathBuf,
     mask: Option<PathBuf>,
     nlooks: f32,
+    goldstein_alpha: f32,
+    goldstein_psize: usize,
+    conncomp: Option<PathBuf>,
+    min_component_frac: f32,
+    cost_threshold: i32,
     out: PathBuf,
 ) -> Result<()> {
     let ph = read_f32_tiff(&phase)?;
@@ -155,24 +208,120 @@ fn cmd_unwrap(
             ));
         }
     }
-    // Reject out-of-range / non-finite coherence at unmasked pixels. The
-    // Carballo cost LUT is defined for γ ∈ [0, 1]; anything else (NaN,
-    // sentinel values like 1e10, negative bias, > 1) silently produces
-    // wrong arc costs and bad unwraps. Better to fail loudly with a clear
-    // message so the caller cleans up the input or masks the bad pixels.
+    // Reject out-of-range / non-finite coherence at unmasked pixels.
     validate_coherence(co.view(), mk.as_ref().map(|m| m.view()))?;
 
-    // The unwrapper consumes a complex IG and internally takes arg(z); the
-    // magnitude is never used. Reconstruct as unit-magnitude exp(i·phase).
-    let igram = ph.mapv(|p| Complex32::from_polar(1.0, p));
-    let unw = whirlwind_core::unwrap(
-        igram.view(),
-        co.view(),
-        nlooks,
-        mk.as_ref().map(|m| m.view()),
-    )?;
+    // The unwrapper consumes complex; reconstruct as unit-magnitude exp(i·phase).
+    let igram_orig = ph.mapv(|p| Complex32::from_polar(1.0, p));
+
+    // Optional Goldstein prefilter. The filter denoises the wrapped phase so
+    // MCF sees fewer spurious residues at low-coherence pixels; ~2× faster on
+    // noisy scenes and visibly cleaner at wrap-line boundaries.
+    let (igram_for_unwrap, used_goldstein) = if goldstein_alpha > 0.0 {
+        let ig_filt = whirlwind_core::goldstein::goldstein(
+            igram_orig.view(),
+            goldstein_alpha,
+            goldstein_psize,
+        );
+        // Zero out masked pixels so the filter's spread of energy into them
+        // can't leak into the cost computation downstream.
+        let ig_filt = if let Some(m) = &mk {
+            let mut z = ig_filt;
+            for ((i, j), &valid) in m.indexed_iter() {
+                if !valid {
+                    z[(i, j)] = Complex32::new(0.0, 0.0);
+                }
+            }
+            z
+        } else {
+            ig_filt
+        };
+        (ig_filt, true)
+    } else {
+        (igram_orig.clone(), false)
+    };
+
+    // Unwrap. With --conncomp set, use the variant that also grows components.
+    let (unw_filt, cc_raster) = if conncomp.is_some() {
+        let params = whirlwind_core::ConnCompParams {
+            cost_threshold,
+            min_size_frac: min_component_frac,
+            // u16 raster supports up to 65535 components; cap below that to
+            // keep the conncomp routine from over-fragmenting.
+            max_ncomps: 1024,
+        };
+        let (u, c) = whirlwind_core::unwrap_with_components(
+            igram_for_unwrap.view(),
+            co.view(),
+            nlooks,
+            mk.as_ref().map(|m| m.view()),
+            params,
+        )?;
+        (u, Some(c))
+    } else {
+        let u = whirlwind_core::unwrap(
+            igram_for_unwrap.view(),
+            co.view(),
+            nlooks,
+            mk.as_ref().map(|m| m.view()),
+        )?;
+        (u, None)
+    };
+
+    // K-transfer to original wrapped phase (dolphin PR #364 convention).
+    // Rounding against `ph` (the original, *unfiltered* phase) avoids the
+    // spurious ±2π jumps at fringe boundaries that the earlier
+    // round-against-filtered-phase strategy produced. If Goldstein was
+    // skipped, this is a no-op (unw_filt is already congruent with ph).
+    let tau = std::f32::consts::TAU;
+    let unw = if used_goldstein {
+        let mut out_arr = Array2::<f32>::zeros(ph.dim());
+        ndarray::Zip::from(&mut out_arr)
+            .and(&ph)
+            .and(&unw_filt)
+            .for_each(|o, &p_orig, &u_filt| {
+                let k = ((u_filt - p_orig) / tau).round();
+                *o = p_orig + tau * k;
+            });
+        if let Some(m) = &mk {
+            ndarray::Zip::from(&mut out_arr).and(m).for_each(|o, &v| {
+                if !v {
+                    *o = 0.0;
+                }
+            });
+        }
+        out_arr
+    } else {
+        unw_filt
+    };
+
     write_f32_tiff(&out, unw.view())?;
     eprintln!("wrote {}", out.display());
+
+    if let (Some(cc_path), Some(cc_arr)) = (conncomp.as_ref(), cc_raster.as_ref()) {
+        // Summarise components on stderr so callers can see what was found.
+        let n_comp = cc_arr.iter().copied().max().unwrap_or(0);
+        let total_valid: usize = mk
+            .as_ref()
+            .map(|m| m.iter().filter(|&&v| v).count())
+            .unwrap_or(cc_arr.len());
+        let mut sizes = vec![0_usize; (n_comp + 1) as usize];
+        for &c in cc_arr.iter() {
+            sizes[c as usize] += 1;
+        }
+        eprintln!("found {n_comp} connected component(s):");
+        for (k, &s) in sizes.iter().enumerate().skip(1) {
+            let pct = 100.0 * s as f64 / total_valid.max(1) as f64;
+            eprintln!("  cc={k:>3}: {s:>10} px  ({pct:5.2}% of valid)");
+        }
+        let bg = sizes[0];
+        let bg_pct = 100.0 * bg as f64 / cc_arr.len().max(1) as f64;
+        eprintln!("  bg/dropped: {bg:>10} px  ({bg_pct:5.2}% of total)");
+
+        write_u16_tiff(cc_path, cc_arr.view())?;
+        eprintln!("wrote {}", cc_path.display());
+    }
+
     Ok(())
 }
 
@@ -271,5 +420,22 @@ fn write_f32_tiff(path: &Path, a: ndarray::ArrayView2<f32>) -> Result<()> {
     let mut enc = TiffEncoder::new(BufWriter::new(File::create(path)?))?;
     let buf: Vec<f32> = a.iter().copied().collect();
     enc.write_image::<colortype::Gray32Float>(w as u32, h as u32, &buf)?;
+    Ok(())
+}
+
+fn write_u16_tiff(path: &Path, a: ndarray::ArrayView2<u32>) -> Result<()> {
+    let (h, w) = a.dim();
+    let mut enc = TiffEncoder::new(BufWriter::new(File::create(path)?))?;
+    // Component IDs are emitted as u32 by the core but capped to 1024 by
+    // ConnCompParams::max_ncomps above; downcast is lossless. Anything that
+    // overflows u16 would be a bug worth catching.
+    let buf: Vec<u16> = a
+        .iter()
+        .map(|&v| {
+            assert!(v <= u16::MAX as u32, "component id {v} overflows u16");
+            v as u16
+        })
+        .collect();
+    enc.write_image::<colortype::Gray16>(w as u32, h as u32, &buf)?;
     Ok(())
 }
