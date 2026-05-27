@@ -15,6 +15,7 @@ rand.workspace = true
 rand_distr.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
+delaunator.workspace = true
 
 [dev-dependencies]
 approx = "0.5"

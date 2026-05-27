@@ -18,11 +18,14 @@ pub mod residual_graph;
 pub mod residue;
 pub mod shortest_path;
 pub mod simulate;
+pub mod sparse;
 pub mod ssp;
 pub mod tile;
+pub mod triangulated;
 
 pub use conncomp::ConnCompParams;
 pub use residual_graph::ResidualGraph;
+pub use triangulated::TriangulatedGraph;
 
 use ndarray::{Array2, ArrayView2};
 use num_complex::Complex32;
