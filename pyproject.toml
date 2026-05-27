@@ -17,7 +17,7 @@
 name = "whirlwind-rs-dev"
 version = "0.0.0"
 description = "Dev environment for whirlwind-rs. The publishable package lives at crates/whirlwind-py/."
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "maturin>=1.5,<2.0",
     "numpy>=1.21",
