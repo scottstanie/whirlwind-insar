@@ -53,7 +53,7 @@ except ImportError:
     print("rasterio not installed; pip install rasterio", file=sys.stderr)
     raise
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 # Reuse the existing discovery + reference-resolution helpers from unwrap_stack.
 sys.path.insert(0, str(Path(__file__).parent))

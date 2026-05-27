@@ -65,7 +65,7 @@ def main():
     ap.add_argument("--step", type=int, default=16)
     args = ap.parse_args()
 
-    import whirlwind_rs as ww
+    import whirlwind as ww
 
     inp = args.out / "input"
     out_dir = args.out / args.label

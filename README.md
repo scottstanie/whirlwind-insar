@@ -6,10 +6,10 @@ bindings.
 
 Two entry points, sharing the same minimum-cost-flow core:
 
-- **`whirlwind_rs.unwrap(igram, corr, nlooks, mask=None)`** — classical
+- **`whirlwind.unwrap(igram, corr, nlooks, mask=None)`** — classical
   2D unwrap with the Carballo/SNAPHU-style coherence cost. Designed as a
   drop-in for boxcar interferograms.
-- **`whirlwind_rs.unwrap_crlb(igram, variance, mask=None, tile_size=…)`** —
+- **`whirlwind.unwrap_crlb(igram, variance, mask=None, tile_size=…)`** —
   CRLB-weighted unwrap for phase-linked interferograms (Dolphin / EVD /
   EMI). The per-pixel CRLB phase variance the phase-linker emits is a
   tighter noise model than sample coherence, and the unwrap reuses it
@@ -52,7 +52,7 @@ API is documented inline via doc-comments and rendered by `cargo doc
 - `crates/whirlwind-cli` — `whirlwind` CLI binary (`simulate` + `unwrap`
   subcommands; 2D coherence-cost only for now).
 - `crates/whirlwind-py` — `pyo3` / `maturin` Python bindings, importable
-  as `whirlwind_rs`.
+  as `whirlwind`.
 - `scripts/` — the Python orchestrator for 3D stack unwrap, the
   reproducer (`reproduce.sh`), and the cross-library benchmark harnesses.
 
@@ -100,7 +100,7 @@ cargo run --release -p whirlwind-cli -- unwrap \
 ### Single interferogram, coherence cost (boxcar / classical)
 
 ```python
-import whirlwind_rs as ww
+import whirlwind as ww
 
 # igram: complex64 (m, n); corr: float32 (m, n) in [0, 1]; mask optional bool.
 unw = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)   # → float32 (m, n)

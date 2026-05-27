@@ -1,4 +1,4 @@
-"""Type stubs for the `whirlwind_rs` package — re-exports from `_native`."""
+"""Type stubs for the `whirlwind` package — re-exports from `_native`."""
 
 from ._native import (
     closure_correct as closure_correct,

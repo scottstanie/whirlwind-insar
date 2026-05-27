@@ -34,7 +34,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from skimage.measure import label as sk_label
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 
 def _add_phase_noise(truth, coh, nlooks, rng):

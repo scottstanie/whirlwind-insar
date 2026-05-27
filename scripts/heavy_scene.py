@@ -63,7 +63,7 @@ def coherence_map(shape, *, low=0.30, high=0.90, n_patches=14, seed=0xC0FFEE,
 def make_scene(H, W, *, nlooks=4, fringe_density=3.0, seed=0xC0FFEE,
                flavor="patchy", low=0.30, high=0.90):
     """Diagonal-ramp truth + Lee-distributed noisy ifg modulated by gamma map."""
-    import whirlwind_rs as ww  # for simulate_ifg
+    import whirlwind as ww  # for simulate_ifg
 
     # Diagonal ramp truth: many fringes so even γ=0.9 still leaves a few residues.
     y, x = np.ogrid[-fringe_density:fringe_density:H * 1j, -fringe_density:fringe_density:W * 1j]
@@ -164,7 +164,7 @@ def main():
     print(f"Saved {out} ({sz:.0f} MiB)")
 
     if args.summary:
-        import whirlwind_rs as ww
+        import whirlwind as ww
         wrapped = np.angle(igram).astype(np.float32)
         residues = ww.compute_residues(wrapped)
         n_res = int(np.count_nonzero(residues))

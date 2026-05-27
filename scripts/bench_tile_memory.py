@@ -22,7 +22,7 @@ import numpy as np
 import rasterio
 from rasterio.windows import Window
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 
 DOLPHIN = Path(

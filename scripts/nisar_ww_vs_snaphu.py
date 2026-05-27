@@ -119,7 +119,7 @@ def run_ww(
     nlooks: float,
     cost_threshold: int = 50,
 ):
-    import whirlwind_rs as ww
+    import whirlwind as ww
 
     t0 = time.perf_counter()
     unw, cc = ww.unwrap_with_conncomp(

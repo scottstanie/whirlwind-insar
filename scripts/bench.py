@@ -40,10 +40,10 @@ if not hasattr(np, "int_"):
     np.int_ = np.int64  # type: ignore[attr-defined]
 
 try:
-    import whirlwind_rs as ww  # type: ignore
+    import whirlwind as ww  # type: ignore
     HAS_WW = True
 except Exception as e:  # noqa: BLE001
-    print(f"warning: whirlwind_rs not importable: {e}", file=sys.stderr)
+    print(f"warning: whirlwind not importable: {e}", file=sys.stderr)
     HAS_WW = False
 
 try:
@@ -116,7 +116,7 @@ def call_kamui(igram, corr, nlooks, mask):
 
 LIBS: dict[str, Callable] = {}
 if HAS_WW:
-    LIBS["whirlwind-rs"] = call_whirlwind
+    LIBS["whirlwind-unwrap"] = call_whirlwind
 if HAS_SNAPHU:
     LIBS["snaphu"] = call_snaphu
 if HAS_KAMUI:
@@ -131,7 +131,7 @@ def synthetic_diagonal_ramp(size, *, gamma=0.99, nlooks=1, seed=42):
         corr = np.full(truth.shape, float(gamma), dtype=np.float32)
     else:
         if not HAS_WW:
-            raise RuntimeError("whirlwind_rs needed to synthesize noisy data")
+            raise RuntimeError("whirlwind needed to synthesize noisy data")
         g = np.full(truth.shape, float(gamma), dtype=np.float32)
         igram, corr = ww.simulate_ifg(truth, g, nlooks=nlooks, seed=seed)
     return igram, corr, truth
@@ -206,7 +206,7 @@ def render_markdown(rows: list[Row]) -> str:
     by_scene: dict[str, list[Row]] = {}
     for r in rows:
         by_scene.setdefault(r.scene, []).append(r)
-    lib_order = list(LIBS.keys()) or ["whirlwind-rs"]
+    lib_order = list(LIBS.keys()) or ["whirlwind-unwrap"]
 
     lines: list[str] = []
     lines.append("# whirlwind-rs cross-library benchmark\n")
@@ -233,7 +233,7 @@ def render_markdown(rows: list[Row]) -> str:
                 cells.append(f"{r.seconds:.3f}")
                 if lib == "snaphu":
                     snaphu_s = r.seconds
-                if lib == "whirlwind-rs":
+                if lib == "whirlwind-unwrap":
                     ww_s = r.seconds
         cells.append(f"{snaphu_s / ww_s:.2f}x" if (snaphu_s and ww_s) else "n/a")
         lines.append("| " + " | ".join(cells) + " |")
@@ -303,7 +303,7 @@ def main() -> int:
     if args.no_kamui:
         libs.pop("kamui (PUMA)", None)
     if args.no_ww:
-        libs.pop("whirlwind-rs", None)
+        libs.pop("whirlwind-unwrap", None)
     LIBS.clear()
     LIBS.update(libs)
 

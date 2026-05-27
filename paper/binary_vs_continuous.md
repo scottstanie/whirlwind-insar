@@ -278,7 +278,7 @@ not an unreliable region.  Branch cuts that *do* sit in low-coherence
 regions show up as cuts anyway because the underlying arc cost is low —
 so the algorithm captures the meaningful cases without double-counting.
 
-API: `whirlwind_rs.unwrap_with_conncomp(igram, coh, nlooks, mask,
+API: `whirlwind.unwrap_with_conncomp(igram, coh, nlooks, mask,
 cost_threshold, min_size_frac, max_ncomps)` and the CRLB-path twin
 `unwrap_crlb_with_conncomp(...)`.  Both return `(unwrapped, components)`
 from a single MCF solve.

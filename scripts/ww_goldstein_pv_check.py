@@ -52,7 +52,7 @@ def main():
     print(f"[pv] testing {len(pairs)} IGs at row {args.row0}:{args.row0+args.size} "
           f"col {args.col0}:{args.col0+args.size}")
 
-    import whirlwind_rs as ww
+    import whirlwind as ww
 
     for pair in pairs:
         ig = read_window(ig_dir / f"{pair}.int.tif", win).astype(np.complex64)

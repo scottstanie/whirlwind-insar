@@ -527,7 +527,7 @@ Whirlwind is implemented in **Rust**, with a small Python binding layer:
 - **`crates/whirlwind-cli`** (Rust): `whirlwind` binary, `simulate` and
   `unwrap` subcommands.
 - **`crates/whirlwind-py`** (`pyo3`/`maturin`): Python bindings, importable
-  as `whirlwind_rs`. Exposes `unwrap`, `compute_residues`, `simulate_ifg`,
+  as `whirlwind`. Exposes `unwrap`, `compute_residues`, `simulate_ifg`,
   `wrap_phase`, `diagonal_ramp`.
 
 ### 9.2 Key Data Structures

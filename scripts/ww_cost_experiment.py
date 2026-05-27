@@ -59,7 +59,7 @@ def compute_metrics(diff: np.ndarray, mask: np.ndarray) -> dict:
 
 
 def run_ww(ig, coh, mask, nlooks, threshold):
-    import whirlwind_rs as ww
+    import whirlwind as ww
 
     t0 = time.perf_counter()
     unw, cc = ww.unwrap_with_conncomp(

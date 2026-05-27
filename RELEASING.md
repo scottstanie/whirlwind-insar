@@ -58,7 +58,7 @@ and after acceptance the feedstock auto-updates on every PyPI release.
    `recipes/whirlwind-rs/meta.yaml`. Skeleton:
 
    ```yaml
-   {% set name = "whirlwind-rs" %}
+   {% set name = "whirlwind-unwrap" %}
    {% set version = "0.1.0" %}
 
    package:
@@ -88,7 +88,7 @@ and after acceptance the feedstock auto-updates on every PyPI release.
 
    test:
      imports:
-       - whirlwind_rs
+       - whirlwind
      commands:
        - pip check
      requires:

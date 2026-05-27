@@ -49,7 +49,7 @@ except ImportError:
     print("rasterio not installed; pip install rasterio", file=sys.stderr)
     raise
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 
 # ---------------------------------------------------------------------------

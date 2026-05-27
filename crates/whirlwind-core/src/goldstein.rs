@@ -6,7 +6,7 @@
 //! window into the output.
 //!
 //! Two ww-specific tweaks vs the classical Goldstein (see
-//! `python/whirlwind_rs/__init__.py::goldstein` for the matching Python
+//! `python/whirlwind/__init__.py::goldstein` for the matching Python
 //! reference):
 //!
 //! 1. Input is normalised to unit magnitude before filtering. Without

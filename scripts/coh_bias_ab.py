@@ -26,7 +26,7 @@ import sys
 
 import numpy as np
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 
 def make_scenes(seed: int = 42) -> list[tuple[float, int, np.ndarray, np.ndarray, np.ndarray]]:

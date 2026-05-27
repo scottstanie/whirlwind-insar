@@ -65,7 +65,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 
 # ---------------------------------------------------------------------------

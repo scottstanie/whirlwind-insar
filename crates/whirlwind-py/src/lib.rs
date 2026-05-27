@@ -502,7 +502,7 @@ fn unwrap_crlb_with_conncomp<'py>(
 /// Goldstein adaptive phase filter (Goldstein & Werner 1998).
 ///
 /// Block-parallel Rust port of the Python helper. See
-/// :func:`whirlwind_rs.goldstein` for the documentation; this version
+/// :func:`whirlwind.goldstein` for the documentation; this version
 /// is bit-identical to the Python one but typically 10×–30× faster on
 /// large scenes thanks to rustfft + rayon over independent FFT blocks.
 ///
@@ -536,7 +536,7 @@ fn goldstein<'py>(
 /// Precedence at process startup, highest to lowest:
 ///   1. ``WHIRLWIND_NUM_THREADS`` env var
 ///   2. ``RAYON_NUM_THREADS`` env var
-///   3. ``whirlwind_rs.set_num_threads(n)`` (if neither env var was set)
+///   3. ``whirlwind.set_num_threads(n)`` (if neither env var was set)
 ///   4. rayon default (= all logical CPUs)
 #[pyfunction]
 fn set_num_threads(n: usize) -> PyResult<()> {

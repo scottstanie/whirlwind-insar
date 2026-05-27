@@ -19,8 +19,8 @@ except ImportError:
     print("rasterio not installed; pip install rasterio", file=sys.stderr)
     raise
 
-import whirlwind_rs as ww
-from whirlwind_rs.plot import save_wrapped_unwrapped_png
+import whirlwind as ww
+from whirlwind.plot import save_wrapped_unwrapped_png
 
 
 OUT_DIR = Path(__file__).parent / "out"

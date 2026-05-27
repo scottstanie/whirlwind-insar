@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 
 def _align_to_truth(unw: np.ndarray, truth: np.ndarray) -> np.ndarray:

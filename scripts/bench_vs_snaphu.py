@@ -24,7 +24,7 @@ try:
 except ImportError:
     snaphu = None
 
-import whirlwind_rs as ww
+import whirlwind as ww
 
 warnings.filterwarnings("ignore")
 
@@ -63,7 +63,7 @@ def save_compare_png(
     import matplotlib.pyplot as plt
 
     panels = [("wrapped", wrapped, "twilight_shifted", (-np.pi, np.pi))]
-    panels.append(("whirlwind-rs", ww_unw, "viridis", (None, None)))
+    panels.append(("whirlwind-unwrap", ww_unw, "viridis", (None, None)))
     if sn_unw is not None:
         panels.append(("snaphu", sn_unw, "viridis", (None, None)))
     panels.append(("coherence", cor, "gray", (0.0, 1.0)))
@@ -82,8 +82,8 @@ def save_compare_png(
 def bench_scene(name: str, igram: np.ndarray, corr: np.ndarray, *, nlooks: float, mask: Optional[np.ndarray] = None):
     print(f"\n=== {name} (shape={igram.shape}, cor_med={float(np.median(corr)):.3f}) ===")
     results = {}
-    ww_unw, ww_t = _bench("whirlwind-rs", _ww_unwrap, igram, corr, nlooks, mask)
-    results["whirlwind-rs"] = (ww_unw, ww_t)
+    ww_unw, ww_t = _bench("whirlwind-unwrap", _ww_unwrap, igram, corr, nlooks, mask)
+    results["whirlwind-unwrap"] = (ww_unw, ww_t)
     if snaphu is not None:
         try:
             sn_unw, sn_t = _bench("snaphu", _snaphu_unwrap, igram, corr, nlooks, mask)
@@ -198,7 +198,7 @@ def main():
     print(f"{'Scene':40s} | {'whirlwind-rs':>14s} | {'snaphu':>10s} | speedup")
     print("-" * 72)
     for name, results in bench_table:
-        ww_t = results.get("whirlwind-rs", (None, None))[1]
+        ww_t = results.get("whirlwind-unwrap", (None, None))[1]
         sn_t = results.get("snaphu", (None, None))[1]
         ww_s = f"{ww_t:7.3f}s" if ww_t else "        n/a"
         sn_s = f"{sn_t:7.3f}s" if sn_t else "    n/a"

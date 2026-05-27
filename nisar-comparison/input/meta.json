@@ -1,0 +1,10 @@
+{
+  "shape": [
+    6811,
+    6912
+  ],
+  "n_valid": 25032659,
+  "valid_frac": 0.5317314813115493,
+  "igram_path": "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar/20251224_20260117.int.looked.tif",
+  "coh_path": "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar/20251224_20260117.int.coh.looked.tif"
+}

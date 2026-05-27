@@ -30,7 +30,7 @@ import numpy as np
 print = functools.partial(print, flush=True)
 
 import whirlwind          # the C++ implementation
-import whirlwind_rs       # the Rust implementation
+import whirlwind       # the Rust implementation
 
 try:
     import rasterio
@@ -121,7 +121,7 @@ def synthetic_bench() -> list[dict]:
         igram, cor, _ = gen_noisy_bump(size)
         nlooks = 4.0
         t_cpp, _, unw_cpp = time_unwrap(whirlwind.unwrap, igram, cor, nlooks)
-        t_rust, _, unw_rust = time_unwrap(whirlwind_rs.unwrap, igram, cor, nlooks)
+        t_rust, _, unw_rust = time_unwrap(whirlwind.unwrap, igram, cor, nlooks)
         agree = compare(unw_cpp, unw_rust)
         print(f"  C++:   {t_cpp*1000:7.1f} ms")
         print(f"  Rust:  {t_rust*1000:7.1f} ms  ({t_cpp/t_rust:.2f}x speedup)")
@@ -185,12 +185,12 @@ def real_bench() -> list[dict]:
         )
         if mask is not None:
             t_rust, _, unw_rust = time_unwrap(
-                whirlwind_rs.unwrap, igram, cor, nlooks, mask,
+                whirlwind.unwrap, igram, cor, nlooks, mask,
                 warmup_runs=0, timing_runs=1,
             )
         else:
             t_rust, _, unw_rust = time_unwrap(
-                whirlwind_rs.unwrap, igram, cor, nlooks,
+                whirlwind.unwrap, igram, cor, nlooks,
                 warmup_runs=0, timing_runs=1,
             )
         agree = compare(unw_cpp, unw_rust)
@@ -210,7 +210,7 @@ def real_bench() -> list[dict]:
 
 def main() -> None:
     print(f"C++ Whirlwind: {whirlwind.__version__}")
-    print("Rust Whirlwind: whirlwind_rs v0.1.0 (this repo)")
+    print("Rust Whirlwind: whirlwind v0.1.0 (this repo)")
     print()
     syn = synthetic_bench()
     real = real_bench()
