@@ -1,28 +1,34 @@
-# Top-level pyproject for uv-managed dev environment.
-#
-# The *published* package (`whirlwind-rs` on PyPI / via `maturin publish`) is
-# built from crates/whirlwind-py/pyproject.toml. This file is **dev-only**:
-# it lists the tools and test/bench dependencies, and `uv sync` builds the
-# environment for working on the repo.
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "whirlwind-insar"
+version = "0.1.0"
+description = "Bayesian min-cost-flow phase unwrapper for InSAR (Rust-backed; `import whirlwind`)"
+requires-python = ">=3.11"
+authors = [{ name = "Scott Staniewicz", email = "scott.stanie@utexas.edu" }]
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["numpy>=1.21"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "whirlwind._native"
+manifest-path = "crates/whirlwind-py/Cargo.toml"
+
+# ---------------------------------------------------------------------------
+# Dev environment (uv-managed). The published wheel is built from the
+# [project] / [tool.maturin] tables above; the [dependency-groups] below
+# are for working *on* the repo and don't ship in the wheel.
 #
 # Quick start:
 #   uv sync                                 # create venv + install all groups
 #   uv run maturin develop --release        # editable Rust build into the venv
 #   uv run pytest python/tests              # run python tests
 #   uv run python scripts/bench.py          # cross-library bench
-#
-# Pattern adapted from stac-utils/rustac's CONTRIBUTING.md.
-
-[project]
-name = "whirlwind-rs-dev"
-version = "0.0.0"
-description = "Dev environment for whirlwind-rs. The publishable package lives at crates/whirlwind-py/."
-requires-python = ">=3.11"
-dependencies = [
-    "maturin>=1.8,<2.0",
-    "numpy>=1.21",
-    "rasterio>=1.4.3",
-]
+# ---------------------------------------------------------------------------
 
 [dependency-groups]
 test = [
@@ -38,7 +44,7 @@ bench = [
     "matplotlib>=3.7",
 ]
 real-data = [
-    "rasterio>=1.3",
+    "rasterio>=1.4.3",
 ]
 dev = [
     "memory-profiler>=0.61.0",

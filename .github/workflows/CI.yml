@@ -67,7 +67,6 @@ jobs:
           python -m pip install "maturin>=1.5,<2.0" "numpy>=1.21" pytest pytest-randomly
 
       - name: maturin develop
-        working-directory: crates/whirlwind-py
         run: maturin develop --release
 
       - name: pytest

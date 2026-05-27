@@ -51,8 +51,10 @@ API is documented inline via doc-comments and rendered by `cargo doc
   correction, synthetic-ifg simulator).
 - `crates/whirlwind-cli` — `whirlwind` CLI binary (`simulate` + `unwrap`
   subcommands; 2D coherence-cost only for now).
-- `crates/whirlwind-py` — `pyo3` / `maturin` Python bindings, importable
-  as `whirlwind`.
+- `crates/whirlwind-py` — `pyo3` / `maturin` Python bindings (Rust source
+  for the `_native` extension module). The `pyproject.toml` lives at the
+  repo root; Python source at `python/whirlwind/`. Installs as the
+  `whirlwind-insar` PyPI distribution, imports as `whirlwind`.
 - `scripts/` — the Python orchestrator for 3D stack unwrap, the
   reproducer (`reproduce.sh`), and the cross-library benchmark harnesses.
 
@@ -79,8 +81,15 @@ uv run python scripts/bench.py            # cross-library benchmark
 Without uv:
 
 ```bash
+pip install .                          # builds the wheel via maturin and installs it
+python -m pytest python/tests
+```
+
+For an editable install (rebuild on every Rust change):
+
+```bash
 pip install maturin numpy
-(cd crates/whirlwind-py && maturin develop --release)
+maturin develop --release
 python -m pytest python/tests
 ```
 
@@ -91,8 +100,8 @@ cargo test --workspace
 
 cargo run --release -p whirlwind-cli -- simulate --shape 256x256 --out /tmp/sim
 cargo run --release -p whirlwind-cli -- unwrap \
-    --igram-re /tmp/sim/igram_re.tif --igram-im /tmp/sim/igram_im.tif \
-    --cor     /tmp/sim/cor.tif --nlooks 10 --out /tmp/sim/unw.tif
+    --phase /tmp/sim/wrapped.tif --cor /tmp/sim/cor.tif \
+    --nlooks 10 --out /tmp/sim/unw.tif
 ```
 
 ## Using the Python API
