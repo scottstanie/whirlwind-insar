@@ -18,9 +18,9 @@ from ._native import (
     unwrap_crlb,
     unwrap_crlb_grounded,
     unwrap_crlb_with_conncomp,
-    unwrap_with_conncomp,
     wrap_phase,
 )
+from ._native import unwrap_with_conncomp as _unwrap_with_conncomp_native
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -104,61 +104,138 @@ def unwrap_crlb_stack(
     return unw_out, cc_out
 
 
-def goldstein_prefilter(
+def unwrap_with_conncomp(
     igram: "NDArray[np.complex64]",
-    alpha: float = 0.7,
-    win: int = 64,
-    step: int | None = None,
-) -> "NDArray[np.complex64]":
-    """Adaptive (Goldstein) phase pre-filter for the wrapped interferogram.
+    corr: "NDArray[np.float32]",
+    nlooks: float,
+    mask: "NDArray[np.bool_] | None" = None,
+    cost_threshold: int = 50,
+    min_size_frac: float = 0.01,
+    max_ncomps: int = 64,
+    goldstein_alpha: float = 0.7,
+    goldstein_psize: int = 64,
+) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
+    """MCF unwrap + SNAPHU-style connected components (Carballo cost).
 
-    Multiplies the FFT magnitude of each overlapping block by ``|F|^alpha``
-    and inverse-transforms. The result is a phase-only image (magnitudes
-    discarded — the filter operates on unit-amplitude phasors so SLC
-    amplitude does not bias toward a low-pass filter on coherent areas).
+    Pre-filters the wrapped phase with the Goldstein adaptive filter
+    (Goldstein & Werner 1998) before unwrapping. On a 40 MHz NISAR HH
+    GSLC this raises agreement-with-SNAPHU from 80% → 99.5% within
+    ±π/2 by stripping spatial-frequency phase noise that the Carballo
+    cost's 7×7 box-filtered gradient estimate can't reach.
 
-    For noisy real-data interferograms (NISAR, multilooked Sentinel-1, etc.)
-    pre-filtering with the defaults before calling
-    :func:`unwrap_with_conncomp` brings ww into close agreement with SNAPHU
-    on coherent regions. Without it, high-frequency phase noise leaks into
-    the 7×7 smoothed-gradient estimate that feeds the Carballo cost, and
-    the MCF picks a topologically different "cut" than SNAPHU's
-    variance-aware ``smooth`` cost would. Validated on a 40 MHz NISAR HH
-    GSLC: 80% → 99.5% within ±π/2 vs SNAPHU.
+    To disable Goldstein (e.g. on already-filtered or synthetic data),
+    pass ``goldstein_alpha=0``.
 
     Parameters
     ----------
     igram : complex64
-        Wrapped interferogram. Mask out-of-data pixels to ``0+0j``
-        beforehand (consistent with the rest of the ww API).
-    alpha : float, default 0.7
-        FFT-magnitude exponent. 0 = identity; 1 = strongest filter.
-    win : int, default 64
-        Square block size for the windowed FFT.
-    step : int, optional
-        Stride between block top-lefts. Defaults to ``win // 2``
-        (50% overlap, recommended).
+        Wrapped interferogram. Mask out-of-data pixels to ``0+0j``.
+    corr : float32
+        Sample coherence in ``[0, 1]``.
+    nlooks : float
+        Effective number of looks (≥ 1).
+    mask : bool, optional
+        Valid-pixel mask (True = valid).
+    cost_threshold, min_size_frac, max_ncomps :
+        Connected-component growing parameters (see
+        :class:`whirlwind_core::conncomp::ConnCompParams`).
+    goldstein_alpha : float, default 0.7
+        Goldstein filter strength in ``[0, 1]``. 0 disables filtering.
+    goldstein_psize : int, default 64
+        Goldstein FFT patch size.
     """
-    h, w = igram.shape
-    if step is None:
-        step = win // 2
-    mag = np.abs(igram)
-    z = np.where(mag > 0, igram / np.maximum(mag, 1e-30), 0).astype(np.complex64)
-    w1 = 0.5 * (1 - np.cos(2 * np.pi * np.arange(win) / (win - 1)))
-    w2 = (w1[:, None] * w1[None, :]).astype(np.float32)
-    out = np.zeros_like(z)
-    wsum = np.zeros((h, w), dtype=np.float32)
-    for i0 in range(0, h - win + 1, step):
-        for j0 in range(0, w - win + 1, step):
-            block = z[i0 : i0 + win, j0 : j0 + win]
+    if goldstein_alpha > 0:
+        igram = goldstein(igram, alpha=goldstein_alpha, psize=goldstein_psize)
+        if mask is not None:
+            igram = igram.copy()
+            igram[~mask] = 0
+    return _unwrap_with_conncomp_native(
+        igram,
+        corr,
+        nlooks,
+        mask=mask,
+        cost_threshold=cost_threshold,
+        min_size_frac=min_size_frac,
+        max_ncomps=max_ncomps,
+    )
+
+
+def goldstein(
+    phase: "NDArray[np.complex64] | NDArray[np.float64]",
+    alpha: float = 0.7,
+    psize: int = 64,
+) -> "NDArray[np.complex64]":
+    """Goldstein adaptive phase filter (Goldstein & Werner 1998).
+
+    Closely follows ``dolphin.goldstein`` (reflect padding,
+    ``|F|^alpha`` magnitude shaping) with two changes that matter for
+    *unwrapping* (vs visualisation):
+    1. **Input is normalised to unit magnitude** before filtering. With
+       raw SLC magnitudes, bright pixels (urban) dominate the FFT spectral
+       peak, so ``|F|^alpha`` enhances *amplitude* structure instead of
+       *phase* structure.
+    2. **Hann (cosine) overlap-add window** instead of triangle. Triangle
+       has discontinuous slope at the block centre, which leaks more
+       cross-block phase artifacts into the gradient estimate.
+
+    Ablation on the NISAR HH test scene (agreement with SNAPHU within
+    ±π/2): raw dolphin = 87% → unit-mag + triangle = 93% → unit-mag +
+    Hann = 99.5%. Goldstein is on by default in
+    :func:`unwrap_with_conncomp`.
+
+    Parameters
+    ----------
+    phase : complex64 or float
+        Wrapped interferogram (complex) or wrapped phase (real, will be
+        promoted to ``exp(i·phase)``).
+    alpha : float, default 0.7
+        ``[0, 1]``. 0 = identity, 1 = maximum filtering.
+    psize : int, default 64
+        Square FFT patch size.
+    """
+    if alpha < 0:
+        raise ValueError(f"alpha must be >= 0, got {alpha}")
+    if np.iscomplexobj(phase):
+        data = phase.astype(np.complex64)
+    else:
+        data = np.exp(1j * phase).astype(np.complex64)
+    empty_mask = np.isnan(data) | (data == 0)
+    if np.all(empty_mask):
+        return data
+    # Normalise to unit magnitude — see docstring on why this matters for
+    # unwrapping vs visualisation.
+    mag = np.abs(data)
+    data = np.where(mag > 0, data / np.maximum(mag, 1e-30), 0).astype(np.complex64)
+
+    nrows, ncols = data.shape
+    step = psize // 2
+    pad_top = step
+    pad_left = step
+    pad_bottom = step + (step - (nrows % step)) % step
+    pad_right = step + (step - (ncols % step)) % step
+    data_padded = np.pad(
+        data, ((pad_top, pad_bottom), (pad_left, pad_right)), mode="reflect"
+    )
+    # Hann window — smoother taper than triangle. On NISAR HH the
+    # triangle/Hann choice moves the diff from 92.9% → 99.5% within ±π/2.
+    w1 = 0.5 * (1 - np.cos(2 * np.pi * np.arange(psize) / (psize - 1)))
+    weight = (w1[:, None] * w1[None, :]).astype(np.float32)
+    out = np.zeros(data_padded.shape, dtype=np.complex64)
+    weight_sum = np.zeros(data_padded.shape, dtype=np.float32)
+    pr, pc = data_padded.shape
+    for i in range(0, pr - psize + 1, step):
+        for j in range(0, pc - psize + 1, step):
+            block = data_padded[i : i + psize, j : j + psize]
             f = np.fft.fft2(block)
-            f_filt = f * (np.abs(f) ** alpha)
-            block_filt = np.fft.ifft2(f_filt).astype(np.complex64)
-            out[i0 : i0 + win, j0 : j0 + win] += block_filt * w2
-            wsum[i0 : i0 + win, j0 : j0 + win] += w2
-    valid = wsum > 0
-    out[valid] /= wsum[valid]
-    return out.astype(np.complex64)
+            f = (np.abs(f) ** alpha) * f
+            block_filt = np.fft.ifft2(f).astype(np.complex64)
+            out[i : i + psize, j : j + psize] += weight * block_filt
+            weight_sum[i : i + psize, j : j + psize] += weight
+    valid = weight_sum > 0
+    out[valid] = out[valid] / weight_sum[valid]
+    out = out[pad_top : pad_top + nrows, pad_left : pad_left + ncols]
+    out[empty_mask] = 0
+    return out
 
 
 __all__ = [
@@ -166,7 +243,7 @@ __all__ = [
     "closure_refine_mcf",
     "compute_residues",
     "diagonal_ramp",
-    "goldstein_prefilter",
+    "goldstein",
     "quality_map",
     "quality_triangles",
     "simulate_ifg",
