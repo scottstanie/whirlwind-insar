@@ -84,6 +84,25 @@ def unwrap_crlb_with_conncomp(
     """
 
 
+def unwrap_sparse(
+    points: NDArray[np.float64],
+    wrapped_phase: NDArray[np.float32],
+    variance: NDArray[np.float32],
+    max_edge_length: float | None = ...,
+) -> NDArray[np.float32]:
+    """Sparse / irregular-grid unwrap over a Delaunay triangulation of the
+    supplied valid pixels.
+
+    ``points`` is a float64 ``(n, 2)`` array of ``(x, y)`` coordinates;
+    ``wrapped_phase`` and ``variance`` are length-``n`` per-pixel arrays.
+    Edges with non-finite variance at either endpoint are pre-saturated so
+    MCF cannot route flow through them. ``max_edge_length`` carves out
+    triangulation edges longer than the cutoff as outer-face boundary
+    edges (integration BFS skips them); pixels reachable only via long
+    edges come back as ``NaN`` in the output.
+    """
+
+
 def compute_residues(wrapped_phase: NDArray[np.float32]) -> NDArray[np.int32]:
     """Compute the integer residue grid from a wrapped-phase array."""
 
