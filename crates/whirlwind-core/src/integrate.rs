@@ -91,10 +91,10 @@ pub fn integrate(
 
 /// Like [`integrate`] but skips masked-out pixels.
 ///
-/// Seeds at the first valid pixel found in raster order, then BFS-walks the
-/// 4-connected valid region. Masked pixels are left as NaN. If the valid
-/// region has multiple disconnected components, only the one containing the
-/// seed gets integrated; other components stay NaN.
+/// BFS-walks every 4-connected valid component, seeding each at its first
+/// raster-order pixel (with arbitrary integer cycle K=0 — components are
+/// integrated independently and the relative 2π offset between components
+/// is unobservable from the wrapped data). Masked pixels are left as NaN.
 pub fn integrate_with_mask(
     wrapped_phase: ArrayView2<f32>,
     g: &RectangularGridGraph,
@@ -112,76 +112,72 @@ pub fn integrate_with_mask(
     assert_eq!(mask.dim(), (m, n), "mask must be pixel-grid sized");
 
     let mut unw = Array2::<f32>::from_elem((m, n), f32::NAN);
-
-    // Find the seed: first mask=true pixel in raster order.
-    let mut seed: Option<(usize, usize)> = None;
-    'outer: for i in 0..m {
-        for j in 0..n {
-            if mask[(i, j)] {
-                seed = Some((i, j));
-                break 'outer;
-            }
-        }
-    }
-    let Some((si, sj)) = seed else { return unw }; // all masked
-
     // Per-pixel integer cycle count `K[i, j]`. We track this alongside the
     // BFS instead of accumulating the unwrapped float; `unw[p]` is emitted
     // as `wrapped_phase[p] + 2π · K[p]` once per pixel.
     let mut cycles = Array2::<i32>::zeros((m, n));
-    unw[(si, sj)] = wrapped_phase[(si, sj)];
-
-    // BFS the valid 4-connected region.
     let mut queue: VecDeque<(usize, usize)> = VecDeque::new();
-    queue.push_back((si, sj));
-    while let Some((i, j)) = queue.pop_front() {
-        let psi_here = wrapped_phase[(i, j)];
-        let k_here = cycles[(i, j)];
 
-        // RIGHT neighbor (i, j+1): horizontal pixel-edge; residue arcs DOWN/UP.
-        if j + 1 < n && mask[(i, j + 1)] && unw[(i, j + 1)].is_nan() {
-            let n_cyc = wrap_n_cycle(wrapped_phase[(i, j + 1)], psi_here);
-            let fwd = g.down_arc(i, j + 1).unwrap();
-            let rev = g.up_arc(i + 1, j + 1).unwrap();
-            let net_flow = net.arc_flow(g, fwd) - net.arc_flow(g, rev);
-            let k = k_here + n_cyc + net_flow;
-            cycles[(i, j + 1)] = k;
-            unw[(i, j + 1)] = wrapped_phase[(i, j + 1)] + TAU * (k as f32);
-            queue.push_back((i, j + 1));
-        }
-        // LEFT neighbor (i, j-1): same edge, reversed sign.
-        if j >= 1 && mask[(i, j - 1)] && unw[(i, j - 1)].is_nan() {
-            let n_cyc = wrap_n_cycle(wrapped_phase[(i, j - 1)], psi_here);
-            let fwd = g.down_arc(i, j).unwrap();
-            let rev = g.up_arc(i + 1, j).unwrap();
-            // Going LEFT means we subtract the flow from RIGHT-direction integration.
-            let net_flow = net.arc_flow(g, rev) - net.arc_flow(g, fwd);
-            let k = k_here + n_cyc + net_flow;
-            cycles[(i, j - 1)] = k;
-            unw[(i, j - 1)] = wrapped_phase[(i, j - 1)] + TAU * (k as f32);
-            queue.push_back((i, j - 1));
-        }
-        // DOWN neighbor (i+1, j): vertical pixel-edge; residue arcs RIGHT/LEFT.
-        if i + 1 < m && mask[(i + 1, j)] && unw[(i + 1, j)].is_nan() {
-            let n_cyc = wrap_n_cycle(wrapped_phase[(i + 1, j)], psi_here);
-            let fwd = g.right_arc(i + 1, j).unwrap();
-            let rev = g.left_arc(i + 1, j + 1).unwrap();
-            let net_flow = net.arc_flow(g, rev) - net.arc_flow(g, fwd);
-            let k = k_here + n_cyc + net_flow;
-            cycles[(i + 1, j)] = k;
-            unw[(i + 1, j)] = wrapped_phase[(i + 1, j)] + TAU * (k as f32);
-            queue.push_back((i + 1, j));
-        }
-        // UP neighbor (i-1, j).
-        if i >= 1 && mask[(i - 1, j)] && unw[(i - 1, j)].is_nan() {
-            let n_cyc = wrap_n_cycle(wrapped_phase[(i - 1, j)], psi_here);
-            let fwd = g.right_arc(i, j).unwrap();
-            let rev = g.left_arc(i, j + 1).unwrap();
-            let net_flow = net.arc_flow(g, fwd) - net.arc_flow(g, rev);
-            let k = k_here + n_cyc + net_flow;
-            cycles[(i - 1, j)] = k;
-            unw[(i - 1, j)] = wrapped_phase[(i - 1, j)] + TAU * (k as f32);
-            queue.push_back((i - 1, j));
+    // Sweep raster-order, seeding a fresh BFS at every valid pixel still
+    // unvisited. Each disconnected valid component picks up its own
+    // arbitrary K=0 seed.
+    for si in 0..m {
+        for sj in 0..n {
+            if !mask[(si, sj)] || !unw[(si, sj)].is_nan() {
+                continue;
+            }
+            unw[(si, sj)] = wrapped_phase[(si, sj)];
+            queue.clear();
+            queue.push_back((si, sj));
+            while let Some((i, j)) = queue.pop_front() {
+                let psi_here = wrapped_phase[(i, j)];
+                let k_here = cycles[(i, j)];
+
+                // RIGHT neighbor (i, j+1).
+                if j + 1 < n && mask[(i, j + 1)] && unw[(i, j + 1)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i, j + 1)], psi_here);
+                    let fwd = g.down_arc(i, j + 1).unwrap();
+                    let rev = g.up_arc(i + 1, j + 1).unwrap();
+                    let net_flow = net.arc_flow(g, fwd) - net.arc_flow(g, rev);
+                    let k = k_here + n_cyc + net_flow;
+                    cycles[(i, j + 1)] = k;
+                    unw[(i, j + 1)] = wrapped_phase[(i, j + 1)] + TAU * (k as f32);
+                    queue.push_back((i, j + 1));
+                }
+                // LEFT neighbor (i, j-1): same edge, reversed sign.
+                if j >= 1 && mask[(i, j - 1)] && unw[(i, j - 1)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i, j - 1)], psi_here);
+                    let fwd = g.down_arc(i, j).unwrap();
+                    let rev = g.up_arc(i + 1, j).unwrap();
+                    let net_flow = net.arc_flow(g, rev) - net.arc_flow(g, fwd);
+                    let k = k_here + n_cyc + net_flow;
+                    cycles[(i, j - 1)] = k;
+                    unw[(i, j - 1)] = wrapped_phase[(i, j - 1)] + TAU * (k as f32);
+                    queue.push_back((i, j - 1));
+                }
+                // DOWN neighbor (i+1, j).
+                if i + 1 < m && mask[(i + 1, j)] && unw[(i + 1, j)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i + 1, j)], psi_here);
+                    let fwd = g.right_arc(i + 1, j).unwrap();
+                    let rev = g.left_arc(i + 1, j + 1).unwrap();
+                    let net_flow = net.arc_flow(g, rev) - net.arc_flow(g, fwd);
+                    let k = k_here + n_cyc + net_flow;
+                    cycles[(i + 1, j)] = k;
+                    unw[(i + 1, j)] = wrapped_phase[(i + 1, j)] + TAU * (k as f32);
+                    queue.push_back((i + 1, j));
+                }
+                // UP neighbor (i-1, j).
+                if i >= 1 && mask[(i - 1, j)] && unw[(i - 1, j)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i - 1, j)], psi_here);
+                    let fwd = g.right_arc(i, j).unwrap();
+                    let rev = g.left_arc(i, j + 1).unwrap();
+                    let net_flow = net.arc_flow(g, fwd) - net.arc_flow(g, rev);
+                    let k = k_here + n_cyc + net_flow;
+                    cycles[(i - 1, j)] = k;
+                    unw[(i - 1, j)] = wrapped_phase[(i - 1, j)] + TAU * (k as f32);
+                    queue.push_back((i - 1, j));
+                }
+            }
         }
     }
 
@@ -242,5 +238,46 @@ mod tests {
             max_residual < 1e-4,
             "non-congruent unwrap: max |wrap(unw - wrapped)| = {max_residual} rad"
         );
+    }
+
+    /// A mask with two disconnected valid regions: each region must come
+    /// back fully integrated (no NaN). Regression: an earlier version only
+    /// integrated the first raster component.
+    #[test]
+    fn disconnected_components_all_integrated() {
+        let m = 16;
+        let n = 16;
+        let truth = simulate::diagonal_ramp((m, n));
+        let wrapped = simulate::wrap_phase(&truth);
+        let igram = wrapped.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let g = RectangularGridGraph::new(m + 1, n + 1);
+
+        // Mask: left half valid, right half valid, middle column masked-out
+        // so the two halves are disconnected.
+        let mid = n / 2;
+        let mut mask = Array2::<bool>::from_elem((m, n), true);
+        for i in 0..m {
+            mask[(i, mid)] = false;
+        }
+        let residues = residue::compute_with_mask(wrapped.view(), Some(mask.view()));
+        let costs = cost::compute_carballo_costs(igram.view(), Array2::<f32>::from_elem((m, n), 0.95).view(), 4.0, Some(mask.view()));
+        let mut net = network::Network::new_with_mask(&g, residues.view(), &costs, Some(mask.view()));
+        crate::primal_dual::run(&g, &mut net, 50);
+
+        let unw = integrate_with_mask(wrapped.view(), &g, &net, Some(mask.view()));
+
+        // Every valid pixel must be finite (no NaN spillover).
+        for i in 0..m {
+            for j in 0..n {
+                if mask[(i, j)] {
+                    assert!(
+                        unw[(i, j)].is_finite(),
+                        "valid pixel ({i}, {j}) left as NaN — component not integrated"
+                    );
+                } else {
+                    assert!(unw[(i, j)].is_nan(), "masked pixel ({i}, {j}) must be NaN");
+                }
+            }
+        }
     }
 }
