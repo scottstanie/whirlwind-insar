@@ -28,11 +28,19 @@ fn max_reduced_cost_par<G: ResidualGraph>(g: &G, net: &Network) -> i64 {
     (0..net.num_arcs())
         .into_par_iter()
         .map(|a| {
-            if net.is_arc_saturated(a) || net.is_used(a) {
-                // Saturated arcs are skipped in relax; used arcs have their
-                // reduced cost overridden to 0. Either way, they don't
-                // contribute to the bucket count.
-                0
+            if net.is_arc_saturated(a) {
+                return 0;
+            }
+            if net.is_used(a) {
+                return 0;
+            }
+            if net.convex_mode {
+                // In convex mode the relax cost is the marginal cost, which
+                // can be negative. After potential adjustment the *reduced*
+                // marginal cost should be ≥ 0; assume that and use it.
+                // Bellman-Ford pre-pass is the caller's responsibility.
+                let (t, h) = net.arc_endpoints(g, a);
+                (net.marginal_cost(a) - net.potential[t] + net.potential[h]).max(0)
             } else {
                 net.reduced_cost(g, a)
             }
@@ -136,8 +144,11 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             // PHASS-style reuse: used arcs have reduced cost 0, independent
             // of cost/potential. is_used() returns false in MCF mode so this
             // branch only fires for the unwrap_reuse path.
+            // Convex mode: use marginal cost instead of arc_cost.
             let rc = if net.is_used(arc) {
                 0
+            } else if net.convex_mode {
+                net.marginal_cost(arc) - pot_u + net.potential[v]
             } else {
                 net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
             };
@@ -254,6 +265,8 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                     }
                     let rc = if net.is_used(arc) {
                         0
+                    } else if net.convex_mode {
+                        net.marginal_cost(arc) - pot_u + net.potential[v]
                     } else {
                         net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
                     };
@@ -322,6 +335,8 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                             }
                             let rc = if net.is_used(arc) {
                                 0
+                            } else if net.convex_mode {
+                                net.marginal_cost(arc) - pot_u + net.potential[v]
                             } else {
                                 net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
                             };
