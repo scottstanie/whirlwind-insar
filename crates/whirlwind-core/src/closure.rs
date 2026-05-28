@@ -584,25 +584,34 @@ pub fn quality_from_triangles(
     let (n_edges, m, n) = unw_stack.dim();
     assert_eq!(n_edges, graph.edges.len());
 
-    // Enumerate triangles. For each ordered triple (a, b, c) with a<b<c,
-    // we need edges (a,b), (b,c), and (a,c). Store as (e_ab, e_bc, e_ac).
-    // Build an edge lookup: (from, to) → edge index. Store edges in
-    // canonical (min, max) form to allow either orientation.
+    // Enumerate triangles. For each ordered triple (a, b, c) with a<b<c we
+    // need edges (a,b), (b,c), and (a,c). Each `graph.edges[e]` is a directed
+    // edge `from → to` and `unw_stack[e]` represents `θ(to) − θ(from)`; the
+    // sign of its contribution to a cycle depends on whether it was stored
+    // in the canonical (low → high) or reversed (high → low) direction.
+    //
+    // Lookup yields `(edge_index, +1)` if stored canonically, `(edge_index,
+    // −1)` if reversed. Reading `s[e] = sign · unw_stack[e]` then always
+    // gives `θ(high) − θ(low)`, so the cycle sum `s_ab + s_bc − s_ac` is
+    // closed (mod 2π) regardless of how dolphin chose to orient each edge.
     use std::collections::HashMap;
-    let mut edge_lookup: HashMap<(u32, u32), usize> = HashMap::new();
+    let mut edge_lookup: HashMap<(u32, u32), (usize, i8)> = HashMap::new();
     for (idx, e) in graph.edges.iter().enumerate() {
-        let key = if e.from < e.to { (e.from, e.to) } else { (e.to, e.from) };
-        edge_lookup.insert(key, idx);
+        if e.from < e.to {
+            edge_lookup.insert((e.from, e.to), (idx, 1));
+        } else {
+            edge_lookup.insert((e.to, e.from), (idx, -1));
+        }
     }
-    let mut triangles: Vec<(usize, usize, usize)> = Vec::new();
+    let mut triangles: Vec<(usize, i8, usize, i8, usize, i8)> = Vec::new();
     let d = graph.n_dates as u32;
     for a in 0..d {
         for b in (a + 1)..d {
-            let Some(&e_ab) = edge_lookup.get(&(a, b)) else { continue };
+            let Some(&(e_ab, s_ab)) = edge_lookup.get(&(a, b)) else { continue };
             for c in (b + 1)..d {
-                let Some(&e_bc) = edge_lookup.get(&(b, c)) else { continue };
-                let Some(&e_ac) = edge_lookup.get(&(a, c)) else { continue };
-                triangles.push((e_ab, e_bc, e_ac));
+                let Some(&(e_bc, s_bc)) = edge_lookup.get(&(b, c)) else { continue };
+                let Some(&(e_ac, s_ac)) = edge_lookup.get(&(a, c)) else { continue };
+                triangles.push((e_ab, s_ab, e_bc, s_bc, e_ac, s_ac));
             }
         }
     }
@@ -612,11 +621,6 @@ pub fn quality_from_triangles(
         return out;
     }
 
-    // The cycle (a→b) + (b→c) − (a→c) is closed (sums to 0 mod 2π) when
-    // each edge is read in its "from<to" orientation. Each `graph.edges[e]`
-    // may already be stored that way (and is in dolphin's output), so the
-    // signs in our cycle sum are (+1, +1, −1) under that convention.
-    // Confirm at lookup-time below.
     const STRIPE_H: usize = 64;
     for stripe_start in (0..m).step_by(STRIPE_H) {
         let stripe_end = (stripe_start + STRIPE_H).min(m);
@@ -626,10 +630,10 @@ pub fn quality_from_triangles(
                 let mut row = vec![0_u16; n];
                 for j in 0..n {
                     let mut max_k: u16 = 0;
-                    for &(e_ab, e_bc, e_ac) in &triangles {
-                        let s = unw_stack[(e_ab, i, j)]
-                            + unw_stack[(e_bc, i, j)]
-                            - unw_stack[(e_ac, i, j)];
+                    for &(e_ab, s_ab, e_bc, s_bc, e_ac, s_ac) in &triangles {
+                        let s = (s_ab as f32) * unw_stack[(e_ab, i, j)]
+                            + (s_bc as f32) * unw_stack[(e_bc, i, j)]
+                            - (s_ac as f32) * unw_stack[(e_ac, i, j)];
                         let k_abs = (s / TAU).round().abs() as u32;
                         let k_u16 = k_abs.min(u16::MAX as u32) as u16;
                         if k_u16 > max_k {
@@ -746,6 +750,46 @@ mod quality_tests {
                 }
             }
         }
+    }
+
+    /// Regression: graphs with edges stored "high date → low date" are valid
+    /// dolphin output and must yield the same triangle closure as the
+    /// canonical orientation. Earlier the lookup canonicalized the key but
+    /// not the sign of the stack value, producing false K≠0 readings.
+    #[test]
+    fn quality_triangles_respect_reversed_edges() {
+        // Same logical (0,1,2) triangle but edge 1 stored as 2→1 (reversed).
+        let g = TemporalGraph {
+            n_dates: 3,
+            edges: vec![
+                Edge { from: 0, to: 1 },
+                Edge { from: 2, to: 1 },  // reversed: stack[1] = θ(1) - θ(2)
+                Edge { from: 0, to: 2 },
+            ],
+            reference: 0,
+        };
+        let m = 4;
+        let n = 4;
+        let mut stack = Array3::<f32>::zeros((3, m, n));
+        for i in 0..m {
+            for j in 0..n {
+                let theta1 = 0.1 * i as f32;
+                let theta2 = theta1 + 0.2 * j as f32;
+                stack[(0, i, j)] = theta1;          // θ(1) - θ(0); θ(0)=0
+                stack[(1, i, j)] = theta1 - theta2; // θ(1) - θ(2) (reversed)
+                stack[(2, i, j)] = theta2;          // θ(2) - θ(0)
+            }
+        }
+        // Consistent stack ⇒ closure must be 0 even with reversed edge.
+        let q = quality_from_triangles(stack.view(), &g);
+        assert!(
+            q.iter().all(|&v| v == 0),
+            "consistent stack with reversed edge should give K=0 everywhere"
+        );
+        // Now plant +2π on the reversed edge; closure should detect K=1.
+        stack[(1, 2, 1)] += TAU;
+        let q2 = quality_from_triangles(stack.view(), &g);
+        assert_eq!(q2[(2, 1)], 1, "+2π on reversed edge should yield K=1");
     }
 }
 
