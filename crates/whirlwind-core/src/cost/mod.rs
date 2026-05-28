@@ -182,11 +182,14 @@ pub fn box_filter_2d(a: ArrayView2<f32>, k: usize) -> Array2<f32> {
     out
 }
 
-/// Compute integer costs for every forward and reverse arc in the residual graph.
+/// Compute integer costs for every forward arc in the residual graph.
 ///
 /// `igram`, `corr` have shape `(m_phase, n_phase)`. The residue grid (= node
-/// grid) has shape `(m_phase + 1, n_phase + 1) = (m, n)`. The cost array has
-/// length `2 * num_forward`, indexed by `arc_id` per `crate::grid` layout.
+/// grid) has shape `(m_phase + 1, n_phase + 1) = (m, n)`. The returned cost
+/// array has length `num_forward`, indexed by `arc_id` per `crate::grid`
+/// layout. Reverse-arc costs are implicit (`-forward`) and reconstructed by
+/// `Network` on demand; storing them was a ~130 MB wasted alloc + copy on a
+/// 4096² scene.
 pub fn compute_carballo_costs(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -315,17 +318,15 @@ pub fn compute_carballo_costs(
         }
     };
 
-    // Allocate the unified arc-cost array and split it into the 4 forward-direction
-    // slabs + 1 reverse slab. Each slab is a disjoint &mut [i32], so we can fill
-    // them in parallel without aliasing. Layout (see `crate::grid`):
+    // Allocate the forward arc-cost array and split it into the 4 direction
+    // slabs. Each slab is a disjoint &mut [i32], so we can fill them in
+    // parallel without aliasing. Layout (see `crate::grid`):
     //   [0,        n_v)              DOWN
     //   [n_v,      2*n_v)            UP
     //   [2*n_v,    2*n_v + n_h)      RIGHT
     //   [2*n_v + n_h, num_forward)   LEFT
-    //   [num_forward, 2*num_forward) reverse partners (cost = -forward)
-    let mut cost = vec![0_i32; g.num_arcs()];
-    let (forward, reverse) = cost.split_at_mut(g.num_forward);
-    let (down_slab, rest) = forward.split_at_mut(g.n_v);
+    let mut cost = vec![0_i32; g.num_forward];
+    let (down_slab, rest) = cost.split_at_mut(g.n_v);
     let (up_slab, rest) = rest.split_at_mut(g.n_v);
     let (right_slab, left_slab) = rest.split_at_mut(g.n_h);
 
@@ -395,16 +396,6 @@ pub fn compute_carballo_costs(
                 let col = j + 1;
                 down_row[col] = (c_dn * COST_SCALE).round() as i32;
                 up_row[col] = (c_up * COST_SCALE).round() as i32;
-            }
-        });
-
-    // Residual reverse arcs: cost = -forward_cost (parallel copy).
-    reverse
-        .par_chunks_mut(8192)
-        .zip(forward.par_chunks(8192))
-        .for_each(|(rev_chunk, fwd_chunk)| {
-            for (r, f) in rev_chunk.iter_mut().zip(fwd_chunk.iter()) {
-                *r = -*f;
             }
         });
 
@@ -600,9 +591,8 @@ pub fn compute_crlb_costs(
         (w * (pi - alpha)).max(0.0)
     };
 
-    let mut cost = vec![0_i32; g.num_arcs()];
-    let (forward, reverse) = cost.split_at_mut(g.num_forward);
-    let (down_slab, rest) = forward.split_at_mut(g.n_v);
+    let mut cost = vec![0_i32; g.num_forward];
+    let (down_slab, rest) = cost.split_at_mut(g.n_v);
     let (up_slab, rest) = rest.split_at_mut(g.n_v);
     let (right_slab, left_slab) = rest.split_at_mut(g.n_h);
 
@@ -662,15 +652,6 @@ pub fn compute_crlb_costs(
                 let col = j + 1;
                 down_row[col] = (c_dn * COST_SCALE).round() as i32;
                 up_row[col] = (c_up * COST_SCALE).round() as i32;
-            }
-        });
-
-    reverse
-        .par_chunks_mut(8192)
-        .zip(forward.par_chunks(8192))
-        .for_each(|(rev_chunk, fwd_chunk)| {
-            for (r, f) in rev_chunk.iter_mut().zip(fwd_chunk.iter()) {
-                *r = -*f;
             }
         });
 
@@ -747,7 +728,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_vanishes_for_large_L() {
+    fn bias_correction_vanishes_for_large_l() {
         // L→∞ ⇒ correction is the identity at every γ̂.
         for &g in &[0.3_f32, 0.5, 0.7, 0.9] {
             let corrected = correct_coh_bias(g, 10_000.0);
@@ -756,7 +737,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_degenerate_at_small_L() {
+    fn bias_correction_degenerate_at_small_l() {
         // L ≤ 1 is degenerate; return raw to avoid producing NaN.
         assert_eq!(correct_coh_bias(0.5, 1.0), 0.5);
         assert_eq!(correct_coh_bias(0.5, 0.5), 0.5);
@@ -787,12 +768,7 @@ mod crlb_tests {
         let variance = Array2::<f32>::from_elem((m, n), 0.1);
         let costs = compute_crlb_costs(igram.view(), variance.view(), None);
         let g = RectangularGridGraph::new(m + 1, n + 1);
-        assert_eq!(costs.len(), g.num_arcs());
-        // Reverse arcs are negatives of forward arcs.
-        let (fwd, rev) = costs.split_at(g.num_forward);
-        for (f, r) in fwd.iter().zip(rev.iter()) {
-            assert_eq!(*r, -*f);
-        }
+        assert_eq!(costs.len(), g.num_forward);
     }
 
     #[test]

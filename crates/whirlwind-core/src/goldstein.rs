@@ -39,7 +39,7 @@ pub fn goldstein(
     psize: usize,
 ) -> Array2<Complex32> {
     assert!(alpha >= 0.0, "alpha must be >= 0, got {alpha}");
-    assert!(psize >= 4 && psize % 2 == 0, "psize must be even and ≥ 4");
+    assert!(psize >= 4 && psize.is_multiple_of(2), "psize must be even and ≥ 4");
     let (m, n) = igram.dim();
     let step = psize / 2;
 
@@ -94,20 +94,23 @@ pub fn goldstein(
     for chunk in positions.chunks(chunk_size) {
         let patches: Vec<(usize, usize, Vec<Complex32>)> = chunk
             .par_iter()
-            .map(|&(r0, c0)| {
-                let mut buf = extract_patch(padded.view(), r0, c0, psize);
-                fft2_inplace(&mut buf, fft_fwd.as_ref(), psize);
-                for z in buf.iter_mut() {
-                    let mag = (z.re * z.re + z.im * z.im).sqrt();
-                    let scale = mag.powf(alpha);
-                    *z = *z * scale;
-                }
-                fft2_inplace(&mut buf, fft_inv.as_ref(), psize);
-                for z in buf.iter_mut() {
-                    *z = *z * norm;
-                }
-                (r0, c0, buf)
-            })
+            .map_init(
+                || vec![Complex32::default(); psize * psize],
+                |scratch, &(r0, c0)| {
+                    let mut buf = extract_patch(padded.view(), r0, c0, psize);
+                    fft2_inplace(&mut buf, scratch, fft_fwd.as_ref(), psize);
+                    for z in buf.iter_mut() {
+                        let mag = (z.re * z.re + z.im * z.im).sqrt();
+                        let scale = mag.powf(alpha);
+                        *z *= scale;
+                    }
+                    fft2_inplace(&mut buf, scratch, fft_inv.as_ref(), psize);
+                    for z in buf.iter_mut() {
+                        *z *= norm;
+                    }
+                    (r0, c0, buf)
+                },
+            )
             .collect();
 
         for (r0, c0, patch) in patches {
@@ -124,7 +127,7 @@ pub fn goldstein(
     // Normalise by accumulated overlap-add weight.
     ndarray::Zip::from(&mut out).and(&wsum).for_each(|o, &w| {
         if w > 0.0 {
-            *o = *o / w;
+            *o /= w;
         }
     });
 
@@ -157,26 +160,35 @@ fn extract_patch(
 }
 
 /// In-place 2D FFT via separable 1D rows/cols (rustfft is 1D).
-fn fft2_inplace(buf: &mut [Complex32], fft: &dyn Fft<f32>, p: usize) {
+///
+/// `scratch` must have length `p * p`; it's used for the column-pass
+/// transpose and reused across calls so we don't reallocate per patch.
+fn fft2_inplace(
+    buf: &mut [Complex32],
+    scratch: &mut [Complex32],
+    fft: &dyn Fft<f32>,
+    p: usize,
+) {
+    debug_assert_eq!(buf.len(), p * p);
+    debug_assert_eq!(scratch.len(), p * p);
     // FFT each row.
     for r in 0..p {
         fft.process(&mut buf[r * p..(r + 1) * p]);
     }
     // Transpose into scratch.
-    let mut t = vec![Complex32::default(); p * p];
     for r in 0..p {
         for c in 0..p {
-            t[c * p + r] = buf[r * p + c];
+            scratch[c * p + r] = buf[r * p + c];
         }
     }
     // FFT each "row" of the transpose (= original cols).
     for r in 0..p {
-        fft.process(&mut t[r * p..(r + 1) * p]);
+        fft.process(&mut scratch[r * p..(r + 1) * p]);
     }
     // Transpose back.
     for r in 0..p {
         for c in 0..p {
-            buf[r * p + c] = t[c * p + r];
+            buf[r * p + c] = scratch[c * p + r];
         }
     }
 }
@@ -203,6 +215,17 @@ fn reflect_pad(
     pad_right: usize,
 ) -> Array2<Complex32> {
     let (m, n) = src.dim();
+    // numpy "reflect" needs at least 1 valid row/col beyond the pad on each
+    // side: top uses src[1..=pad_top], bottom uses src[m-2..=m-1-pad_bottom];
+    // both require pad ≤ m - 1. Same for columns.
+    assert!(
+        pad_top < m && pad_bottom < m,
+        "reflect_pad: vertical pad ({pad_top}, {pad_bottom}) must be < image rows {m}"
+    );
+    assert!(
+        pad_left < n && pad_right < n,
+        "reflect_pad: horizontal pad ({pad_left}, {pad_right}) must be < image cols {n}"
+    );
     let pm = m + pad_top + pad_bottom;
     let pn = n + pad_left + pad_right;
     let mut out = Array2::<Complex32>::zeros((pm, pn));

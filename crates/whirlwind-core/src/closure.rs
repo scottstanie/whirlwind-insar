@@ -324,12 +324,11 @@ pub fn build_spanning_tree(graph: &TemporalGraph, priority: Option<&[f32]>) -> S
             if in_tree[v] {
                 continue;
             }
-            if let Some((p, _, _, _)) = best[v] {
-                if p < pick_pri {
+            if let Some((p, _, _, _)) = best[v]
+                && p < pick_pri {
                     pick = Some(v);
                     pick_pri = p;
                 }
-            }
         }
         let v = pick.expect("graph not connected");
         let (_, pdate, eidx, sgn) = best[v].unwrap();

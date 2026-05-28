@@ -186,7 +186,7 @@ impl Network {
         ground_cost: Option<i32>,
     ) -> Self {
         assert_eq!(residues.dim(), (g.m, g.n));
-        assert_eq!(costs.len(), g.num_arcs());
+        assert_eq!(costs.len(), g.num_forward);
 
         // Excess: copy residues; possibly extend by 1 for ground node.
         let excess_grid: Vec<i32> = if let Some(slice) = residues.as_slice() {
@@ -240,9 +240,9 @@ impl Network {
 
         // Costs: grid forwards then ground forwards.
         let mut cost_fwd = Vec::with_capacity(nf_total);
-        cost_fwd.extend_from_slice(&costs[..nf_grid]);
+        cost_fwd.extend_from_slice(costs);
         if let Some(c) = ground_cost {
-            cost_fwd.extend(std::iter::repeat(c).take(num_ground));
+            cost_fwd.extend(std::iter::repeat_n(c, num_ground));
         }
 
         // Saturation: 2*nf_total bits. Initial: forward unsaturated, reverse
