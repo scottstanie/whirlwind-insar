@@ -28,7 +28,10 @@ fn max_reduced_cost_par<G: ResidualGraph>(g: &G, net: &Network) -> i64 {
     (0..net.num_arcs())
         .into_par_iter()
         .map(|a| {
-            if net.is_arc_saturated(a) {
+            if net.is_arc_saturated(a) || net.is_used(a) {
+                // Saturated arcs are skipped in relax; used arcs have their
+                // reduced cost overridden to 0. Either way, they don't
+                // contribute to the bucket count.
                 0
             } else {
                 net.reduced_cost(g, a)
@@ -130,7 +133,14 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             if net.is_arc_saturated(arc) {
                 return;
             }
-            let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
+            // PHASS-style reuse: used arcs have reduced cost 0, independent
+            // of cost/potential. is_used() returns false in MCF mode so this
+            // branch only fires for the unwrap_reuse path.
+            let rc = if net.is_used(arc) {
+                0
+            } else {
+                net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
+            };
             debug_assert!(rc >= 0, "negative reduced cost on arc {arc}: {rc}");
             let nd = cur_dist + rc;
             if nd < sp.dist[v] {
@@ -242,7 +252,11 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                     if net.is_arc_saturated(arc) {
                         return;
                     }
-                    let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
+                    let rc = if net.is_used(arc) {
+                        0
+                    } else {
+                        net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
+                    };
                     let nd = cur_dist + rc;
                     if nd < sp.dist[v] {
                         sp.dist[v] = nd;
@@ -306,7 +320,11 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                             if net.is_arc_saturated(arc) {
                                 return;
                             }
-                            let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
+                            let rc = if net.is_used(arc) {
+                                0
+                            } else {
+                                net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
+                            };
                             let nd = cur_dist + rc;
                             if nd < sp_dist_snap[v] {
                                 props.push((v, nd, arc as u32, src, u as u32));

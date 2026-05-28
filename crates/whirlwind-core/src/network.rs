@@ -26,6 +26,14 @@ pub struct Network {
     pub cost_fwd: Vec<i32>,   // length = nf_total (grid + ground forward costs)
     pub is_saturated: BitVec, // length = 2 * nf_total
 
+    /// Signed flow on each forward arc; only meaningful in `reuse_mode`.
+    /// Length `nf_total`. Positive = net forward flow, negative = net reverse.
+    pub flow_count: Vec<i32>,
+    /// PHASS-style flow-reuse mode: arcs never saturate (multi-unit capacity)
+    /// and Dial overrides reduced cost to 0 on any arc with `flow_count != 0`.
+    /// Prototype path — see `solver_reuse` history and `unwrap_reuse`.
+    pub reuse_mode: bool,
+
     // Grid sub-layout (so we can transpose without holding a &Graph)
     num_grid_forward: usize,
     num_grid_nodes: usize,
@@ -61,6 +69,20 @@ impl Network {
     /// Build a network from a residue grid and per-arc grid costs. No ground.
     pub fn new(g: &RectangularGridGraph, residues: ArrayView2<i32>, costs: &[i32]) -> Self {
         Self::new_with_mask(g, residues, costs, None)
+    }
+
+    /// Build a network in PHASS-style flow-reuse mode (see `unwrap_reuse`).
+    /// Same construction as [`new_with_mask`]; only the `reuse_mode` flag
+    /// differs.
+    pub fn new_reuse_with_mask(
+        g: &RectangularGridGraph,
+        residues: ArrayView2<i32>,
+        costs: &[i32],
+        mask: Option<ArrayView2<bool>>,
+    ) -> Self {
+        let mut net = Self::new_with_mask_and_ground(g, residues, costs, mask, None);
+        net.reuse_mode = true;
+        net
     }
 
     /// Build a network and pre-saturate (forbid) arcs that cross a pixel
@@ -118,6 +140,8 @@ impl Network {
             potential: vec![0_i64; num_nodes],
             cost_fwd: costs,
             is_saturated: sat,
+            flow_count: vec![0_i32; nf],
+            reuse_mode: false,
             num_grid_forward: nf,
             num_grid_nodes: num_nodes,
             num_ground: 0,
@@ -263,6 +287,8 @@ impl Network {
             potential: vec![0_i64; n_nodes_total],
             cost_fwd,
             is_saturated: sat,
+            flow_count: vec![0_i32; nf_total],
+            reuse_mode: false,
             num_grid_forward: nf_grid,
             num_grid_nodes,
             num_ground,
@@ -499,11 +525,29 @@ impl Network {
         self.is_saturated[arc]
     }
 
-    /// 1 iff the forward partner of `arc` currently carries one unit of flow.
+    /// In `reuse_mode`, an arc with `|flow_count| > 0` is "used" — Dial will
+    /// override its reduced cost to 0 (PHASS `ASSP.cc:2034` behavior). In
+    /// MCF mode, always returns false (no override).
+    #[inline]
+    pub fn is_used(&self, arc: usize) -> bool {
+        if !self.reuse_mode {
+            return false;
+        }
+        let nf = self.num_forward();
+        let fwd = if arc < nf { arc } else { arc - nf };
+        self.flow_count[fwd] != 0
+    }
+
+    /// Net signed flow on the forward partner of `arc`. In MCF mode this is
+    /// 0 or 1 (forward saturated ⇒ 1, else 0). In reuse mode this is
+    /// `flow_count[fwd]` and can have any magnitude.
     #[inline]
     pub fn arc_flow<G: ResidualGraph>(&self, _g: &G, arc: usize) -> i32 {
         let nf = self.num_forward();
         let fwd = if arc < nf { arc } else { arc - nf };
+        if self.reuse_mode {
+            return self.flow_count[fwd];
+        }
         let rev = fwd + nf;
         if self.is_saturated[fwd] && !self.is_saturated[rev] { 1 } else { 0 }
     }
@@ -528,12 +572,38 @@ impl Network {
         self.arc_cost(g, arc) as i64 - self.potential[t] + self.potential[h]
     }
 
-    /// Push 1 unit of flow on `arc`. Toggles saturation of arc and its transpose.
+    /// Push 1 unit of flow on `arc`.
+    ///
+    /// MCF mode: toggles saturation of arc and its transpose (capacity 1).
+    ///
+    /// Reuse mode: updates `flow_count` (signed by direction), unlocks the
+    /// transpose if it was reverse-saturated, and *leaves the forward arc
+    /// unsaturated* so subsequent demands can pile multiple units on the
+    /// same edge. The override in `is_used` then forces Dial's reduced
+    /// cost to 0 on this arc for the rest of the solve, mirroring PHASS
+    /// `ASSP.cc:2034`.
     pub fn push_unit<G: ResidualGraph>(&mut self, _g: &G, arc: usize) {
         debug_assert!(!self.is_saturated[arc], "cannot push on saturated arc");
         let t = self.transpose(arc);
-        self.is_saturated.set(arc, true);
-        self.is_saturated.set(t, false);
+        if self.reuse_mode {
+            let nf = self.num_forward();
+            if arc < nf {
+                self.flow_count[arc] += 1;
+            } else {
+                self.flow_count[arc - nf] -= 1;
+            }
+            // Unlock the transpose direction (in MCF that's how reverse-
+            // residual capacity opens up after a forward push; we keep the
+            // same convention so the residual graph stays traversable in
+            // both directions, with reduced cost 0 via `is_used`).
+            self.is_saturated.set(t, false);
+            // NOTE: deliberately do NOT set is_saturated[arc] = true. That
+            // would lock out further pushes on this arc; reuse mode wants
+            // multi-unit capacity.
+        } else {
+            self.is_saturated.set(arc, true);
+            self.is_saturated.set(t, false);
+        }
     }
 
     pub fn excess_nodes(&self) -> impl Iterator<Item = usize> + '_ {
