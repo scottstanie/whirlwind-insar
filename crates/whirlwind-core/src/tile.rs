@@ -317,6 +317,11 @@ pub fn unwrap_tiled(
             }
         }
     }
+
+    // 4) Coarse region-refinement: remove residual whole-region 2π-offset
+    //    artifacts (rectangular blocks bounded by high-coherence 2π rings)
+    //    that the per-tile MCF / seam reconciliation leaves behind.
+    coarse_refine(&mut out, corr, mask, 8);
     Ok(out)
 }
 
@@ -524,6 +529,183 @@ fn reconcile_offsets_mcf(
         }
     }
     o
+}
+
+#[inline]
+fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+/// Coarse-scale region reconciliation: a noise-robust post-pass that removes
+/// the residual whole-region 2π-offset artifacts the tile reconciliation
+/// leaves (a sub-tile region the per-tile MCF unwrapped a few cycles off,
+/// showing as a rectangular block bounded by a 2π discontinuity *ring*).
+///
+/// Per-pixel jump detection fragments under phase noise, so we coarsen `unw`
+/// by `f`× (block mean over valid pixels — noise averages out, large-scale
+/// offsets survive), group coarse pixels into regions by no-jump connectivity,
+/// then shift each region by the integer that zeroes its **coherence-weighted**
+/// boundary jumps (high-coherence rings are expensive → flipped away;
+/// legitimate low-coherence cuts are cheap → kept). The per-region integer
+/// offset (× 2π) is added back to the full-resolution `unw` in place.
+fn coarse_refine(
+    unw: &mut Array2<f32>,
+    coh: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    f: usize,
+) {
+    use std::collections::HashMap;
+    let (m, n) = unw.dim();
+    let (mh, mw) = (m / f, n / f);
+    if mh < 2 || mw < 2 {
+        return;
+    }
+    let tau = TAU as f64;
+    let valid =
+        |unw: &Array2<f32>, i: usize, j: usize| {
+            mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite()
+        };
+
+    // 1) Coarsen: block-mean unw / coh over valid pixels; require ≥ f valid.
+    let mut cunw = vec![0_f64; mh * mw];
+    let mut ccoh = vec![0_f64; mh * mw];
+    let mut cvalid = vec![false; mh * mw];
+    for ci in 0..mh {
+        for cj in 0..mw {
+            let (mut s, mut sc, mut cnt) = (0_f64, 0_f64, 0_usize);
+            for di in 0..f {
+                for dj in 0..f {
+                    let (i, j) = (ci * f + di, cj * f + dj);
+                    if valid(unw, i, j) {
+                        s += unw[(i, j)] as f64;
+                        sc += coh[(i, j)] as f64;
+                        cnt += 1;
+                    }
+                }
+            }
+            if cnt >= f {
+                let idx = ci * mw + cj;
+                cunw[idx] = s / cnt as f64;
+                ccoh[idx] = sc / cnt as f64;
+                cvalid[idx] = true;
+            }
+        }
+    }
+
+    // 2) Regions = connected components over no-jump coarse edges.
+    let cyc = |a: usize, b: usize| -> i64 { ((cunw[b] - cunw[a]) / tau).round() as i64 };
+    let mut parent: Vec<usize> = (0..mh * mw).collect();
+    for ci in 0..mh {
+        for cj in 0..mw {
+            let idx = ci * mw + cj;
+            if !cvalid[idx] {
+                continue;
+            }
+            if cj + 1 < mw && cvalid[idx + 1] && cyc(idx, idx + 1) == 0 {
+                let (ra, rb) = (uf_find(&mut parent, idx), uf_find(&mut parent, idx + 1));
+                if ra != rb {
+                    parent[ra] = rb;
+                }
+            }
+            if ci + 1 < mh && cvalid[idx + mw] && cyc(idx, idx + mw) == 0 {
+                let (ra, rb) = (uf_find(&mut parent, idx), uf_find(&mut parent, idx + mw));
+                if ra != rb {
+                    parent[ra] = rb;
+                }
+            }
+        }
+    }
+
+    // 3) Inter-region edges (jump + coherence² weight): edge A→B with jump j
+    //    wants `off_A − off_B = j` to zero the boundary jump.
+    let mut sizes: HashMap<usize, usize> = HashMap::new();
+    for idx in 0..mh * mw {
+        if cvalid[idx] {
+            *sizes.entry(uf_find(&mut parent, idx)).or_insert(0) += 1;
+        }
+    }
+    let Some((&anchor, _)) = sizes.iter().max_by_key(|kv| *kv.1) else { return };
+
+    let mut adj: HashMap<usize, Vec<(usize, i64, f64)>> = HashMap::new();
+    for ci in 0..mh {
+        for cj in 0..mw {
+            let idx = ci * mw + cj;
+            if !cvalid[idx] {
+                continue;
+            }
+            let ra = uf_find(&mut parent, idx);
+            let mut consider = |idx2: usize, adj: &mut HashMap<usize, Vec<(usize, i64, f64)>>| {
+                let j = cyc(idx, idx2);
+                if j != 0 {
+                    let rb = uf_find(&mut parent, idx2);
+                    let w = ccoh[idx].min(ccoh[idx2]).powi(2);
+                    adj.entry(ra).or_default().push((rb, j, w));
+                    adj.entry(rb).or_default().push((ra, -j, w));
+                }
+            };
+            if cj + 1 < mw && cvalid[idx + 1] {
+                consider(idx + 1, &mut adj);
+            }
+            if ci + 1 < mh && cvalid[idx + mw] {
+                consider(idx + mw, &mut adj);
+            }
+        }
+    }
+
+    // 4) Iterative coherence-weighted-mode offset, anchored to the largest
+    //    region. Distinct regions share only jump edges (no satisfied seams),
+    //    so the vote has no degenerate fixed point.
+    let mut off: HashMap<usize, i64> = HashMap::new();
+    let regions: Vec<usize> = adj.keys().copied().filter(|&r| r != anchor).collect();
+    for _ in 0..200 {
+        let mut changed = false;
+        for &r in &regions {
+            let mut votes: HashMap<i64, f64> = HashMap::new();
+            for &(nb, j, w) in &adj[&r] {
+                *votes.entry(off.get(&nb).copied().unwrap_or(0) + j).or_insert(0.0) += w;
+            }
+            let best = votes
+                .iter()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|kv| *kv.0)
+                .unwrap_or(0);
+            if best != off.get(&r).copied().unwrap_or(0) {
+                off.insert(r, best);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // 5) Apply per-region integer offset back to full-resolution unw.
+    for ci in 0..mh {
+        for cj in 0..mw {
+            let idx = ci * mw + cj;
+            if !cvalid[idx] {
+                continue;
+            }
+            let r = uf_find(&mut parent, idx);
+            let d = off.get(&r).copied().unwrap_or(0);
+            if d == 0 {
+                continue;
+            }
+            let add = tau as f32 * d as f32;
+            for di in 0..f {
+                for dj in 0..f {
+                    let (i, j) = (ci * f + di, cj * f + dj);
+                    if valid(unw, i, j) {
+                        unw[(i, j)] += add;
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn unwrap_one_tile_coh(
@@ -799,6 +981,34 @@ mod tests {
                 "tile {t}: MCF failed to correct the low-confidence wrong seams"
             );
         }
+    }
+
+    #[test]
+    fn coarse_refine_flips_block_offset() {
+        use ndarray::Array2;
+        // Smooth ramp (gradient ≪ π) with a planted +2-cycle rectangular block
+        // offset (block edges aligned to the 8× coarsen grid). coarse_refine
+        // must flip the block back so the field is smooth again.
+        let (m, n) = (64usize, 64usize);
+        let truth = Array2::from_shape_fn((m, n), |(i, j)| 0.1 * i as f32 + 0.07 * j as f32);
+        let mut unw = truth.clone();
+        for i in 16..48 {
+            for j in 16..48 {
+                unw[(i, j)] += 2.0 * TAU;
+            }
+        }
+        let coh = Array2::<f32>::from_elem((m, n), 0.9);
+        coarse_refine(&mut unw, coh.view(), None, 8);
+        // Field should equal truth up to one global integer-cycle constant.
+        let kglob = ((unw[(0, 0)] - truth[(0, 0)]) / TAU).round();
+        let mut maxres = 0.0_f32;
+        for i in 0..m {
+            for j in 0..n {
+                let r = (unw[(i, j)] - truth[(i, j)] - TAU * kglob).abs();
+                maxres = maxres.max(r);
+            }
+        }
+        assert!(maxres < 1e-3, "coarse_refine left a block offset: max residual {maxres} rad");
     }
 
     #[test]

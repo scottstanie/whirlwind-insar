@@ -167,6 +167,39 @@ Longer-term product framing (S.S.): if the primal-dual + tiling path can get
 option. Tiling already shows ~18–22× on NISAR; the gating factor is quality
 parity, which is the convex-cost work.
 
+## Coarse region-refinement → 99 % (session 2c)
+
+The MCF secondary net left **2 rectangular high-coherence artifacts** (a +1 and
+a +3 constant-offset block): sub-tile regions the per-tile MCF unwrapped a few
+cycles off, bounded by a 2π discontinuity *ring*. They survive seam
+reconciliation because the seam *measurement* across them is consistent (the
+whole sub-region is uniformly shifted), so the reconciler bakes the shift in.
+
+What distinguishes the artifact from the correct unwrap is the **global
+smoothness**: the wrong block has a 2π ring through *high coherence*, which a
+correct unwrap never cuts. So a coherence-aware post-pass removes them
+(`coarse_refine` in `tile.rs`). Per-pixel jump detection fragments under phase
+noise (22 M components on NISAR), so we **coarsen 8×** (block-mean — noise
+averages out, the 100s-of-px artifacts survive), group coarse pixels into
+regions by no-jump connectivity, and shift each region by the integer that
+zeroes its **coherence-weighted** boundary jumps. High-coh rings are expensive
+→ flipped away; legitimate low-coh cuts are cheap → kept.
+
+NISAR vs SNAPHU 9×9 (ts=512, no Goldstein), full pipeline:
+
+| stage | K-match | \|dK\|≥2 |
+|---|---:|---:|
+| tiled + consensus stitch | 96.6 % | 2.7 % |
+| + MCF secondary net | 97.5 % | 1.7 % |
+| **+ coarse region-refine** | **99.2 %** | **0.21 %** |
+
+**99.2 % in 3.5 s, the rectangular artifacts gone, visually matching SNAPHU**
+on the land area — the target. (Residual: a handful of small ≤40 k-px blocks
+in low coherence + 8×-granular region boundaries; the convex per-tile cost is
+the remaining lever for those.) Coarsen factor (8) trades artifact-size
+sensitivity vs steep-fringe safety; gentle scenes like this NISAR frame are
+well inside the safe range.
+
 ## Where the code lives
 
 * `crates/whirlwind-core/src/tile.rs`: `unwrap_tiled`, `unwrap_one_tile_coh`,
