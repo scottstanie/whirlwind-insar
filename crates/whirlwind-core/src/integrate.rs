@@ -184,6 +184,118 @@ pub fn integrate_with_mask(
     unw
 }
 
+/// Like [`integrate`], but reads multi-unit signed flow from a `flow` slice
+/// instead of `Network`'s `arc_flow` (which is unit-capacity).
+///
+/// `flow[fwd_arc]` is the net signed flow in the forward direction of the
+/// arc, where `fwd_arc` is a grid forward-arc index from
+/// `g.down_arc/up_arc/right_arc/left_arc`. This entry point exists for the
+/// PHASS-style reuse prototype in [`crate::solver_reuse`], which can pile
+/// `|flow| > 1` onto a single arc.
+pub fn integrate_with_flow(
+    wrapped_phase: ArrayView2<f32>,
+    g: &RectangularGridGraph,
+    flow: &[i32],
+    mask: Option<ArrayView2<bool>>,
+) -> Array2<f32> {
+    let (m, n) = wrapped_phase.dim();
+    assert_eq!(g.m, m + 1);
+    assert_eq!(g.n, n + 1);
+    assert!(flow.len() >= g.num_forward, "flow length < num_forward");
+
+    if let Some(mask) = mask {
+        return integrate_with_flow_masked(wrapped_phase, g, flow, mask);
+    }
+
+    let mut unw = Array2::<f32>::zeros((m, n));
+    let mut col0_cycles: i32 = 0;
+    for i in 0..m {
+        if i > 0 {
+            let n_cyc = wrap_n_cycle(wrapped_phase[(i, 0)], wrapped_phase[(i - 1, 0)]);
+            let fwd = g.right_arc(i, 0).unwrap();
+            let rev = g.left_arc(i, 1).unwrap();
+            let net_flow = flow[rev] - flow[fwd];
+            col0_cycles += n_cyc + net_flow;
+        }
+        let mut cycles = col0_cycles;
+        for j in 0..n {
+            if j > 0 {
+                let n_cyc = wrap_n_cycle(wrapped_phase[(i, j)], wrapped_phase[(i, j - 1)]);
+                let fwd = g.down_arc(i, j).unwrap();
+                let rev = g.up_arc(i + 1, j).unwrap();
+                let net_flow = flow[fwd] - flow[rev];
+                cycles += n_cyc + net_flow;
+            }
+            unw[(i, j)] = wrapped_phase[(i, j)] + TAU * (cycles as f32);
+        }
+    }
+    unw
+}
+
+fn integrate_with_flow_masked(
+    wrapped_phase: ArrayView2<f32>,
+    g: &RectangularGridGraph,
+    flow: &[i32],
+    mask: ArrayView2<bool>,
+) -> Array2<f32> {
+    let (m, n) = wrapped_phase.dim();
+    assert_eq!(mask.dim(), (m, n));
+    let mut unw = Array2::<f32>::from_elem((m, n), f32::NAN);
+    let mut cycles = Array2::<i32>::zeros((m, n));
+    let mut queue: VecDeque<(usize, usize)> = VecDeque::new();
+    for si in 0..m {
+        for sj in 0..n {
+            if !mask[(si, sj)] || !unw[(si, sj)].is_nan() {
+                continue;
+            }
+            unw[(si, sj)] = wrapped_phase[(si, sj)];
+            queue.clear();
+            queue.push_back((si, sj));
+            while let Some((i, j)) = queue.pop_front() {
+                let psi_here = wrapped_phase[(i, j)];
+                let k_here = cycles[(i, j)];
+                if j + 1 < n && mask[(i, j + 1)] && unw[(i, j + 1)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i, j + 1)], psi_here);
+                    let fwd = g.down_arc(i, j + 1).unwrap();
+                    let rev = g.up_arc(i + 1, j + 1).unwrap();
+                    let k = k_here + n_cyc + flow[fwd] - flow[rev];
+                    cycles[(i, j + 1)] = k;
+                    unw[(i, j + 1)] = wrapped_phase[(i, j + 1)] + TAU * (k as f32);
+                    queue.push_back((i, j + 1));
+                }
+                if j >= 1 && mask[(i, j - 1)] && unw[(i, j - 1)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i, j - 1)], psi_here);
+                    let fwd = g.down_arc(i, j).unwrap();
+                    let rev = g.up_arc(i + 1, j).unwrap();
+                    let k = k_here + n_cyc + flow[rev] - flow[fwd];
+                    cycles[(i, j - 1)] = k;
+                    unw[(i, j - 1)] = wrapped_phase[(i, j - 1)] + TAU * (k as f32);
+                    queue.push_back((i, j - 1));
+                }
+                if i + 1 < m && mask[(i + 1, j)] && unw[(i + 1, j)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i + 1, j)], psi_here);
+                    let fwd = g.right_arc(i + 1, j).unwrap();
+                    let rev = g.left_arc(i + 1, j + 1).unwrap();
+                    let k = k_here + n_cyc + flow[rev] - flow[fwd];
+                    cycles[(i + 1, j)] = k;
+                    unw[(i + 1, j)] = wrapped_phase[(i + 1, j)] + TAU * (k as f32);
+                    queue.push_back((i + 1, j));
+                }
+                if i >= 1 && mask[(i - 1, j)] && unw[(i - 1, j)].is_nan() {
+                    let n_cyc = wrap_n_cycle(wrapped_phase[(i - 1, j)], psi_here);
+                    let fwd = g.right_arc(i, j).unwrap();
+                    let rev = g.left_arc(i, j + 1).unwrap();
+                    let k = k_here + n_cyc + flow[fwd] - flow[rev];
+                    cycles[(i - 1, j)] = k;
+                    unw[(i - 1, j)] = wrapped_phase[(i - 1, j)] + TAU * (k as f32);
+                    queue.push_back((i - 1, j));
+                }
+            }
+        }
+    }
+    unw
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

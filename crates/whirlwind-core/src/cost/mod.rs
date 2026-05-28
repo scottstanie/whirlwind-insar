@@ -393,7 +393,7 @@ pub fn compute_carballo_costs(
         let pi = std::f32::consts::PI;
         if let Some(good_corr) = phass_good_corr {
             // PHASS cost: coherence-squared, saturated above good_corr.
-            let g = gamma.min(1.0).max(0.0);
+            let g = gamma.clamp(0.0, 1.0);
             let g_sat = g.min(good_corr);
             g_sat * g_sat * pi
         } else if use_llr {
@@ -904,7 +904,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_vanishes_for_large_L() {
+    fn bias_correction_vanishes_for_large_l() {
         // L→∞ ⇒ correction is the identity at every γ̂.
         for &g in &[0.3_f32, 0.5, 0.7, 0.9] {
             let corrected = correct_coh_bias(g, 10_000.0);
@@ -913,7 +913,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_degenerate_at_small_L() {
+    fn bias_correction_degenerate_at_small_l() {
         // L ≤ 1 is degenerate; return raw to avoid producing NaN.
         assert_eq!(correct_coh_bias(0.5, 1.0), 0.5);
         assert_eq!(correct_coh_bias(0.5, 0.5), 0.5);

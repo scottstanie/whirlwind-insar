@@ -293,6 +293,28 @@ fn unwrap_crlb_grounded<'py>(
     Ok(unw.into_pyarray(py))
 }
 
+/// **Prototype.** PHASS-style flow-reuse solver — same coherence cost
+/// as `unwrap`, but arcs can carry multiple units of flow at zero
+/// marginal cost after the first push. Tests whether flow-reuse alone
+/// (the load-bearing piece of dolphin PHASS per ASSP.cc:2034) closes
+/// whirlwind's no-Goldstein gap. See ``paper/phass_experiments.md``.
+#[pyfunction]
+#[pyo3(signature = (igram, corr, nlooks = 1.0, mask = None))]
+fn unwrap_reuse<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    corr: PyReadonlyArray2<'py, f32>,
+    nlooks: f32,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    let ig = igram.as_array();
+    let co = corr.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let unw = py.detach(|| whirlwind_core::unwrap_reuse(ig, co, nlooks, m));
+    let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(unw.into_pyarray(py))
+}
+
 /// **Specialized — not a general substitute for `unwrap`.**
 ///
 /// Coherence-cost unwrap with a virtual ground node, the Carballo twin
@@ -655,6 +677,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_crlb, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_grounded, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_grounded, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_reuse, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_with_conncomp, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_with_conncomp, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
