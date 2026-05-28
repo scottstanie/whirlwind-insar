@@ -14,6 +14,11 @@ The two longer-form companion writeups are:
   experiment that pointed us at convex cost.
 * `paper/convex_cost_design.md` — the SNAPHU-style convex prototype
   design plan and first-run results.
+* **`paper/tiling.md`** — the **tiled coherence unwrap** (now the
+  fast/low-memory no-Goldstein path, NISAR 96.6 % in 3.5 s), plus
+  source-verified *corrections* to the convex/reuse/unit-capacity
+  conclusions below, and the corrected Atlanta status. **Read this first
+  for the current best path.**
 
 Read those for context. Use this doc to find the *current* status
 of each line of investigation.
@@ -23,8 +28,15 @@ of each line of investigation.
 | function | mechanism | PV K-match | NISAR K-match | wall (NISAR) |
 |---|---|---:|---:|---:|
 | `unwrap`                  | linear coherence, unit-capacity MCF      | 90.67 % | 80.01 % |  75 s |
+| **`unwrap` tiled ts=512** | per-tile MCF + consensus 2π stitch       | — | **96.6 %** |  **3.5 s** |
 | **`unwrap_reuse`**        | linear coh + PHASS-style flow reuse      | **99.75 %** | **92.70 %** |  93 s |
-| `unwrap_convex`           | SNAPHU-style quadratic cost              | 99.80 % | 68.80 % | 409 s |
+| `unwrap_convex`           | SNAPHU-style quadratic cost (BUGGY — see `tiling.md`) | 99.80 % | 68.80 % | 409 s |
+
+**Update (session 2): the tiled path (`unwrap(..., tile_size=512,
+tile_overlap=64)`) is the new fast/low-memory no-Goldstein winner and
+*beats* whole-image. The `unwrap_convex` 68.8 % is an unsound-solver
+artifact, not a verdict on convex cost; the convex `offset` is also the
+wrong quantity. See `paper/tiling.md` for the full corrected picture.**
 | `unwrap_grounded`         | linear coh + virtual-ground node         | (bad on real data — specialized) | — | — |
 | `unwrap_crlb_*`           | CRLB-variance cost variants              | (designed for phase-linked stacks) | — | — |
 
