@@ -177,9 +177,7 @@ on the same data — somewhere between cost formulation and solver
 interaction, the prototype solves a different problem.
 
 Plausible suspects (in order of cheapness to test):
-* **σ² calibration.** I used the Just/Bamler small-angle
-  approximation `(1 − γ²) / (2L γ²)`. SNAPHU uses the full Lee 1994
-  variance. For low coh / few looks the two diverge noticeably.
+* ~~**σ² calibration.**~~ Tested — see below; ruled out.
 * **Offset polarity.** The Carballo per-direction split (DOWN gets
   `+α`, UP gets `−α`) translates to opposite signed offsets on the
   two arcs of one pixel edge. The math checks out on paper but
@@ -194,11 +192,34 @@ Plausible suspects (in order of cheapness to test):
   `debug_assert!(rc >= 0)` is stripped; negative reduced costs would
   silently corrupt the Dijkstra result.
 
-Hold the convex prototype here for now — the PV result and the
-synthetic test confirm the implementation works in principle, but the
-NISAR regression means convex-as-implemented is not the answer.
-Diagnosis on which of the four suspects above is the cause is the
-next step before deciding to push convex further.
+### Suspect 1 (σ²): ruled out
+
+Replaced `just_bamler_variance` with `lut::get_or_build_variance`,
+which numerically integrates the full Lee 1994 PDF
+`σ² = ∫_{-π}^{π} α² · p(α|γ,L) dα` over a 1024-point γ grid and
+returns interpolated values per arc. 1024-sample mid-point rule per
+γ; 256k PDF evaluations one-time per `nlooks`. Same `compute_snaphu_smooth_costs`
+otherwise.
+
+| scene | mode | wall | K=match |
+|---|---|---:|---:|
+| `diagonal_ramp_512_convex` | passes (0.97 s, was 91 s) | — | max err 0.0 rad |
+| PV    | convex, Lee var |  8.8 s | 99.59 % |
+| NISAR | convex, Just/Bamler | 402 s | 68.55 % |
+| NISAR | convex, Lee var     | 409 s | **68.80 %** |
+
+NISAR moved 0.25 pp — well inside numerical noise. σ² calibration is
+*not* the cause of the regression. Suspect 1 ruled out.
+
+(Side effect: synthetic test now runs 90× faster because the Lee
+variance gives more reasonable weights than the Just/Bamler small-
+angle approximation does at low γ. The numerical correctness was
+unchanged but the bucket-queue / heap workload depended on weight
+magnitudes.)
+
+Three suspects remain (offset polarity, whole-image vs tiled, and
+the no-Bellman-Ford assumption from Phase 4). Holding the convex
+prototype here per the original decision to pause + diagnose.
 
 ## Out of scope (for this prototype)
 

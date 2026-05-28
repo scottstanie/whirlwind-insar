@@ -841,10 +841,13 @@ pub fn compute_crlb_costs(
 pub const NSHORTCYCLE: i32 = 100;
 
 /// Just/Bamler 1994 small-angle approximation to multilook phase variance:
-/// `σ² ≈ (1 − γ²) / (2 L γ²)` (radians²). Used by [`compute_snaphu_smooth_costs`]
-/// as a lightweight stand-in for the full Lee 1994 numerical variance.
+/// `σ² ≈ (1 − γ²) / (2 L γ²)` (radians²). Kept as a sanity-check fallback;
+/// the convex-cost path uses [`lut::get_or_build_variance`] for the full
+/// Lee 1994 numerical variance instead.
+///
 /// At γ=1 we floor to a small ε so the inverse weight stays finite.
 #[inline]
+#[allow(dead_code)]
 fn just_bamler_variance(gamma: f32, nlooks: f32) -> f32 {
     let g = gamma.clamp(1e-3, 0.999);
     (1.0 - g * g) / (2.0 * nlooks * g * g)
@@ -980,9 +983,26 @@ pub fn compute_snaphu_smooth_costs(
     let alpha_to_offset = |alpha: f32| -> i32 {
         ((alpha / (2.0 * PI)) * (NSHORTCYCLE as f32)).round() as i32
     };
+    // Per-arc weight = inverse Lee 1994 wrapped-phase variance, scaled by
+    // COST_SCALE so the convex parabolic cost lives in i32 range. We build
+    // a γ → σ² LUT once per nlooks (`lut::get_or_build_variance`) from a
+    // 1024-sample numerical integration of the full Lee 1994 PDF over
+    // (-π, π], then read it per arc. Big upgrade over the Just/Bamler
+    // small-angle approximation `(1 − γ²) / (2 L γ²)` which diverges from
+    // the true variance at low γ and moderate L (the NISAR regime).
+    //
+    // At γ → 0 the variance saturates near π²/3 ≈ 3.29 (the wrapped phase
+    // becomes uniform on (-π, π]), so weights stay bounded — no need for
+    // a low-γ floor. At γ ≈ 0.999 the variance is small and the weight
+    // can spike; clamp the resulting weight to a sane integer range to
+    // protect downstream arithmetic.
+    let var_lut = lut::get_or_build_variance(nlooks);
     let gamma_to_weight = |gamma: f32| -> i32 {
-        let var = just_bamler_variance(gamma, nlooks);
-        ((1.0 / var) * COST_SCALE).round() as i32
+        let var = var_lut.eval(gamma).max(1e-4);
+        let w = (1.0 / var) * COST_SCALE;
+        // Clamp to avoid pathological i32 overflow at near-perfect γ.
+        // Max realistic weight at γ=0.999 is ~5e4; 1e7 is a comfortable cap.
+        w.min(1e7).round() as i32
     };
 
     // RIGHT / LEFT slabs from vertical pixel edges. Same convention as
