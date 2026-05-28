@@ -520,6 +520,15 @@ fn use_llr_cost() -> bool {
     *FLAG.get_or_init(|| std::env::var("WHIRLWIND_LLR_COST").is_ok())
 }
 
+/// Negate the convex per-arc offsets — research toggle for the offset-
+/// polarity suspect from paper/convex_cost_design.md. The default
+/// convention picks +α for DOWN/LEFT and −α for UP/RIGHT (matching the
+/// Carballo direction split). Flipping reverses that pairing. Cached.
+fn convex_offset_flip() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_CONVEX_OFFSET_FLIP").is_ok())
+}
+
 /// Cached env-var lookup for the deviation-cost experiment.
 ///
 /// When enabled, [`compute_carballo_costs`] feeds the *per-arc deviation*
@@ -980,8 +989,12 @@ pub fn compute_snaphu_smooth_costs(
     let mask_dx_ref = mask_dx.as_ref().map(|a| a.view());
 
     // Convert wrapped phase α ∈ (-π, π] to integer offset in (-50, 50].
+    // `WHIRLWIND_CONVEX_OFFSET_FLIP=1` negates the result — research toggle
+    // for the suspect #2 polarity check in paper/convex_cost_design.md.
+    let flip = convex_offset_flip();
+    let sign: f32 = if flip { -1.0 } else { 1.0 };
     let alpha_to_offset = |alpha: f32| -> i32 {
-        ((alpha / (2.0 * PI)) * (NSHORTCYCLE as f32)).round() as i32
+        ((sign * alpha / (2.0 * PI)) * (NSHORTCYCLE as f32)).round() as i32
     };
     // Per-arc weight = inverse Lee 1994 wrapped-phase variance, scaled by
     // COST_SCALE so the convex parabolic cost lives in i32 range. We build

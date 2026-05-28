@@ -192,6 +192,71 @@ Plausible suspects (in order of cheapness to test):
   `debug_assert!(rc >= 0)` is stripped; negative reduced costs would
   silently corrupt the Dijkstra result.
 
+### Suspect 2 (offset polarity): ruled out, but exposes the real bug
+
+Added `WHIRLWIND_CONVEX_OFFSET_FLIP=1` env-gated toggle that negates
+every per-arc offset. Re-ran NISAR. **68.80 % → 68.78 %**. The blob
+sizes and bounding boxes are identical to the third decimal. So
+offset polarity isn't the cause either.
+
+But running this diagnostic forced us to look at the *distribution*
+of NISAR offsets, which revealed the actual problem:
+
+```
+NISAR offsets (= round(α_smooth · 100 / 2π), bounded ±50):
+  |offset|=0:    38 %
+  |offset|=1-5:  54 %
+  |offset|>10:    0.4 %
+  |offset|>25:    0.00 %
+  max |offset|:  22
+```
+
+Maximum offset on NISAR is **22**, far below the saturation point at
+±50 where wrap-line guidance kicks in (the cost-symmetric point
+between k=0 and k=±1). Most arcs have |offset|≤5, which is too small
+to matter — at |offset|=5 the cost ratio between k=0 and k=±1 is
+still 361×.
+
+Root cause: the **7×7 box smoothing** that the offset reads from
+washes wrap lines out. A wrap line is a sharp ±π discontinuity over
+~1 pixel; box-averaged across 7 pixels (mixing both sides of the
+wrap) the smoothed gradient collapses to ~0. We measured max
+|α_smooth| ≈ 1.35 rad on NISAR — well below the theoretical π that a
+true wrap-line arc should produce.
+
+So convex cost on NISAR is *effectively* `w · k² · 10000` everywhere
+(pure quadratic, no offset structure). That strongly resists multi-
+cycle deviations, but with no offset signal to use as routing
+guidance, it just makes flow more expensive everywhere — worse than
+linear. **Suspects 2 alone is not the cause; the *preprocessing* that
+feeds the offset computation is.**
+
+Plot: `plots/nisar_convex_panel.png` shows the convex Δ K panel
+dominated by a 2.5M-pixel +4 cycle blob in the upper-right, even
+worse than baseline's 1.6M-pixel blob in the same region.
+
+### Suspect 5 (new): offset smoothing kernel
+
+What we'd actually want for the offset: a wrap-line *indicator*, not
+a smoothed gradient. Candidates to try:
+
+1. **Smaller smoothing kernel** (3×3 instead of 7×7). Less averaging
+   across wrap-line discontinuities; the offset would track the local
+   wrapped gradient more closely. Cheapest test.
+2. **Raw (unsmoothed) gradient.** Maximally preserves wrap-line
+   discontinuities but is per-arc noisy. Equivalent to PHASS's
+   `phase_diff_th` cut input. Useful as a sanity check; we expect
+   the noisy offsets to make things worse, but a few percent better
+   K-match would confirm the diagnosis.
+3. **Median-of-wrapped-gradients** within a window. Robust to the
+   discontinuity (the median across a wrap line picks one side or
+   the other, not the average).
+4. **Replace box-smoothing with a wrap-aware filter** that detects
+   the discontinuity and adjusts. This is PHASS's amplitude-Canny
+   path, but driven from phase instead of intensity.
+
+(1) is the obvious cheap first try.
+
 ### Suspect 1 (σ²): ruled out
 
 Replaced `just_bamler_variance` with `lut::get_or_build_variance`,
