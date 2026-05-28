@@ -349,6 +349,7 @@ pub fn compute_carballo_costs(
     let use_deviation = deviation_cost_enabled();
     let hard_cut = hard_cut_threshold();
     let phass_good_corr = phass_cost_good_corr();
+    let phass_faithful = phass_faithful_good_corr();
     let lut = lut::get_or_build(nlooks);
 
     // Compute un-smoothed per-arc wrapped gradients when needed by any
@@ -391,7 +392,21 @@ pub fn compute_carballo_costs(
     // paper/phass_experiments.md for the full writeup.
     let cost_dir = |alpha: f32, gamma: f32| -> f32 {
         let pi = std::f32::consts::PI;
-        if let Some(good_corr) = phass_good_corr {
+        if let Some(good_corr) = phass_faithful {
+            // Faithful PHASS recipe (PhassUnwrapper.cc:119-141): γ² for the
+            // low-coh range, then a hard jump to 2.55 when γ² > good_corr².
+            // After the `* COST_SCALE` (= 100) multiplier downstream, that
+            // produces the PHASS integer values: γ² · 100 for normal arcs,
+            // 255 for "very coherent" arcs. The cliff is the load-bearing
+            // piece — fail under unit-capacity SSP (every wrap line pays
+            // the cliff in full and Dial's bucket queue chokes on near-tied
+            // candidate paths). Whether reuse digests it is the test that
+            // motivates this branch.
+            let g = gamma.clamp(0.0, 1.0);
+            let g_sq = g * g;
+            let good_sq = good_corr * good_corr;
+            if g_sq > good_sq { 2.55 } else { g_sq }
+        } else if let Some(good_corr) = phass_good_corr {
             // PHASS cost: coherence-squared, saturated above good_corr.
             let g = gamma.clamp(0.0, 1.0);
             let g_sat = g.min(good_corr);
@@ -578,6 +593,27 @@ fn phass_cost_good_corr() -> Option<f32> {
     static FLAG: OnceLock<Option<f32>> = OnceLock::new();
     *FLAG.get_or_init(|| {
         std::env::var("WHIRLWIND_PHASS_COST")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|&g| (0.0..=1.0).contains(&g))
+    })
+}
+
+/// **Faithful** PHASS cost recipe (per `PhassUnwrapper.cc:119-141` exactly,
+/// modulo our COST_SCALE=100 == PHASS's cost_scale=100 coincidence): cost
+/// is `γ_edge² · 100` for `γ² ≤ G²`, and **jumps to 255** for `γ² > G²`.
+/// In our `cost_dir`, that's `γ²` and `2.55` respectively; the COST_SCALE
+/// multiplication produces the 100 vs 255 integer pair. The 255-cliff was
+/// pathological in unit-capacity SSP (PV and NISAR both took >5× baseline
+/// wall, killed); the open question is whether it digests under reuse,
+/// where used arcs have reduced cost 0 regardless. This is a separate
+/// knob from [`phass_cost_good_corr`] (the flat-clamp `G²·π` recipe)
+/// so the prior negative-result data stays reproducible under the old
+/// env var.
+fn phass_faithful_good_corr() -> Option<f32> {
+    static FLAG: OnceLock<Option<f32>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("WHIRLWIND_PHASS_FAITHFUL_GOOD_CORR")
             .ok()
             .and_then(|s| s.parse::<f32>().ok())
             .filter(|&g| (0.0..=1.0).contains(&g))
