@@ -26,13 +26,28 @@ pub struct Network {
     pub cost_fwd: Vec<i32>,   // length = nf_total (grid + ground forward costs)
     pub is_saturated: BitVec, // length = 2 * nf_total
 
-    /// Signed flow on each forward arc; only meaningful in `reuse_mode`.
-    /// Length `nf_total`. Positive = net forward flow, negative = net reverse.
+    /// Signed flow on each forward arc; only meaningful in `reuse_mode` or
+    /// `convex_mode`. Length `nf_total`. Positive = net forward flow,
+    /// negative = net reverse.
     pub flow_count: Vec<i32>,
     /// PHASS-style flow-reuse mode: arcs never saturate (multi-unit capacity)
     /// and Dial overrides reduced cost to 0 on any arc with `flow_count != 0`.
     /// Prototype path — see `solver_reuse` history and `unwrap_reuse`.
     pub reuse_mode: bool,
+
+    /// SNAPHU-style convex cost mode: cost is parabolic in flow per arc,
+    /// `c_e(k) = weights[e] · (k · 100 − offsets[e])²`. Dial uses the
+    /// *marginal* cost (cost of pushing one more unit at current flow)
+    /// via [`Network::marginal_cost`]. Arcs are effectively multi-unit
+    /// capacity (no saturation under convex_mode). Prototype path —
+    /// see [`Network::new_convex_with_mask`] and `unwrap_convex`.
+    pub convex_mode: bool,
+    /// Per-forward-arc preferred-flow offsets (in units of nshortcycle=100).
+    /// Filled by `cost::compute_snaphu_smooth_costs`; zero in non-convex mode.
+    pub offsets: Vec<i32>,
+    /// Per-forward-arc inverse-variance weights (in COST_SCALE units).
+    /// Filled by `cost::compute_snaphu_smooth_costs`; zero in non-convex mode.
+    pub weights: Vec<i32>,
 
     // Grid sub-layout (so we can transpose without holding a &Graph)
     num_grid_forward: usize,
@@ -82,6 +97,66 @@ impl Network {
     ) -> Self {
         let mut net = Self::new_with_mask_and_ground(g, residues, costs, mask, None);
         net.reuse_mode = true;
+        net
+    }
+
+    /// Build a network in SNAPHU-style convex cost mode (see `unwrap_convex`).
+    ///
+    /// `offsets[a]` and `weights[a]` together define the per-arc parabolic
+    /// cost `c_e(k) = weights[a] · (k · 100 − offsets[a])²`, where `k` is
+    /// the integer signed flow tracked in `flow_count[a]`. The `cost_fwd`
+    /// field is left as a placeholder of zeros — Dial uses
+    /// [`Network::marginal_cost`] instead in convex mode.
+    ///
+    /// Arcs are effectively multi-unit capacity in convex mode (no
+    /// saturation bit toggling on push). Marginal cost can be negative
+    /// when current flow is below offset (i.e. the arc *wants* a +1
+    /// push); the caller must run a Bellman-Ford pre-pass to set valid
+    /// initial potentials before invoking the primal-dual solver.
+    pub fn new_convex_with_mask(
+        g: &RectangularGridGraph,
+        residues: ArrayView2<i32>,
+        offsets: &[i32],
+        weights: &[i32],
+        mask: Option<ArrayView2<bool>>,
+    ) -> Self {
+        assert_eq!(
+            offsets.len(),
+            g.num_forward,
+            "offsets length must match num_forward"
+        );
+        assert_eq!(
+            weights.len(),
+            g.num_forward,
+            "weights length must match num_forward"
+        );
+        // Build a zero-cost linear network just to reuse the topology /
+        // mask-forbidding plumbing; we override cost lookups in dial.rs.
+        let placeholder_costs = vec![0_i32; g.num_forward];
+        let mut net = Self::new_with_mask_and_ground(
+            g,
+            residues,
+            &placeholder_costs,
+            mask,
+            None,
+        );
+        net.convex_mode = true;
+        net.offsets = offsets.to_vec();
+        net.weights = weights.to_vec();
+        // Unit-capacity MCF starts reverse arcs as `is_saturated = true` so
+        // they're unreachable until forward flow opens them. Convex_mode
+        // wants reverse arcs available from t=0 (the cost is parabolic; the
+        // cheaper push direction can be backward). Unsaturate reverse arcs
+        // that aren't part of a masked-out edge — forbidden arcs (`fwd=true,
+        // rev=true`) stay forbidden; only the (fwd=false, rev=true) entries
+        // get unsaturated to (false, false).
+        let nf_total = net.num_forward();
+        for fwd in 0..nf_total {
+            let rev = fwd + nf_total;
+            if !net.is_saturated[fwd] {
+                net.is_saturated.set(rev, false);
+            }
+        }
         net
     }
 
@@ -142,6 +217,9 @@ impl Network {
             is_saturated: sat,
             flow_count: vec![0_i32; nf],
             reuse_mode: false,
+            convex_mode: false,
+            offsets: Vec::new(),
+            weights: Vec::new(),
             num_grid_forward: nf,
             num_grid_nodes: num_nodes,
             num_ground: 0,
@@ -289,6 +367,9 @@ impl Network {
             is_saturated: sat,
             flow_count: vec![0_i32; nf_total],
             reuse_mode: false,
+            convex_mode: false,
+            offsets: Vec::new(),
+            weights: Vec::new(),
             num_grid_forward: nf_grid,
             num_grid_nodes,
             num_ground,
@@ -538,14 +619,53 @@ impl Network {
         self.flow_count[fwd] != 0
     }
 
+    /// SNAPHU-style convex marginal cost: cost of pushing one more unit of
+    /// flow on `arc` given the current `flow_count` on its forward partner.
+    ///
+    /// For a forward arc, push moves `flow_count[fwd] : f → f + 1`. The
+    /// total parabolic cost change is
+    ///
+    ///   Δc = w · ((f + 1) · 100 − O)² − w · (f · 100 − O)²
+    ///      = w · (200 · (f · 100 − O) + 100²)
+    ///
+    /// For a reverse arc, push moves `flow_count[fwd] : f → f − 1`, giving
+    /// the same formula with `+100` replaced by `−100`:
+    ///
+    ///   Δc = w · (−200 · (f · 100 − O) + 100²)
+    ///      = w · (200 · (O − f · 100) + 100²)
+    ///
+    /// Returns `i64` because intermediate products can exceed `i32` range:
+    /// with `nshortcycle = 100`, `f · 100 − O ∈ [-5000, +5000]` and the
+    /// `· 200` factor takes that to `[-1e6, +1e6]` times weight (`w` up to
+    /// `~1e4` at high coherence). Caller-side (dial.rs) keeps reduced costs
+    /// in `i64`.
+    ///
+    /// Returns 0 in non-convex modes (caller should branch on `convex_mode`
+    /// first; this exists as a safe fallback).
+    #[inline]
+    pub fn marginal_cost(&self, arc: usize) -> i64 {
+        if !self.convex_mode {
+            return 0;
+        }
+        let nf = self.num_forward();
+        let (fwd, sign) = if arc < nf { (arc, 1_i64) } else { (arc - nf, -1_i64) };
+        let f = self.flow_count[fwd] as i64;
+        let o = self.offsets[fwd] as i64;
+        let w = self.weights[fwd] as i64;
+        let ns: i64 = 100; // NSHORTCYCLE
+        let u = f * ns - o;
+        // Δc = w · (sign · 200 · u + 100²) = w · (sign · 2 · ns · u + ns²)
+        w * (sign * 2 * ns * u + ns * ns)
+    }
+
     /// Net signed flow on the forward partner of `arc`. In MCF mode this is
-    /// 0 or 1 (forward saturated ⇒ 1, else 0). In reuse mode this is
-    /// `flow_count[fwd]` and can have any magnitude.
+    /// 0 or 1 (forward saturated ⇒ 1, else 0). In reuse_mode / convex_mode
+    /// this is `flow_count[fwd]` and can have any magnitude.
     #[inline]
     pub fn arc_flow<G: ResidualGraph>(&self, _g: &G, arc: usize) -> i32 {
         let nf = self.num_forward();
         let fwd = if arc < nf { arc } else { arc - nf };
-        if self.reuse_mode {
+        if self.reuse_mode || self.convex_mode {
             return self.flow_count[fwd];
         }
         let rev = fwd + nf;
@@ -585,21 +705,20 @@ impl Network {
     pub fn push_unit<G: ResidualGraph>(&mut self, _g: &G, arc: usize) {
         debug_assert!(!self.is_saturated[arc], "cannot push on saturated arc");
         let t = self.transpose(arc);
-        if self.reuse_mode {
+        if self.reuse_mode || self.convex_mode {
             let nf = self.num_forward();
             if arc < nf {
                 self.flow_count[arc] += 1;
             } else {
                 self.flow_count[arc - nf] -= 1;
             }
-            // Unlock the transpose direction (in MCF that's how reverse-
-            // residual capacity opens up after a forward push; we keep the
-            // same convention so the residual graph stays traversable in
-            // both directions, with reduced cost 0 via `is_used`).
+            // Unlock the transpose direction so the residual graph stays
+            // traversable in both directions. Reduced cost on the now-flowing
+            // arc is handled by either the `is_used` override (reuse_mode)
+            // or by the next marginal_cost computation (convex_mode).
             self.is_saturated.set(t, false);
-            // NOTE: deliberately do NOT set is_saturated[arc] = true. That
-            // would lock out further pushes on this arc; reuse mode wants
-            // multi-unit capacity.
+            // Deliberately do NOT set is_saturated[arc] = true. Multi-unit
+            // capacity is what makes both reuse and convex modes work.
         } else {
             self.is_saturated.set(arc, true);
             self.is_saturated.set(t, false);
@@ -627,5 +746,72 @@ impl Network {
     }
     pub fn decrease_excess(&mut self, node: usize, d: i32) {
         self.excess[node] -= d;
+    }
+}
+
+#[cfg(test)]
+mod convex_marginal_tests {
+    use super::*;
+    use ndarray::Array2;
+
+    fn make_net_convex(offsets: Vec<i32>, weights: Vec<i32>) -> Network {
+        // 3x3 residue grid (= 2x2 pixel-edge grid). num_forward = 2*n_v + 2*n_h.
+        let g = RectangularGridGraph::new(3, 3);
+        let nf = g.num_forward;
+        assert_eq!(offsets.len(), nf);
+        assert_eq!(weights.len(), nf);
+        let residues = Array2::<i32>::zeros((3, 3));
+        Network::new_convex_with_mask(&g, residues.view(), &offsets, &weights, None)
+    }
+
+    /// Marginal cost at f=0 of pushing forward (f: 0 → 1) with offset O:
+    ///   Δc = w · (200 · (-O) + 10000) = w · (10000 − 200·O)
+    /// For O = 0:  Δc = 10000 · w
+    /// For O = 50: Δc = 0        (arc indifferent at f=0)
+    /// For O = -50: Δc = 20000·w (arc strongly resists +1)
+    #[test]
+    fn marginal_cost_at_zero_flow() {
+        let g = RectangularGridGraph::new(3, 3);
+        let nf = g.num_forward;
+        // Set the first arc with offset=0, weight=1; second with offset=50, weight=1;
+        // third with offset=-50, weight=1.
+        let mut offsets = vec![0_i32; nf];
+        let mut weights = vec![1_i32; nf];
+        offsets[1] = 50;
+        offsets[2] = -50;
+        let net = make_net_convex(offsets, weights);
+
+        assert_eq!(net.marginal_cost(0), 10_000, "offset=0 forward push");
+        assert_eq!(net.marginal_cost(1), 0,      "offset=50 forward push (indifferent)");
+        assert_eq!(net.marginal_cost(2), 20_000, "offset=-50 forward push (resist)");
+    }
+
+    /// Pushing flow toward offset should be cheaper than pushing away.
+    /// arc 0: offset=+50. At f=0, marginal forward (f → +1) = 0; reverse (f → -1) = 20000.
+    /// arc 1: offset=-50. At f=0, marginal forward = 20000; reverse = 0.
+    #[test]
+    fn marginal_cost_direction_aware() {
+        let g = RectangularGridGraph::new(3, 3);
+        let nf = g.num_forward;
+        let mut offsets = vec![0_i32; nf];
+        offsets[0] = 50;
+        offsets[1] = -50;
+        let weights = vec![1_i32; nf];
+        let net = make_net_convex(offsets, weights);
+        // Reverse arc id = fwd + nf.
+        assert_eq!(net.marginal_cost(0),        0,      "fwd push toward +50 offset = 0");
+        assert_eq!(net.marginal_cost(0 + nf),   20_000, "rev push away from +50 offset = 20000");
+        assert_eq!(net.marginal_cost(1),        20_000, "fwd push away from -50 offset = 20000");
+        assert_eq!(net.marginal_cost(1 + nf),   0,      "rev push toward -50 offset = 0");
+    }
+
+    /// MCF-mode networks have marginal_cost always returning 0 (no overhead).
+    #[test]
+    fn marginal_cost_zero_in_mcf_mode() {
+        let g = RectangularGridGraph::new(3, 3);
+        let residues = Array2::<i32>::zeros((3, 3));
+        let costs = vec![10_i32; g.num_forward];
+        let net = Network::new(&g, residues.view(), &costs);
+        assert_eq!(net.marginal_cost(0), 0);
     }
 }

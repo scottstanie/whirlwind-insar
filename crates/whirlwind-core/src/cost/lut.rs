@@ -84,6 +84,87 @@ pub fn get_or_build(nlooks: f32) -> &'static Lut {
     lut
 }
 
+// =============================================================================
+// γ → σ² lookup (wrapped phase variance from the full Lee 1994 PDF).
+// =============================================================================
+
+const N_GAMMA_VAR: usize = 1024;
+/// Sample γ across `[0, 0.999]` — same upper bound as the 2D PDF LUT.
+const GAMMA_VAR_LO: f32 = 0.0;
+const GAMMA_VAR_HI: f32 = 0.999;
+
+pub struct VarianceLut {
+    nlooks: f32,
+    sigma_sq: Vec<f32>, // length N_GAMMA_VAR
+}
+
+impl VarianceLut {
+    /// Build a γ → σ² lookup by numerically integrating
+    /// `σ² = ∫_{-π}^{π} α² · p(α | γ, L) dα` for each γ sample. The PDF is
+    /// symmetric around α=0, so the mean integral is 0 and the second
+    /// moment equals the variance directly.
+    pub fn build(nlooks: f32) -> Self {
+        use std::f32::consts::PI;
+        const N_ALPHA: usize = 1024; // mid-point samples over (-π, π]
+        let dalpha = 2.0 * PI / (N_ALPHA as f32);
+        let mut sigma_sq = vec![0.0_f32; N_GAMMA_VAR];
+        for i in 0..N_GAMMA_VAR {
+            let gamma = GAMMA_VAR_LO
+                + (GAMMA_VAR_HI - GAMMA_VAR_LO) * (i as f32) / ((N_GAMMA_VAR - 1) as f32);
+            // Mid-point rule: α_k = -π + (k + 0.5) · dα for k in 0..N_ALPHA.
+            // PDF is symmetric so the mean ∫ α p(α) dα = 0; ∫ α² p dα is the
+            // second central moment = variance.
+            let mut s2 = 0.0_f32;
+            let mut norm = 0.0_f32;
+            for k in 0..N_ALPHA {
+                let alpha = -PI + (k as f32 + 0.5) * dalpha;
+                let p = super::lee_pdf::pdf(alpha, gamma, nlooks);
+                s2 += alpha * alpha * p;
+                norm += p;
+            }
+            // Normalize in case the PDF doesn't integrate to exactly 1
+            // (numerical error from finite samples). norm·dα ≈ 1.
+            sigma_sq[i] = if norm > 1e-12 { s2 / norm } else { (PI * PI) / 3.0 };
+        }
+        Self { nlooks, sigma_sq }
+    }
+
+    #[inline]
+    pub fn nlooks(&self) -> f32 {
+        self.nlooks
+    }
+
+    /// Lookup σ² at γ via linear interpolation. Clamps γ to `[0, 0.999]`.
+    pub fn eval(&self, gamma: f32) -> f32 {
+        let g = gamma.clamp(GAMMA_VAR_LO, GAMMA_VAR_HI);
+        let gi = (g - GAMMA_VAR_LO) / (GAMMA_VAR_HI - GAMMA_VAR_LO) * ((N_GAMMA_VAR - 1) as f32);
+        let i0 = gi.floor() as usize;
+        let i1 = (i0 + 1).min(N_GAMMA_VAR - 1);
+        let f = gi - (i0 as f32);
+        self.sigma_sq[i0] * (1.0 - f) + self.sigma_sq[i1] * f
+    }
+}
+
+type VarLutMap = Mutex<HashMap<u32, &'static VarianceLut>>;
+
+fn var_cache() -> &'static VarLutMap {
+    static CACHE: OnceLock<VarLutMap> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Get a variance LUT for `nlooks`. Same cache-rounding convention as
+/// [`get_or_build`].
+pub fn get_or_build_variance(nlooks: f32) -> &'static VarianceLut {
+    let key = (nlooks * 10.0).round() as u32;
+    let mut map = var_cache().lock().unwrap();
+    if let Some(l) = map.get(&key) {
+        return l;
+    }
+    let lut: &'static VarianceLut = Box::leak(Box::new(VarianceLut::build(nlooks)));
+    map.insert(key, lut);
+    lut
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

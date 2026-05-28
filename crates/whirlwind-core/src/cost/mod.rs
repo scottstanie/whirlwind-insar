@@ -520,6 +520,26 @@ fn use_llr_cost() -> bool {
     *FLAG.get_or_init(|| std::env::var("WHIRLWIND_LLR_COST").is_ok())
 }
 
+/// Negate the convex per-arc offsets — research toggle for the offset-
+/// polarity suspect from paper/convex_cost_design.md. The default
+/// convention picks +α for DOWN/LEFT and −α for UP/RIGHT (matching the
+/// Carballo direction split). Flipping reverses that pairing. Cached.
+fn convex_offset_flip() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_CONVEX_OFFSET_FLIP").is_ok())
+}
+
+/// Use *raw* (unsmoothed) wrapped phase gradients to derive the convex
+/// per-arc offset, instead of the 7×7 box-smoothed gradient. Suspect 5
+/// in paper/convex_cost_design.md: the 7×7 smoothing erases wrap-line
+/// discontinuities, leaving NISAR offsets bounded by |22| (vs the ±50
+/// saturation point). Raw gradients preserve wrap-line geometry but
+/// are noisier per-arc. Cached.
+fn convex_offset_raw() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_CONVEX_OFFSET_RAW").is_ok())
+}
+
 /// Cached env-var lookup for the deviation-cost experiment.
 ///
 /// When enabled, [`compute_carballo_costs`] feeds the *per-arc deviation*
@@ -834,6 +854,262 @@ pub fn compute_crlb_costs(
     cost
 }
 
+/// `nshortcycle` constant for the SNAPHU-style convex cost. Scales the
+/// continuous wrapped phase gradient α ∈ (-π, π] into integer offsets
+/// in (-50, 50]; integer flow `k` lives in units of `nshortcycle`. Set
+/// to 100 to match SNAPHU's `dr/cs/sct/smooth.c::DEF_NSHORTCYCLE`.
+pub const NSHORTCYCLE: i32 = 100;
+
+/// Just/Bamler 1994 small-angle approximation to multilook phase variance:
+/// `σ² ≈ (1 − γ²) / (2 L γ²)` (radians²). Kept as a sanity-check fallback;
+/// the convex-cost path uses [`lut::get_or_build_variance`] for the full
+/// Lee 1994 numerical variance instead.
+///
+/// At γ=1 we floor to a small ε so the inverse weight stays finite.
+#[inline]
+#[allow(dead_code)]
+fn just_bamler_variance(gamma: f32, nlooks: f32) -> f32 {
+    let g = gamma.clamp(1e-3, 0.999);
+    (1.0 - g * g) / (2.0 * nlooks * g * g)
+}
+
+/// Compute SNAPHU-style convex (quadratic) per-arc costs.
+///
+/// Each forward arc gets a parabolic cost `c_e(k) = w_e · (k · nshortcycle
+/// − offset_e)²` where:
+///   * `nshortcycle = 100` is the integer scale ([`NSHORTCYCLE`]).
+///   * `offset_e = round(α_smooth · nshortcycle / 2π)`, the local
+///     wrapped phase gradient mapped to integer flow units. Sign-aware
+///     per-direction (DOWN/UP and RIGHT/LEFT get opposite signs at the
+///     same pixel edge, mirroring the Carballo path's
+///     `cost_dir(α)` / `cost_dir(−α)` split).
+///   * `w_e = round(1 / σ²_e · COST_SCALE)`, the per-arc inverse noise
+///     variance with σ² from the Just/Bamler approximation at the
+///     min-coherence of the two endpoint pixels.
+///
+/// Returned vectors have length `g.num_forward`; `offsets[a]` and
+/// `weights[a]` together define the cost on arc `a`. Reverse residual
+/// arcs share the same `(offset, weight)` (the convex cost is symmetric
+/// in flow sign relative to the offset; the *marginal* cost in each
+/// direction is computed at use time by [`Network::marginal_cost`]).
+///
+/// Masked-out pixel edges get `(offset = 0, weight = 0)` — a flat zero
+/// cost regardless of flow, equivalent to a free arc. Combined with
+/// the pre-existing mask-arc forbidding in `Network::new_*_with_mask`,
+/// these arcs are never traversed anyway, but zero weight keeps the
+/// Dial bucket-count bounded.
+///
+/// The math:
+///
+///   `nshortcycle = 100`, integer flow `k`, offset `O ∈ (-50, 50]`:
+///     cost(k=0)  = w · O²            (smooth region: small)
+///     cost(k=1)  = w · (100 − O)²    (large unless O is near 50)
+///     cost(k=-1) = w · (-100 − O)²   (large unless O is near -50)
+///
+///   The minimum integer is `argmin_k (k · 100 − O)²` which is `0` for
+///   `O ∈ (-50, 50]` — so every arc *individually* prefers k=0, but the
+///   strength of that preference varies. Near a wrap line (O ≈ ±50)
+///   the cost difference between k=0 and k=±1 is small ("soft" arc,
+///   easy routing channel); in a smooth interior (O ≈ 0) it's the
+///   full `w · 100² = 10,000 w` ("stiff" arc).
+///
+///   *Marginal* cost of pushing one more unit on an arc currently
+///   carrying `k` units: see [`Network::marginal_cost`].
+pub fn compute_snaphu_smooth_costs(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+) -> (Vec<i32>, Vec<i32>) {
+    use std::f32::consts::PI;
+    let (m_phase, n_phase) = igram.dim();
+    assert_eq!(
+        corr.dim(),
+        (m_phase, n_phase),
+        "corr shape {:?} != igram shape {:?}",
+        corr.dim(),
+        (m_phase, n_phase)
+    );
+    let m = m_phase + 1;
+    let n = n_phase + 1;
+    let g = RectangularGridGraph::new(m, n);
+
+    // Wrapped phase gradient per arc direction. Default is the 7×7
+    // mask-aware smoothed version (same as Carballo). With
+    // `WHIRLWIND_CONVEX_OFFSET_RAW=1`, switch to the raw per-arc
+    // gradient — preserves wrap-line discontinuities (where |α|→π)
+    // that 7×7 smoothing washes out, at the cost of per-arc noise.
+    let (phase_dy_s, phase_dx_s) = if convex_offset_raw() {
+        phase_gradients_raw(igram)
+    } else {
+        smooth_phase_gradients_with_mask(igram, mask)
+    };
+
+    // Per-edge min-of-endpoints coherence (matches Carballo path).
+    let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase));
+    cor_dy
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n_phase {
+                row[j] = corr[(i, j)].min(corr[(i + 1, j)]);
+            }
+        });
+    let mut cor_dx = Array2::<f32>::zeros((m_phase, n_phase - 1));
+    cor_dx
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n_phase - 1 {
+                row[j] = corr[(i, j)].min(corr[(i, j + 1)]);
+            }
+        });
+    let mask_dy = mask.map(|m_| {
+        let mut out = Array2::<bool>::from_elem((m_phase - 1, n_phase), true);
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, mut row)| {
+                for j in 0..n_phase {
+                    row[j] = m_[(i, j)] && m_[(i + 1, j)];
+                }
+            });
+        out
+    });
+    let mask_dx = mask.map(|m_| {
+        let mut out = Array2::<bool>::from_elem((m_phase, n_phase - 1), true);
+        out.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(i, mut row)| {
+                for j in 0..n_phase - 1 {
+                    row[j] = m_[(i, j)] && m_[(i, j + 1)];
+                }
+            });
+        out
+    });
+
+    let mut offsets = vec![0_i32; g.num_forward];
+    let mut weights = vec![0_i32; g.num_forward];
+    let (down_off, rest) = offsets.split_at_mut(g.n_v);
+    let (up_off, rest) = rest.split_at_mut(g.n_v);
+    let (right_off, left_off) = rest.split_at_mut(g.n_h);
+    let (down_w, rest) = weights.split_at_mut(g.n_v);
+    let (up_w, rest) = rest.split_at_mut(g.n_v);
+    let (right_w, left_w) = rest.split_at_mut(g.n_h);
+
+    let phase_dy_s_v = phase_dy_s.view();
+    let phase_dx_s_v = phase_dx_s.view();
+    let cor_dy_v = cor_dy.view();
+    let cor_dx_v = cor_dx.view();
+    let mask_dy_ref = mask_dy.as_ref().map(|a| a.view());
+    let mask_dx_ref = mask_dx.as_ref().map(|a| a.view());
+
+    // Convert wrapped phase α ∈ (-π, π] to integer offset in (-50, 50].
+    // `WHIRLWIND_CONVEX_OFFSET_FLIP=1` negates the result — research toggle
+    // for the suspect #2 polarity check in paper/convex_cost_design.md.
+    let flip = convex_offset_flip();
+    let sign: f32 = if flip { -1.0 } else { 1.0 };
+    let alpha_to_offset = |alpha: f32| -> i32 {
+        ((sign * alpha / (2.0 * PI)) * (NSHORTCYCLE as f32)).round() as i32
+    };
+    // Per-arc weight = inverse Lee 1994 wrapped-phase variance, scaled by
+    // COST_SCALE so the convex parabolic cost lives in i32 range. We build
+    // a γ → σ² LUT once per nlooks (`lut::get_or_build_variance`) from a
+    // 1024-sample numerical integration of the full Lee 1994 PDF over
+    // (-π, π], then read it per arc. Big upgrade over the Just/Bamler
+    // small-angle approximation `(1 − γ²) / (2 L γ²)` which diverges from
+    // the true variance at low γ and moderate L (the NISAR regime).
+    //
+    // At γ → 0 the variance saturates near π²/3 ≈ 3.29 (the wrapped phase
+    // becomes uniform on (-π, π]), so weights stay bounded — no need for
+    // a low-γ floor. At γ ≈ 0.999 the variance is small and the weight
+    // can spike; clamp the resulting weight to a sane integer range to
+    // protect downstream arithmetic.
+    let var_lut = lut::get_or_build_variance(nlooks);
+    let gamma_to_weight = |gamma: f32| -> i32 {
+        let var = var_lut.eval(gamma).max(1e-4);
+        let w = (1.0 / var) * COST_SCALE;
+        // Clamp to avoid pathological i32 overflow at near-perfect γ.
+        // Max realistic weight at γ=0.999 is ~5e4; 1e7 is a comfortable cap.
+        w.min(1e7).round() as i32
+    };
+
+    // RIGHT / LEFT slabs from vertical pixel edges. Same convention as
+    // the Carballo path: RIGHT uses -α, LEFT uses +α (sign-aware per
+    // direction at one pixel edge).
+    let stride_h = g.n - 1;
+    let right_off_body = &mut right_off[stride_h..];
+    let left_off_body = &mut left_off[stride_h..];
+    let right_w_body = &mut right_w[stride_h..];
+    let left_w_body = &mut left_w[stride_h..];
+    right_off_body
+        .par_chunks_mut(stride_h)
+        .zip(left_off_body.par_chunks_mut(stride_h))
+        .zip(right_w_body.par_chunks_mut(stride_h))
+        .zip(left_w_body.par_chunks_mut(stride_h))
+        .enumerate()
+        .for_each(|(i, (((right_off_row, left_off_row), right_w_row), left_w_row))| {
+            if i >= m_phase - 1 {
+                return;
+            }
+            for j in 0..n_phase {
+                let masked = mask_dy_ref
+                    .as_ref()
+                    .map(|mm| !mm[(i, j)])
+                    .unwrap_or(false);
+                if masked {
+                    right_off_row[j] = 0;
+                    left_off_row[j] = 0;
+                    right_w_row[j] = 0;
+                    left_w_row[j] = 0;
+                } else {
+                    let alpha = phase_dy_s_v[(i, j)];
+                    let w = gamma_to_weight(cor_dy_v[(i, j)]);
+                    right_off_row[j] = alpha_to_offset(-alpha);
+                    left_off_row[j] = alpha_to_offset(alpha);
+                    right_w_row[j] = w;
+                    left_w_row[j] = w;
+                }
+            }
+        });
+
+    // DOWN / UP slabs from horizontal pixel edges. DOWN uses +α, UP uses -α.
+    let stride_v = g.n;
+    down_off
+        .par_chunks_mut(stride_v)
+        .zip(up_off.par_chunks_mut(stride_v))
+        .zip(down_w.par_chunks_mut(stride_v))
+        .zip(up_w.par_chunks_mut(stride_v))
+        .enumerate()
+        .for_each(|(i, (((down_off_row, up_off_row), down_w_row), up_w_row))| {
+            for j in 0..n_phase - 1 {
+                let masked = mask_dx_ref
+                    .as_ref()
+                    .map(|mm| !mm[(i, j)])
+                    .unwrap_or(false);
+                let col = j + 1;
+                if masked {
+                    down_off_row[col] = 0;
+                    up_off_row[col] = 0;
+                    down_w_row[col] = 0;
+                    up_w_row[col] = 0;
+                } else {
+                    let alpha = phase_dx_s_v[(i, j)];
+                    let w = gamma_to_weight(cor_dx_v[(i, j)]);
+                    down_off_row[col] = alpha_to_offset(alpha);
+                    up_off_row[col] = alpha_to_offset(-alpha);
+                    down_w_row[col] = w;
+                    up_w_row[col] = w;
+                }
+            }
+        });
+
+    (offsets, weights)
+}
+
 /// Per-vertical-edge inverse variance. For pixel-row i and pixel-col j the
 /// vertical edge connects (i, j) ↔ (i+1, j); variance = var(i,j) + var(i+1,j).
 fn build_inv_var_dy(variance: ArrayView2<f32>) -> Array2<f32> {
@@ -999,6 +1275,93 @@ mod crlb_tests {
         let costs = compute_crlb_costs(igram.view(), var.view(), None);
         for c in &costs {
             assert!(c.abs() < 1_000_000, "cost overflowed: {c}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod convex_tests {
+    use super::*;
+    use ndarray::Array2;
+
+    /// Smooth-phase IG: every smoothed gradient ≈ 0, so every offset
+    /// should round to 0. Coherence is constant ⇒ uniform weight.
+    #[test]
+    fn smooth_phase_gives_zero_offsets() {
+        let m = 16;
+        let n = 16;
+        let igram = Array2::from_shape_fn((m, n), |_| Complex32::from_polar(1.0, 0.0));
+        let corr = Array2::<f32>::from_elem((m, n), 0.7);
+        let (offsets, weights) = compute_snaphu_smooth_costs(igram.view(), corr.view(), 4.0, None);
+
+        // Every offset is zero on a constant-phase IG (smoothed gradient = 0).
+        for &o in &offsets {
+            assert_eq!(o, 0, "smooth IG should give zero offsets, got {o}");
+        }
+        // Weights are roughly uniform inside the unmasked interior. We don't
+        // assert exact equality because border arcs reuse the frame-edge
+        // computation (and inside-vs-outside split slabs differ in coverage).
+        let interior_w: Vec<i32> = weights.iter().copied().filter(|&w| w > 0).collect();
+        assert!(!interior_w.is_empty(), "expected some non-zero weights");
+        let w_min = *interior_w.iter().min().unwrap();
+        let w_max = *interior_w.iter().max().unwrap();
+        assert_eq!(w_min, w_max, "uniform coherence should give uniform weights");
+    }
+
+    /// Phase ramp inside (-π, π]: the smoothed gradient becomes the
+    /// per-row/column phase step, and the offsets should reflect it.
+    #[test]
+    fn ramp_phase_gives_nonzero_offsets() {
+        let m = 32;
+        let n = 32;
+        // A ramp with phase step 1.0 rad/pixel along columns. Smoothed
+        // gradient ≈ 1.0; offset = round(1.0/(2π) · 100) = round(15.9) = 16.
+        let igram = Array2::from_shape_fn((m, n), |(_, j)| {
+            Complex32::from_polar(1.0, (j as f32) * 1.0)
+        });
+        let corr = Array2::<f32>::from_elem((m, n), 0.95);
+        let (offsets, _) = compute_snaphu_smooth_costs(igram.view(), corr.view(), 10.0, None);
+        // Many arcs should be nonzero (offset ≈ ±16 for horizontal-pixel-edge
+        // arcs; ≈ 0 for vertical-pixel-edge arcs which see no row-direction
+        // gradient).
+        let nonzero = offsets.iter().filter(|&&o| o != 0).count();
+        assert!(
+            nonzero > offsets.len() / 8,
+            "ramp should produce many nonzero offsets, got {nonzero} of {}",
+            offsets.len()
+        );
+        // No offset should exceed nshortcycle/2 = 50.
+        let max_abs_off = offsets.iter().map(|o| o.abs()).max().unwrap();
+        assert!(max_abs_off <= NSHORTCYCLE / 2,
+                "offset out of (-50, 50] bound: {max_abs_off}");
+    }
+
+    /// Masked arcs get weight=0 and offset=0 (free arc; will be forbidden
+    /// at Network construction anyway).
+    #[test]
+    fn masked_edges_get_zero_weight() {
+        let m = 8;
+        let n = 8;
+        let igram = Array2::from_shape_fn((m, n), |_| Complex32::from_polar(1.0, 0.0));
+        let corr = Array2::<f32>::from_elem((m, n), 0.7);
+        let mut mask = Array2::<bool>::from_elem((m, n), true);
+        // Mask out a 2x2 patch at the corner; the arcs that cross those
+        // pixel-edges should get weight = 0.
+        mask[(0, 0)] = false;
+        mask[(0, 1)] = false;
+        mask[(1, 0)] = false;
+        mask[(1, 1)] = false;
+        let (offsets, weights) = compute_snaphu_smooth_costs(
+            igram.view(), corr.view(), 4.0, Some(mask.view()),
+        );
+        // Some arcs must end up with zero weight (the ones spanning the masked corner).
+        let n_zero = weights.iter().filter(|&&w| w == 0).count();
+        assert!(n_zero > 0, "expected some zero-weight arcs near the masked corner");
+        // Wherever weight = 0, offset must also be 0 (free arc, no preference).
+        for (o, &w) in offsets.iter().zip(weights.iter()) {
+            if w == 0 {
+                assert_eq!(*o, 0, "zero-weight arc must have zero offset, got offset={o}");
+            }
         }
     }
 }

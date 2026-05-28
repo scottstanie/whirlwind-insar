@@ -67,7 +67,14 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                 continue;
             }
             // Inline reduced_cost (tail=u, head=v are known from outgoing()).
-            let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
+            // Reuse: used arcs get reduced cost 0. Convex: use marginal cost.
+            let rc = if net.is_used(arc) {
+                0
+            } else if net.convex_mode {
+                net.marginal_cost(arc) - pot_u + net.potential[v]
+            } else {
+                net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
+            };
             debug_assert!(rc >= 0, "negative reduced cost on residual arc {arc}: {rc}");
             let nd = d.saturating_add(rc);
             if nd < sp.dist[v] {

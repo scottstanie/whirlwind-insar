@@ -79,6 +79,14 @@ pub fn dijkstra_multi_source<G: ResidualGraph>(
     g: &G,
     net: &Network,
 ) -> ShortestPaths {
+    // Convex mode produces marginal costs up to ~weight · 200 · nshortcycle²
+    // (1e6+ for typical high-coherence arcs); Dial's bucket vec would need
+    // that many entries. Route convex networks to the binary-heap backend,
+    // which scales O(E log V) without the bucket-count blow-up. The env-var
+    // backend selector still controls the linear / reuse paths.
+    if net.convex_mode {
+        return heap::run(g, net);
+    }
     match backend() {
         DijkstraBackend::Heap => heap::run(g, net),
         DijkstraBackend::DialSerial => dial::run(g, net),
