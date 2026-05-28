@@ -6,6 +6,18 @@
 //! 3. Solve a min-cost flow problem on the residue grid (primal-dual SSP).
 //! 4. Integrate the flow-corrected wrapped gradients to recover unwrapped phase.
 
+// Opinion lints that fire on top-level API surfaces and clear range loops.
+// Splitting public unwrap_* into builder-style would hurt callers more than
+// it helps clippy; range loops where the index is genuinely needed (also
+// passed to helper functions) read more clearly than zip/enumerate juggling.
+#![allow(
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::needless_range_loop,
+    clippy::doc_overindented_list_items,
+    clippy::neg_cmp_op_on_partial_ord,
+)]
+
 pub mod closure;
 pub mod conncomp;
 pub mod cost;

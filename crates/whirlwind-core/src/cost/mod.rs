@@ -721,7 +721,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_vanishes_for_large_L() {
+    fn bias_correction_vanishes_for_large_l() {
         // L→∞ ⇒ correction is the identity at every γ̂.
         for &g in &[0.3_f32, 0.5, 0.7, 0.9] {
             let corrected = correct_coh_bias(g, 10_000.0);
@@ -730,7 +730,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_degenerate_at_small_L() {
+    fn bias_correction_degenerate_at_small_l() {
         // L ≤ 1 is degenerate; return raw to avoid producing NaN.
         assert_eq!(correct_coh_bias(0.5, 1.0), 0.5);
         assert_eq!(correct_coh_bias(0.5, 0.5), 0.5);

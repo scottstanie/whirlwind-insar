@@ -1,5 +1,9 @@
 //! Python bindings for whirlwind-core.
 
+// PyO3 function signatures naturally have many args (one per Python kwarg)
+// and complex tuple return types — clippy's defaults don't fit them.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 use ndarray::Array2;
 use num_complex::Complex32;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};

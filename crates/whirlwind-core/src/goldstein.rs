@@ -39,7 +39,7 @@ pub fn goldstein(
     psize: usize,
 ) -> Array2<Complex32> {
     assert!(alpha >= 0.0, "alpha must be >= 0, got {alpha}");
-    assert!(psize >= 4 && psize % 2 == 0, "psize must be even and ≥ 4");
+    assert!(psize >= 4 && psize.is_multiple_of(2), "psize must be even and ≥ 4");
     let (m, n) = igram.dim();
     let step = psize / 2;
 
@@ -102,11 +102,11 @@ pub fn goldstein(
                     for z in buf.iter_mut() {
                         let mag = (z.re * z.re + z.im * z.im).sqrt();
                         let scale = mag.powf(alpha);
-                        *z = *z * scale;
+                        *z *= scale;
                     }
                     fft2_inplace(&mut buf, scratch, fft_inv.as_ref(), psize);
                     for z in buf.iter_mut() {
-                        *z = *z * norm;
+                        *z *= norm;
                     }
                     (r0, c0, buf)
                 },
@@ -127,7 +127,7 @@ pub fn goldstein(
     // Normalise by accumulated overlap-add weight.
     ndarray::Zip::from(&mut out).and(&wsum).for_each(|o, &w| {
         if w > 0.0 {
-            *o = *o / w;
+            *o /= w;
         }
     });
 

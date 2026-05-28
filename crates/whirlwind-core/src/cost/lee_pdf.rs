@@ -20,14 +20,14 @@ fn lanczos_lgamma(x: f64) -> f64 {
     // g = 7, n = 9 coefficients.
     const G: f64 = 7.0;
     const COEF: [f64; 9] = [
-        0.99999999999980993,
+        0.999_999_999_999_809_9,
         676.5203681218851,
         -1259.1392167224028,
-        771.32342877765313,
-        -176.61502916214059,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
         12.507343278686905,
         -0.13857109526572012,
-        9.9843695780195716e-6,
+        9.984_369_578_019_572e-6,
         1.5056327351493116e-7,
     ];
     if x < 0.5 {
@@ -47,7 +47,7 @@ fn lanczos_lgamma(x: f64) -> f64 {
 /// Lee multilook phase PDF f(φ; L, γ).
 /// `alpha` is the phase (radians, any real); `gamma` ∈ [0, 1); `nlooks` ≥ 1.
 pub fn pdf(alpha: f32, gamma: f32, nlooks: f32) -> f32 {
-    assert!(gamma >= 0.0 && gamma < 1.0, "gamma must be in [0, 1)");
+    assert!((0.0..1.0).contains(&gamma), "gamma must be in [0, 1)");
     assert!(nlooks >= 1.0);
     let g = gamma as f64;
     let a = alpha as f64;

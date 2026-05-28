@@ -242,7 +242,7 @@ impl Network {
         let mut cost_fwd = Vec::with_capacity(nf_total);
         cost_fwd.extend_from_slice(costs);
         if let Some(c) = ground_cost {
-            cost_fwd.extend(std::iter::repeat(c).take(num_ground));
+            cost_fwd.extend(std::iter::repeat_n(c, num_ground));
         }
 
         // Saturation: 2*nf_total bits. Initial: forward unsaturated, reverse

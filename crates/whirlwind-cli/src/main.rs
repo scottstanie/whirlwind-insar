@@ -206,15 +206,14 @@ fn cmd_unwrap(
         ));
     }
     let mk = mask.as_ref().map(|p| read_bool_mask(p)).transpose()?;
-    if let Some(m) = &mk {
-        if m.dim() != ph.dim() {
+    if let Some(m) = &mk
+        && m.dim() != ph.dim() {
             return Err(anyhow!(
                 "shape mismatch: phase={:?} mask={:?}",
                 ph.dim(),
                 m.dim()
             ));
         }
-    }
     // Reject out-of-range / non-finite coherence at unmasked pixels.
     validate_coherence(co.view(), mk.as_ref().map(|m| m.view()))?;
 
@@ -344,13 +343,12 @@ fn validate_coherence(
     let mut sample_min = f32::INFINITY;
     let mut sample_max = f32::NEG_INFINITY;
     for ((i, j), &v) in co.indexed_iter() {
-        if let Some(m) = mask {
-            if !m[(i, j)] {
+        if let Some(m) = mask
+            && !m[(i, j)] {
                 continue;
             }
-        }
         total += 1;
-        if !v.is_finite() || v < -EPS || v > 1.0 + EPS {
+        if !v.is_finite() || !(-EPS..=1.0 + EPS).contains(&v) {
             bad += 1;
             if v.is_finite() {
                 sample_min = sample_min.min(v);

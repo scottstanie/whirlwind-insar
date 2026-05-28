@@ -71,11 +71,10 @@ pub fn compute_with_mask(
                 let i = r - 1;
                 for c in 1..n {
                     let j = c - 1;
-                    if let Some(mm) = mask {
-                        if !mm[(i, j)] || !mm[(i, j + 1)] || !mm[(i + 1, j)] || !mm[(i + 1, j + 1)] {
+                    if let Some(mm) = mask
+                        && (!mm[(i, j)] || !mm[(i, j + 1)] || !mm[(i + 1, j)] || !mm[(i + 1, j + 1)]) {
                             continue;
                         }
-                    }
                     let p00 = wrapped_phase[(i, j)];
                     let p01 = wrapped_phase[(i, j + 1)];
                     let p10 = wrapped_phase[(i + 1, j)];
@@ -104,35 +103,31 @@ pub fn compute_with_mask(
         //   left edge   p[i,0]→p[i+1,0]   → frame (i+1, 0)
         //   right edge  p[i,n-1]→p[i+1,n-1] → frame (i+1, n)
         for j in 0..n - 1 {
-            if let Some(mm) = mask {
-                if !mm[(0, j)] || !mm[(0, j + 1)] {
+            if let Some(mm) = mask
+                && (!mm[(0, j)] || !mm[(0, j + 1)]) {
                     continue;
                 }
-            }
             out[(0, j + 1)] += cycle_diff(wrapped_phase[(0, j + 1)], wrapped_phase[(0, j)]);
         }
         for j in 0..n - 1 {
-            if let Some(mm) = mask {
-                if !mm[(m - 1, j)] || !mm[(m - 1, j + 1)] {
+            if let Some(mm) = mask
+                && (!mm[(m - 1, j)] || !mm[(m - 1, j + 1)]) {
                     continue;
                 }
-            }
             out[(m, j + 1)] -= cycle_diff(wrapped_phase[(m - 1, j + 1)], wrapped_phase[(m - 1, j)]);
         }
         for i in 0..m - 1 {
-            if let Some(mm) = mask {
-                if !mm[(i, 0)] || !mm[(i + 1, 0)] {
+            if let Some(mm) = mask
+                && (!mm[(i, 0)] || !mm[(i + 1, 0)]) {
                     continue;
                 }
-            }
             out[(i + 1, 0)] -= cycle_diff(wrapped_phase[(i + 1, 0)], wrapped_phase[(i, 0)]);
         }
         for i in 0..m - 1 {
-            if let Some(mm) = mask {
-                if !mm[(i, n - 1)] || !mm[(i + 1, n - 1)] {
+            if let Some(mm) = mask
+                && (!mm[(i, n - 1)] || !mm[(i + 1, n - 1)]) {
                     continue;
                 }
-            }
             out[(i + 1, n)] += cycle_diff(wrapped_phase[(i + 1, n - 1)], wrapped_phase[(i, n - 1)]);
         }
     }
