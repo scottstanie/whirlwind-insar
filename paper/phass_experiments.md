@@ -356,6 +356,65 @@ the now-working reuse path. The hard question (linear unit-capacity
 SSP as a fundamental limit) is **answered**: it was the limit, and
 relaxing the unit-capacity piece alone closes most of the gap.
 
+### Reviewer-reviewer follow-up: was the residual NISAR error path-dependent?
+
+The reviewer-reviewer raised a sharp hypothesis after seeing the
+reuse plots:
+
+> Reuse is path-dependent. Once the wrong path gets used, it becomes
+> free, so the solver can lock in a bad highway. That perfectly
+> explains "mostly correct except one large constant-offset island."
+
+Two tests, both ruled out.
+
+**Test A — faithful PHASS cost (γ²·100 + 255-cliff) under reuse.**
+Added behind `WHIRLWIND_PHASS_FAITHFUL_GOOD_CORR` (separate from the
+existing flat-clamp `WHIRLWIND_PHASS_COST` env var). PV killed at
+>13 min (was 0.7 s baseline / 3.7 s reuse-only). Adding a water mask
+to PV brought it to 66 s — but K-match dropped to 69.80 % (vs 99.75 %
+reuse-only), because the peninsular topology *needs* water as a
+residue drain. So the faithful cost is dead in our Dial bucket queue
+regardless of context.
+
+**Test B — path-order via Dijkstra backend swap.**
+Ran NISAR + reuse three times with materially different tie-breaking:
+
+| backend         | wall  | K=match | `|dK|`≥2 | bottom-right `ΔK ≤ -3` blob |
+|-----------------|------:|--------:|--------:|-----------------------------|
+| Dial serial (default) |  93 s | 92.70 % | 7.06 % | 973,709 px |
+| Dial parallel        | 242 s | 92.70 % | 7.06 % | 973,762 px |
+| binary heap          | 217 s | 92.70 % | 7.06 % | 973,748 px |
+
+All three agree to 0.005 %. Three independent Dijkstras converge on
+the *same* wrong island; the bbox shifts by < 32 pixels out of ~5000.
+This decisively rules out tie-breaking / path-order as the
+explanation: the 92.70 % solution is the **genuine cost-optimum** of
+the linear coherence-cost model, not a path-dependent accident.
+
+### Net diagnosis after both follow-ups
+
+The residual 5 pp NISAR gap is **structurally about the cost model**,
+not the solver. Cost-shape knobs we have:
+- Carballo `γ · (π − α)`: 80 → 92.7 % under reuse. The current best.
+- Faithful PHASS γ²·100 + cliff: pathological regardless of context.
+- Hard cuts at every threshold tested: hurt or pathological.
+
+To close the gap we need a cost shape with at least one of:
+1. **Curvature** — multi-cycle deviation should cost super-linearly
+   (SNAPHU's per-arc quadratic). A 3-cycle global offset on a
+   million pixels currently pays the same per-cycle premium as a
+   1-cycle local correction; under quadratic cost it pays ~9× more
+   per unit and can't survive the optimum.
+2. **Per-arc nonzero preferred offset** — SNAPHU's `avgdpsi`-derived
+   `offset` parameter. The arc actively *wants* a specific non-zero
+   flow set by the local smoothed gradient.
+3. **Geometric topology priors** — PHASS's amplitude/Canny edge
+   detector. Bespoke; less principled but worked in their paper.
+
+(1) and (2) together = SNAPHU smooth-mode cost. That's the genuine
+next prototype lane, and the diagnosis is now cleaner than it was
+yesterday: this isn't a knob-tuning problem.
+
 ### Hard-cut follow-up (negative result)
 
 Tested reuse + `WHIRLWIND_HARD_CUT_THRESH=1.0` (PHASS's actual
