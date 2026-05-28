@@ -588,9 +588,16 @@ pub fn compute_crlb_costs(
         out
     });
 
+    // Direction-aware Carballo cost shape with inverse-variance weight:
+    //   c_{+}(α, w) = w · max(0, π − α)
+    //   c_{−}(α, w) = c_{+}(−α, w) = w · max(0, π + α)
+    // See `compute_carballo_costs` for the topological motivation — the
+    // symmetric `w · (π − |α|)` form was used here previously, but it makes
+    // both directions equal at a pixel edge and recreates the degenerate
+    // tie-breaking issue described in the Carballo path comment.
     let cost_dir = |alpha: f32, w: f32| -> f32 {
         let pi = std::f32::consts::PI;
-        (w * (pi - alpha.abs())).max(0.0)
+        (w * (pi - alpha)).max(0.0)
     };
 
     let mut cost = vec![0_i32; g.num_arcs()];
