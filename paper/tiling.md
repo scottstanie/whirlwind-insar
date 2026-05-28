@@ -132,6 +132,41 @@ to fix the large-scale ambiguities, then constrain the full-res solve to it.
 Aliases fast/small features but stabilizes the big picture; worth testing
 once the secondary network lands.
 
+## Secondary reconciliation: min-cost-flow (session 2b)
+
+The greedy/consensus stitch left visible **whole-tile offset errors** in
+low-coherence patches (a tile locked to a wrong 2π offset that per-tile
+voting can't flip — it can't *break a satisfied seam*). The fix is SNAPHU's
+secondary-network idea at tile scale: a **global min-cost tension** over the
+tile grid, `minimize Σ w·|measured − (o_a − o_b)|` over integer per-tile
+offsets, solved as a residue **min-cost-flow on the planar dual** of the
+tile grid (`reconcile_offsets_mcf` in `tile.rs`, with a small self-contained
+SPFA-based MCF). Because it minimizes the *summed* seam cost globally, it
+flips a wrong island whenever that lowers total cost — breaking a satisfied
+seam when warranted. Guarded by `reconcile_mcf_breaks_low_confidence_wrong_seam`.
+
+NISAR vs SNAPHU 9×9 (ts=512, no Goldstein):
+
+| reconciler | wall | K-match | \|dK\|≥2 |
+|---|---:|---:|---:|
+| consensus voting | 3.5 s | 96.6 % | 2.7 % |
+| **MCF secondary net** | **3.4 s** | **97.5 %** | **1.7 %** |
+
+97.5 % now exceeds `unwrap_reuse` (92.7 %) and approaches dolphin-PHASS
+(97.9 %) at ~18× its speed and bounded memory. The residual (worst-crop
+~83 %) is **no longer the reconciliation** — the MCF optimally reconciles
+the measured seams, but those per-seam measurements are themselves wrong in
+genuinely low-coherence overlaps. Closing that needs the **convex per-tile
+cost** (deviation offset; reduces per-tile error so seam measurements are
+trustworthy) and possibly larger overlap / better seam-confidence — the next
+lever. **96–97.5 % is a fast/low-memory foundation, not a shippable
+unwrap quality yet** (per S.S.).
+
+Longer-term product framing (S.S.): if the primal-dual + tiling path can get
+*near* SNAPHU/PHASS quality but markedly faster, ship it as a "2–3× speedup"
+option. Tiling already shows ~18–22× on NISAR; the gating factor is quality
+parity, which is the convex-cost work.
+
 ## Where the code lives
 
 * `crates/whirlwind-core/src/tile.rs`: `unwrap_tiled`, `unwrap_one_tile_coh`,
