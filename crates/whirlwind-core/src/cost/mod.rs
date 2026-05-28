@@ -529,6 +529,17 @@ fn convex_offset_flip() -> bool {
     *FLAG.get_or_init(|| std::env::var("WHIRLWIND_CONVEX_OFFSET_FLIP").is_ok())
 }
 
+/// Use *raw* (unsmoothed) wrapped phase gradients to derive the convex
+/// per-arc offset, instead of the 7×7 box-smoothed gradient. Suspect 5
+/// in paper/convex_cost_design.md: the 7×7 smoothing erases wrap-line
+/// discontinuities, leaving NISAR offsets bounded by |22| (vs the ±50
+/// saturation point). Raw gradients preserve wrap-line geometry but
+/// are noisier per-arc. Cached.
+fn convex_offset_raw() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_CONVEX_OFFSET_RAW").is_ok())
+}
+
 /// Cached env-var lookup for the deviation-cost experiment.
 ///
 /// When enabled, [`compute_carballo_costs`] feeds the *per-arc deviation*
@@ -923,8 +934,16 @@ pub fn compute_snaphu_smooth_costs(
     let n = n_phase + 1;
     let g = RectangularGridGraph::new(m, n);
 
-    // Smoothed wrapped phase gradient (mask-aware), per arc direction.
-    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients_with_mask(igram, mask);
+    // Wrapped phase gradient per arc direction. Default is the 7×7
+    // mask-aware smoothed version (same as Carballo). With
+    // `WHIRLWIND_CONVEX_OFFSET_RAW=1`, switch to the raw per-arc
+    // gradient — preserves wrap-line discontinuities (where |α|→π)
+    // that 7×7 smoothing washes out, at the cost of per-arc noise.
+    let (phase_dy_s, phase_dx_s) = if convex_offset_raw() {
+        phase_gradients_raw(igram)
+    } else {
+        smooth_phase_gradients_with_mask(igram, mask)
+    };
 
     // Per-edge min-of-endpoints coherence (matches Carballo path).
     let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase));
