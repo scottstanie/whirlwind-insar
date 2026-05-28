@@ -356,6 +356,41 @@ the now-working reuse path. The hard question (linear unit-capacity
 SSP as a fundamental limit) is **answered**: it was the limit, and
 relaxing the unit-capacity piece alone closes most of the gap.
 
+### Hard-cut follow-up (negative result)
+
+Tested reuse + `WHIRLWIND_HARD_CUT_THRESH=1.0` (PHASS's actual
+threshold) and `=2.0` (the practical pre-reuse setting):
+
+| mode | wall | K=match | `|dK|`=1 | `|dK|`≥2 |
+|---|---:|---:|---:|---:|
+| reuse alone           |  93 s   | **92.70 %** | 0.24 %  |  7.06 % |
+| reuse + hard_cut 1.0  | killed at >8 min  | — | — | — |
+| reuse + hard_cut 2.0  | 125 s   | 91.30 % | 1.73 % | 6.98 % |
+
+`hard_cut=1.0` is still pathological even with reuse — the zero-cost
+subgraph creates an unbounded bucket-0 in Dial. `hard_cut=2.0` runs
+cleanly but **hurts** K-agreement (-1.4 pp; `|dK|=1` rises from
+0.24 → 1.73 %). Mechanism: hard cuts pre-bake zero-cost arcs *before*
+any flow is pushed. With reuse, the first augmenting paths get locked
+into those pre-baked cuts. At threshold 2.0 the cuts fire on
+within-coherent-region noise as well as true wrap-line gradients —
+false positives become spurious "highways" that the routing then
+reinforces via reuse. PHASS escapes this because its auction-based
+augmentation handles tied costs differently than our Dial bucket
+queue does; the cut threshold is calibrated for *that* solver, not
+ours.
+
+Net: the residual ~5 pp NISAR gap is **not** closable by the cost-knob
+side. The two remaining options are:
+1. **Convex SNAPHU-style cost** (per-arc curvature, nonzero preferred
+   offsets) — bigger prototype, the other lane from the 2026-05-28
+   diagnosis.
+2. **Smarter cut placement** — limit zero-cost arcs to clusters that
+   look like actual wrap-line topology (long aligned runs of high
+   `|wrap(Δphase_raw)|`), rather than per-arc thresholding. Effectively
+   PHASS's amplitude/Canny detector, but driven from phase instead.
+   Lighter than convex but more bespoke.
+
 This is the first time whirlwind has had a competitive no-Goldstein
 data point on a real NISAR scene. The PR-#19 Goldstein α=0.7 default
 is still the fastest path, but for the scientific story, reuse-mode
