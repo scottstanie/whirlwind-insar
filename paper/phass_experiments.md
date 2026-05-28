@@ -308,6 +308,59 @@ preconditioner to match the no-filter behavior of the reference
 algorithms. Whether that's the right scientific framing for a paper, or
 whether the right next step is a solver rewrite, is the open question.
 
+## 2026-05-28 part 2: PHASS-style flow-reuse prototype — diagnosis confirmed
+
+Implemented `Network::reuse_mode` + an override in
+`shortest_path::dial` that forces reduced cost = 0 on any arc with
+`flow_count != 0`. Same Carballo cost as the baseline; same primal-dual
+Dial driver; same Python entry shape. Exposed as `unwrap_reuse` /
+`whirlwind.unwrap_reuse`. No new solver code: it's a multi-unit
+relaxation of the existing one.
+
+Result on the same two scenes, α=0 (no Goldstein), no other changes:
+
+| scene | mode | wall | K=match | `|dK|`=1 | `|dK|`≥2 |
+|---|---|---:|---:|---:|---:|
+| PV    | baseline (unit-cap)  |   0.7 s | 90.67 % |  1.09 % | 8.25 % |
+| PV    | **reuse**            |   3.7 s | **99.75 %** | 0.25 % | **0.00 %** |
+| NISAR | baseline (unit-cap)  |  75 s   | 80.01 % |  1.71 % | 18.28 % |
+| NISAR | **reuse**            |  93 s   | **92.70 %** | 0.24 % | **7.06 %** |
+| NISAR | dolphin PHASS (ref)  | ~60 s   | 97.93 % | 2.07 % | 0.00 % |
+| NISAR | Goldstein α=0.7      |  38 s   | 99.90 % |   —    |   —    |
+
+The diagnosis holds. Flow-reuse alone (with the existing cost shape,
+no amplitude edges, no curvature) closes essentially all of the PV gap
+and ~2/3 of the NISAR gap to dolphin PHASS. The runtime tax is 1.2-5×
+baseline, well inside acceptable. And — possibly the cleanest signal —
+the ignored `diagonal_ramp_512` regression test (6π smooth ramp,
+boundary stacking failure under unit-capacity MCF) **passes** under
+reuse with max error 0.0 rad. That's a stronger pass than even the
+`unwrap_crlb_grounded` workaround, and it's the same cost as the
+failing baseline; only the flow model changed. Test added as
+`diagonal_ramp_512_reuse`.
+
+What's left in the NISAR gap to dolphin PHASS (92.7 % → 97.9 %, the
+remaining 5 pp): one or more of —
+* **Hard cuts** at `phase_diff_th = 1.0 rad` (PHASS adds these on top
+  of cost-only routing). Now testable cleanly on top of reuse — the
+  earlier "hard cuts blow up runtime" failure was an artifact of the
+  unit-capacity SSP, not the cuts themselves.
+* **Cost shape**: PHASS γ²·100 with the 255-cliff. Earlier diagnosed
+  as pathological in unit-cap SSP; under reuse the cliff should be
+  digestible since paths can carry multi-unit flow.
+* **Solver tuning**: bucket-queue size for the wider cost range,
+  augmentation strategy.
+
+None of those require core-algorithm work — they're knobs on top of
+the now-working reuse path. The hard question (linear unit-capacity
+SSP as a fundamental limit) is **answered**: it was the limit, and
+relaxing the unit-capacity piece alone closes most of the gap.
+
+This is the first time whirlwind has had a competitive no-Goldstein
+data point on a real NISAR scene. The PR-#19 Goldstein α=0.7 default
+is still the fastest path, but for the scientific story, reuse-mode
+unwrap is now the cleaner positioning.
+
 ## Reproduction
 
 ```bash

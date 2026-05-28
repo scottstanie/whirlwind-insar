@@ -1,6 +1,6 @@
 use ndarray::Array2;
 use num_complex::Complex32;
-use whirlwind_core::{simulate, unwrap, unwrap_crlb_grounded};
+use whirlwind_core::{simulate, unwrap, unwrap_crlb_grounded, unwrap_reuse};
 
 /// Constant 2π offset between unwrapped and truth is unobservable; subtract
 /// the modal offset before comparing.
@@ -44,6 +44,23 @@ fn diagonal_ramp_512() {
         err < 1e-2,
         "max error {err} too large for a smooth ramp"
     );
+}
+
+/// The 6π diagonal ramp test that fails under [`unwrap`]'s capacity-1
+/// setup ALSO passes under [`unwrap_reuse`] (PHASS-style flow-reuse):
+/// the frame-along arcs each carry multiple units of flow at zero
+/// marginal cost after the first push, so no spurious interior flow
+/// spills out. Same coherence cost as [`unwrap`], no virtual ground.
+#[test]
+fn diagonal_ramp_512_reuse() {
+    let truth = simulate::diagonal_ramp((512, 512));
+    let wrapped = simulate::wrap_phase(&truth);
+    let igram = wrapped.mapv(|p| Complex32::new(p.cos(), p.sin()));
+    let corr = Array2::<f32>::from_elem(igram.dim(), 0.999);
+    let unw = unwrap_reuse(igram.view(), corr.view(), 1.0, None).unwrap();
+    let aligned = align_to_truth(&unw, &truth);
+    let err = max_abs_err(&aligned, &truth);
+    assert!(err < 1e-2, "max error {err} too large for reuse-mode smooth ramp");
 }
 
 /// The 6π diagonal ramp test that fails under [`unwrap`]'s capacity-1 setup
