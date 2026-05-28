@@ -25,20 +25,35 @@ use pyo3::types::PyDict;
 ///   excluded (their incident arcs are forbidden).
 ///
 /// Returns the unwrapped phase as float32 ``(m, n)``.
+///
+/// * ``tile_size`` — if ≥ 4 and < min(m, n), tile the image into
+///   ``tile_size × tile_size`` sub-images with ``tile_overlap`` overlap,
+///   unwrap each in parallel, and stitch with a coherence-weighted
+///   overlap-median 2π reconciliation. Bounds per-IG MCF memory to
+///   tile-size scale and keeps flow local (prevents whole-frame runaway).
 #[pyfunction]
-#[pyo3(signature = (igram, corr, nlooks, mask = None))]
+#[pyo3(signature = (igram, corr, nlooks, mask = None, tile_size = 0, tile_overlap = 0))]
 fn unwrap<'py>(
     py: Python<'py>,
     igram: PyReadonlyArray2<'py, Complex32>,
     corr: PyReadonlyArray2<'py, f32>,
     nlooks: f32,
     mask: Option<PyReadonlyArray2<'py, bool>>,
+    tile_size: usize,
+    tile_overlap: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let ig = igram.as_array();
     let co = corr.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
+    let use_tiling = tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size;
 
-    let unw = py.detach(|| whirlwind_core::unwrap(ig, co, nlooks, m));
+    let unw = py.detach(|| {
+        if use_tiling {
+            whirlwind_core::tile::unwrap_tiled(ig, co, nlooks, m, tile_size, tile_overlap)
+        } else {
+            whirlwind_core::unwrap(ig, co, nlooks, m)
+        }
+    });
     let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(unw.into_pyarray(py))
 }

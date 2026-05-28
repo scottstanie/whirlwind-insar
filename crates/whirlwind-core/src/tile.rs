@@ -225,6 +225,257 @@ pub fn unwrap_crlb_tiled(
     Ok(out)
 }
 
+/// Tiled coherence-cost 2D unwrap (Carballo cost), the coherence twin of
+/// [`unwrap_crlb_tiled`]. Split into overlapping tiles, unwrap each tile
+/// independently in parallel, then BFS-stitch by a coherence-weighted
+/// overlap-median 2π reconciliation.
+///
+/// This is the memory- and robustness-motivated path: per-tile MCF keeps
+/// flow local (a misrouted residue can't accumulate cycle errors across the
+/// whole frame the way a single whole-image solve does), and peak memory is
+/// bounded by the tile size rather than the full scene.
+pub fn unwrap_tiled(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    overlap: usize,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    if tile_size >= m && tile_size >= n {
+        return crate::unwrap(igram, corr, nlooks, mask);
+    }
+    assert!(overlap >= 2, "overlap must be ≥ 2 for median-based stitching");
+
+    let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
+    let n_tiles = grid.tiles.len();
+
+    // 1) Unwrap each tile in parallel.
+    let tile_unws: Vec<Result<Array2<f32>, UnwrapError>> = grid
+        .tiles
+        .par_iter()
+        .map(|t| unwrap_one_tile_coh(igram, corr, nlooks, mask, t))
+        .collect();
+    let tile_unws: Vec<Array2<f32>> =
+        tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
+
+    // 2) Reconcile per-tile integer-2π offsets. A greedy spanning tree can
+    //    only use one constraint per tile, so a single bad pairwise stitch
+    //    leaves a visible ±1 seam. We instead: (a) compute every adjacent-pair
+    //    stitch once, (b) seed offsets with a max-confidence spanning tree
+    //    (Prim), then (c) iterate consensus voting where each tile takes the
+    //    coherence-weighted mode of the offset implied by ALL its neighbours.
+    //    This lets a tile that disagrees with its tree-parent but agrees with
+    //    its other 3 neighbours flip back, dissolving the seam.
+    struct StitchEdge {
+        a: usize,
+        b: usize,
+        k: i64, // off_b = off_a − k in the overlap
+        w: i64, // confidence (winning-bin coherence weight)
+    }
+    let mut edges: Vec<StitchEdge> = Vec::new();
+    let mut nbrs: Vec<Vec<usize>> = vec![Vec::new(); n_tiles];
+    for idx in 0..n_tiles {
+        let nb4 = grid.neighbours(idx); // [right, down, left, up]
+        for &nb in [nb4[0], nb4[1]].iter().flatten() {
+            // right + down only ⇒ each undirected edge counted once
+            let (k, w) = stitching_offset_coh(
+                &grid.tiles[idx],
+                &tile_unws[idx],
+                &grid.tiles[nb],
+                &tile_unws[nb],
+                corr,
+            );
+            let ei = edges.len();
+            edges.push(StitchEdge { a: idx, b: nb, k, w });
+            nbrs[idx].push(ei);
+            nbrs[nb].push(ei);
+        }
+    }
+
+    let mut offsets_2pi: Vec<i64> = vec![0; n_tiles];
+    let mut visited = vec![false; n_tiles];
+    // Prim seed: (confidence, tile, candidate_offset).
+    let mut heap: std::collections::BinaryHeap<(i64, usize, i64)> =
+        std::collections::BinaryHeap::new();
+    let push_prim = |heap: &mut std::collections::BinaryHeap<(i64, usize, i64)>,
+                     t: usize,
+                     off_t: i64,
+                     edges: &[StitchEdge],
+                     nbrs: &[Vec<usize>]| {
+        for &ei in &nbrs[t] {
+            let e = &edges[ei];
+            let (o, off_o) = if e.a == t {
+                (e.b, off_t - e.k) // off_b = off_a − k
+            } else {
+                (e.a, off_t + e.k) // off_a = off_b + k
+            };
+            heap.push((e.w, o, off_o));
+        }
+    };
+    visited[0] = true;
+    push_prim(&mut heap, 0, 0, &edges, &nbrs);
+    let mut n_in = 1;
+    while n_in < n_tiles {
+        let Some((_w, t, off)) = heap.pop() else {
+            break; // disconnected (shouldn't happen on a full grid)
+        };
+        if visited[t] {
+            continue;
+        }
+        visited[t] = true;
+        offsets_2pi[t] = off;
+        n_in += 1;
+        push_prim(&mut heap, t, off, &edges, &nbrs);
+    }
+
+    // Consensus voting (anchor tile 0). Each round, every tile adopts the
+    // coherence-weighted mode of the offsets its neighbours imply. Converges
+    // in a few rounds on a regular grid; cap to stay bounded if it oscillates.
+    for _round in 0..25 {
+        let mut changed = false;
+        for i in 1..n_tiles {
+            if nbrs[i].is_empty() {
+                continue;
+            }
+            let mut bins: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+            for &ei in &nbrs[i] {
+                let e = &edges[ei];
+                let vote = if e.a == i {
+                    offsets_2pi[e.b] + e.k // off_a = off_b + k
+                } else {
+                    offsets_2pi[e.a] - e.k // off_b = off_a − k
+                };
+                *bins.entry(vote).or_insert(0) += e.w.max(1);
+            }
+            let (mut best, mut best_w) = (offsets_2pi[i], -1_i64);
+            for (&v, &w) in &bins {
+                if w > best_w {
+                    best_w = w;
+                    best = v;
+                }
+            }
+            if best != offsets_2pi[i] {
+                offsets_2pi[i] = best;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    // 3) Composite: first tile (top-left in BFS order) to claim a pixel wins.
+    let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
+    for (idx, (tile, unw)) in grid.tiles.iter().zip(tile_unws.iter()).enumerate() {
+        let off = offsets_2pi[idx] as f32 * TAU;
+        for ti in 0..tile.rows() {
+            let gi = tile.r0 + ti;
+            for tj in 0..tile.cols() {
+                let gj = tile.c0 + tj;
+                if out[(gi, gj)].is_nan() {
+                    out[(gi, gj)] = unw[(ti, tj)] + off;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn unwrap_one_tile_coh(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    tile: &Tile,
+) -> Result<Array2<f32>, UnwrapError> {
+    let ig = igram.slice(s![tile.r0..tile.r1, tile.c0..tile.c1]);
+    let co = corr.slice(s![tile.r0..tile.r1, tile.c0..tile.c1]);
+    let mk = mask
+        .as_ref()
+        .map(|m| m.slice(s![tile.r0..tile.r1, tile.c0..tile.c1]));
+    let (tm, tn) = ig.dim();
+    let wrapped_phase = ig.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mk);
+    let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
+    let graph = RectangularGridGraph::new(tm + 1, tn + 1);
+    let mut net = Network::new_with_mask(&graph, residues.view(), &costs, mk);
+    primal_dual::run(&graph, &mut net, 50);
+    let unw = if mk.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mk)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    Ok(unw)
+}
+
+/// Coherence-weighted integer-2π offset between two overlapping tiles, plus a
+/// confidence score. Returns `(k, confidence)` where adding `k·2π` to `unw_b`
+/// aligns it to `unw_a`, and `confidence` is the coherence weight that voted
+/// for the winning integer.
+///
+/// Uses the weighted **mode of per-pixel rounded offsets** rather than the
+/// median of continuous diffs: when a wrap line crosses the overlap the two
+/// tiles disagree on one side, and the continuous median can land between two
+/// integers and round the wrong way — the mode robustly picks the integer the
+/// majority (by coherence weight) of overlap pixels agree on. The confidence
+/// (winning-bin weight) lets the caller stitch high-agreement seams first.
+fn stitching_offset_coh(
+    tile_a: &Tile,
+    unw_a: &Array2<f32>,
+    tile_b: &Tile,
+    unw_b: &Array2<f32>,
+    corr: ArrayView2<f32>,
+) -> (i64, i64) {
+    let r0 = tile_a.r0.max(tile_b.r0);
+    let r1 = tile_a.r1.min(tile_b.r1);
+    let c0 = tile_a.c0.max(tile_b.c0);
+    let c1 = tile_a.c1.min(tile_b.c1);
+    if r0 >= r1 || c0 >= c1 {
+        return (0, 0);
+    }
+    // Weighted histogram of rounded integer offsets.
+    let mut bins: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+    for gi in r0..r1 {
+        for gj in c0..c1 {
+            let a = unw_a[(gi - tile_a.r0, gj - tile_a.c0)];
+            let b = unw_b[(gi - tile_b.r0, gj - tile_b.c0)];
+            if !a.is_finite() || !b.is_finite() {
+                continue;
+            }
+            let k = ((b - a) / TAU).round() as i64;
+            let c = corr[(gi, gj)];
+            let w = if c.is_finite() && c > 0.0 {
+                let cc = c.min(1.0) as f64;
+                cc * cc
+            } else {
+                1e-3
+            };
+            *bins.entry(k).or_insert(0.0) += w;
+        }
+    }
+    // Winning integer = highest total coherence weight.
+    let mut best_k = 0_i64;
+    let mut best_w = -1.0_f64;
+    for (&k, &w) in &bins {
+        if w > best_w {
+            best_w = w;
+            best_k = k;
+        }
+    }
+    if best_w < 0.0 {
+        return (0, 0);
+    }
+    (best_k, best_w.round() as i64)
+}
+
 fn unwrap_one_tile(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
@@ -351,6 +602,41 @@ mod tests {
         let var = Array2::<f32>::from_elem((m, 24), 0.1);
         let k = stitching_offset(&tile_a, &unw_a, &tile_b, &unw_b, var.view());
         assert_eq!(k, 3, "stitching should recover the planted +3·2π step");
+    }
+
+    #[test]
+    fn tiled_coherence_matches_single_tile_on_smooth_input() {
+        use crate::unwrap;
+        use ndarray::Array2;
+        // Smooth ramp with no wraps: tiled coherence unwrap must agree with
+        // the whole-image coherence unwrap (up to a global integer cycle).
+        let m = 80;
+        let n = 80;
+        let truth: Array2<f32> =
+            Array2::from_shape_fn((m, n), |(i, j)| 0.04 * i as f32 + 0.03 * j as f32);
+        let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let corr = Array2::<f32>::from_elem((m, n), 0.9);
+
+        let whole = unwrap(igram.view(), corr.view(), 10.0, None).unwrap();
+        let tiled = unwrap_tiled(igram.view(), corr.view(), 10.0, None, 32, 8).unwrap();
+
+        let align = |u: &Array2<f32>| -> Array2<f32> {
+            let off = u.iter().zip(truth.iter()).map(|(&u, &t)| u - t).sum::<f32>()
+                / (u.len() as f32);
+            let k = (off / TAU).round();
+            u.mapv(|v| v - TAU * k)
+        };
+        let wa = align(&whole);
+        let ta = align(&tiled);
+        let max_err = wa
+            .iter()
+            .zip(ta.iter())
+            .map(|(&a, &b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_err < 1e-3,
+            "tiled and whole-image coherence unwrap should agree on smooth input, max diff {max_err}"
+        );
     }
 
     #[test]
