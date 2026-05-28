@@ -255,7 +255,7 @@ pub fn unwrap_tiled(
     assert!(overlap >= 2, "overlap must be ≥ 2 for median-based stitching");
 
     let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
-    let n_tiles = grid.tiles.len();
+    let _n_tiles = grid.tiles.len();
 
     // 1) Unwrap each tile in parallel.
     let tile_unws: Vec<Result<Array2<f32>, UnwrapError>> = grid
@@ -266,111 +266,42 @@ pub fn unwrap_tiled(
     let tile_unws: Vec<Array2<f32>> =
         tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
 
-    // 2) Reconcile per-tile integer-2π offsets. A greedy spanning tree can
-    //    only use one constraint per tile, so a single bad pairwise stitch
-    //    leaves a visible ±1 seam. We instead: (a) compute every adjacent-pair
-    //    stitch once, (b) seed offsets with a max-confidence spanning tree
-    //    (Prim), then (c) iterate consensus voting where each tile takes the
-    //    coherence-weighted mode of the offset implied by ALL its neighbours.
-    //    This lets a tile that disagrees with its tree-parent but agrees with
-    //    its other 3 neighbours flip back, dissolving the seam.
-    struct StitchEdge {
-        a: usize,
-        b: usize,
-        k: i64, // off_b = off_a − k in the overlap
-        w: i64, // confidence (winning-bin coherence weight)
-    }
-    let mut edges: Vec<StitchEdge> = Vec::new();
-    let mut nbrs: Vec<Vec<usize>> = vec![Vec::new(); n_tiles];
-    for idx in 0..n_tiles {
-        let nb4 = grid.neighbours(idx); // [right, down, left, up]
-        for &nb in [nb4[0], nb4[1]].iter().flatten() {
-            // right + down only ⇒ each undirected edge counted once
-            let (k, w) = stitching_offset_coh(
-                &grid.tiles[idx],
-                &tile_unws[idx],
-                &grid.tiles[nb],
-                &tile_unws[nb],
-                corr,
-            );
-            let ei = edges.len();
-            edges.push(StitchEdge { a: idx, b: nb, k, w });
-            nbrs[idx].push(ei);
-            nbrs[nb].push(ei);
-        }
-    }
-
-    let mut offsets_2pi: Vec<i64> = vec![0; n_tiles];
-    let mut visited = vec![false; n_tiles];
-    // Prim seed: (confidence, tile, candidate_offset).
-    let mut heap: std::collections::BinaryHeap<(i64, usize, i64)> =
-        std::collections::BinaryHeap::new();
-    let push_prim = |heap: &mut std::collections::BinaryHeap<(i64, usize, i64)>,
-                     t: usize,
-                     off_t: i64,
-                     edges: &[StitchEdge],
-                     nbrs: &[Vec<usize>]| {
-        for &ei in &nbrs[t] {
-            let e = &edges[ei];
-            let (o, off_o) = if e.a == t {
-                (e.b, off_t - e.k) // off_b = off_a − k
-            } else {
-                (e.a, off_t + e.k) // off_a = off_b + k
-            };
-            heap.push((e.w, o, off_o));
-        }
-    };
-    visited[0] = true;
-    push_prim(&mut heap, 0, 0, &edges, &nbrs);
-    let mut n_in = 1;
-    while n_in < n_tiles {
-        let Some((_w, t, off)) = heap.pop() else {
-            break; // disconnected (shouldn't happen on a full grid)
-        };
-        if visited[t] {
-            continue;
-        }
-        visited[t] = true;
-        offsets_2pi[t] = off;
-        n_in += 1;
-        push_prim(&mut heap, t, off, &edges, &nbrs);
-    }
-
-    // Consensus voting (anchor tile 0). Each round, every tile adopts the
-    // coherence-weighted mode of the offsets its neighbours imply. Converges
-    // in a few rounds on a regular grid; cap to stay bounded if it oscillates.
-    for _round in 0..25 {
-        let mut changed = false;
-        for i in 1..n_tiles {
-            if nbrs[i].is_empty() {
-                continue;
+    // 2) Reconcile per-tile integer-2π offsets by a GLOBAL min-cost-flow
+    //    secondary network (SNAPHU's `AssembleTiles` idea at tile scale).
+    //    Measure each adjacent-pair seam gradient, then solve a min-cost
+    //    tension on the tile grid so a coherent low-confidence wrong island
+    //    is flipped when that lowers the total weighted seam cost — which
+    //    per-tile/region heuristics cannot do (they can't break a satisfied
+    //    seam). `gh`/`gv` are the measured offset gradients; `wh`/`wv` their
+    //    coherence-weighted confidences.
+    let (rows, cols) = (grid.grid_rows, grid.grid_cols);
+    let mut gh = vec![0_i64; rows * cols.saturating_sub(1)];
+    let mut wh = vec![0_i64; rows * cols.saturating_sub(1)];
+    let mut gv = vec![0_i64; rows.saturating_sub(1) * cols];
+    let mut wv = vec![0_i64; rows.saturating_sub(1) * cols];
+    for gr in 0..rows {
+        for gc in 0..cols {
+            let idx = grid.index_of(gr, gc);
+            if gc + 1 < cols {
+                let nb = grid.index_of(gr, gc + 1);
+                let (k, w) = stitching_offset_coh(
+                    &grid.tiles[idx], &tile_unws[idx], &grid.tiles[nb], &tile_unws[nb], corr,
+                );
+                // stitch returns k with off_nb = off_idx − k ⇒ gh = off_nb − off_idx = −k
+                gh[gr * (cols - 1) + gc] = -k;
+                wh[gr * (cols - 1) + gc] = w;
             }
-            let mut bins: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
-            for &ei in &nbrs[i] {
-                let e = &edges[ei];
-                let vote = if e.a == i {
-                    offsets_2pi[e.b] + e.k // off_a = off_b + k
-                } else {
-                    offsets_2pi[e.a] - e.k // off_b = off_a − k
-                };
-                *bins.entry(vote).or_insert(0) += e.w.max(1);
-            }
-            let (mut best, mut best_w) = (offsets_2pi[i], -1_i64);
-            for (&v, &w) in &bins {
-                if w > best_w {
-                    best_w = w;
-                    best = v;
-                }
-            }
-            if best != offsets_2pi[i] {
-                offsets_2pi[i] = best;
-                changed = true;
+            if gr + 1 < rows {
+                let nb = grid.index_of(gr + 1, gc);
+                let (k, w) = stitching_offset_coh(
+                    &grid.tiles[idx], &tile_unws[idx], &grid.tiles[nb], &tile_unws[nb], corr,
+                );
+                gv[gr * cols + gc] = -k;
+                wv[gr * cols + gc] = w;
             }
         }
-        if !changed {
-            break;
-        }
     }
+    let offsets_2pi = reconcile_offsets_mcf(rows, cols, &gh, &wh, &gv, &wv);
 
     // 3) Composite: first tile (top-left in BFS order) to claim a pixel wins.
     let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
@@ -387,6 +318,212 @@ pub fn unwrap_tiled(
         }
     }
     Ok(out)
+}
+
+/// A tiny successive-shortest-path min-cost-flow. Uses SPFA (Bellman-Ford
+/// queue) for the shortest-path step so it tolerates the negative residual-arc
+/// costs without maintaining potentials — fine because the tile graph is
+/// small. Arcs are stored in forward/reverse pairs: arc `e` and `e ^ 1`.
+struct Mcf {
+    head: Vec<i32>,
+    to: Vec<usize>,
+    next: Vec<i32>,
+    cap: Vec<i64>,
+    cost: Vec<i64>,
+}
+
+impl Mcf {
+    fn new(n: usize) -> Self {
+        Mcf { head: vec![-1; n], to: Vec::new(), next: Vec::new(), cap: Vec::new(), cost: Vec::new() }
+    }
+
+    fn add_arc(&mut self, u: usize, v: usize, cap: i64, cost: i64) -> usize {
+        let id = self.to.len();
+        self.to.push(v);
+        self.cap.push(cap);
+        self.cost.push(cost);
+        self.next.push(self.head[u]);
+        self.head[u] = id as i32;
+        self.to.push(u);
+        self.cap.push(0);
+        self.cost.push(-cost);
+        self.next.push(self.head[v]);
+        self.head[v] = (id + 1) as i32;
+        id
+    }
+
+    /// Undirected seam u↔v at cost `w` (a unit of correction in either
+    /// direction costs `w`). Returns `(fe, be)`; net flow u→v is
+    /// `used(fe) − used(be)`.
+    fn add_seam(&mut self, u: usize, v: usize, w: i64) -> (usize, usize) {
+        const INF: i64 = 1 << 50;
+        (self.add_arc(u, v, INF, w), self.add_arc(v, u, INF, w))
+    }
+
+    /// Flow pushed on forward arc `e` (== current cap of its reverse partner).
+    fn used(&self, e: usize) -> i64 {
+        self.cap[e ^ 1]
+    }
+
+    /// Balance node supplies (`> 0` source, `< 0` sink, Σ = 0) at min cost.
+    fn solve(&mut self, supply: &[i64]) {
+        let n = self.head.len();
+        let mut sup = supply.to_vec();
+        loop {
+            let Some(src) = (0..n).find(|&i| sup[i] > 0) else { break };
+            let mut dist = vec![i64::MAX; n];
+            let mut pe = vec![-1_i32; n];
+            let mut inq = vec![false; n];
+            dist[src] = 0;
+            let mut q = std::collections::VecDeque::new();
+            q.push_back(src);
+            inq[src] = true;
+            while let Some(u) = q.pop_front() {
+                inq[u] = false;
+                let mut e = self.head[u];
+                while e != -1 {
+                    let ei = e as usize;
+                    let v = self.to[ei];
+                    if self.cap[ei] > 0
+                        && dist[u] != i64::MAX
+                        && dist[u] + self.cost[ei] < dist[v]
+                    {
+                        dist[v] = dist[u] + self.cost[ei];
+                        pe[v] = ei as i32;
+                        if !inq[v] {
+                            q.push_back(v);
+                            inq[v] = true;
+                        }
+                    }
+                    e = self.next[ei];
+                }
+            }
+            let mut sink = usize::MAX;
+            let mut bd = i64::MAX;
+            for i in 0..n {
+                if sup[i] < 0 && dist[i] < bd {
+                    bd = dist[i];
+                    sink = i;
+                }
+            }
+            if sink == usize::MAX {
+                break; // unbalanced — shouldn't happen (Σ supply == 0, connected)
+            }
+            let mut f = sup[src].min(-sup[sink]);
+            let mut v = sink;
+            while v != src {
+                let ei = pe[v] as usize;
+                f = f.min(self.cap[ei]);
+                v = self.to[ei ^ 1];
+            }
+            let mut v = sink;
+            while v != src {
+                let ei = pe[v] as usize;
+                self.cap[ei] -= f;
+                self.cap[ei ^ 1] += f;
+                v = self.to[ei ^ 1];
+            }
+            sup[src] -= f;
+            sup[sink] += f;
+        }
+    }
+}
+
+/// Globally reconcile per-tile integer-2π offsets by min-cost tension:
+/// minimize `Σ w · |measured − (o_a − o_b)|` over integer offsets `o`,
+/// solved as a residue min-cost-flow on the planar dual of the tile grid
+/// (SNAPHU's `AssembleTiles` secondary network at tile scale). Unlike the
+/// per-tile/region heuristics, this **can break a satisfied seam** when that
+/// lowers the total weighted seam cost — the property needed to flip a
+/// coherent wrong island in a low-coherence patch.
+///
+/// * `gh[gr*(cols-1)+gc]` = measured `o[gr][gc+1] − o[gr][gc]`, confidence `wh`.
+/// * `gv[gr*cols+gc]`     = measured `o[gr+1][gc] − o[gr][gc]`, confidence `wv`.
+///
+/// Returns one integer offset per tile (row-major; global offset arbitrary).
+fn reconcile_offsets_mcf(
+    rows: usize,
+    cols: usize,
+    gh: &[i64],
+    wh: &[i64],
+    gv: &[i64],
+    wv: &[i64],
+) -> Vec<i64> {
+    let mut o = vec![0_i64; rows * cols];
+    if rows == 0 || cols == 0 {
+        return o;
+    }
+    if rows == 1 {
+        for gc in 1..cols {
+            o[gc] = o[gc - 1] + gh[gc - 1];
+        }
+        return o;
+    }
+    if cols == 1 {
+        for gr in 1..rows {
+            o[gr] = o[gr - 1] + gv[gr - 1];
+        }
+        return o;
+    }
+
+    // Residue (curl) per interior face: the clockwise 2×2-tile loop with
+    // top-left tile (fr, fc). Zero iff the four seam measurements close.
+    let nf = (rows - 1) * (cols - 1);
+    let outer = nf;
+    let face = |fr: usize, fc: usize| fr * (cols - 1) + fc;
+    let mut supply = vec![0_i64; nf + 1];
+    for fr in 0..rows - 1 {
+        for fc in 0..cols - 1 {
+            supply[face(fr, fc)] = gh[fr * (cols - 1) + fc] + gv[fr * cols + (fc + 1)]
+                - gh[(fr + 1) * (cols - 1) + fc]
+                - gv[fr * cols + fc];
+        }
+    }
+    supply[outer] = -supply[..nf].iter().sum::<i64>();
+
+    // Dual graph: a node per interior face plus one outer node; one seam-edge
+    // per tile seam, between the two faces it borders (boundary → outer).
+    let mut mcf = Mcf::new(nf + 1);
+    let mut he = vec![(0usize, 0usize); rows * (cols - 1)];
+    let mut ve = vec![(0usize, 0usize); (rows - 1) * cols];
+    for gr in 0..rows {
+        for gc in 0..cols - 1 {
+            let below = if gr < rows - 1 { face(gr, gc) } else { outer };
+            let above = if gr >= 1 { face(gr - 1, gc) } else { outer };
+            he[gr * (cols - 1) + gc] = mcf.add_seam(above, below, wh[gr * (cols - 1) + gc].max(1));
+        }
+    }
+    for gr in 0..rows - 1 {
+        for gc in 0..cols {
+            let right = if gc < cols - 1 { face(gr, gc) } else { outer };
+            let left = if gc >= 1 { face(gr, gc - 1) } else { outer };
+            ve[gr * cols + gc] = mcf.add_seam(left, right, wv[gr * cols + gc].max(1));
+        }
+    }
+    mcf.solve(&supply);
+
+    // Apply the integer correction (net dual flow) to each seam so the field
+    // is curl-free, then integrate: row 0 along `gh`, then columns down `gv`.
+    let mut gh2 = gh.to_vec();
+    let mut gv2 = gv.to_vec();
+    // `gh` and `gv` enter the face curl with mirror-opposite signs, so their
+    // corrections take opposite signs of the net dual flow (verified by the
+    // `reconcile_mcf_breaks_low_confidence_wrong_seam` test).
+    for (i, &(fe, be)) in he.iter().enumerate() {
+        gh2[i] += mcf.used(fe) - mcf.used(be);
+    }
+    for (i, &(fe, be)) in ve.iter().enumerate() {
+        gv2[i] -= mcf.used(fe) - mcf.used(be);
+    }
+    for gc in 1..cols {
+        o[gc] = o[gc - 1] + gh2[gc - 1];
+    }
+    for gr in 1..rows {
+        for gc in 0..cols {
+            o[gr * cols + gc] = o[(gr - 1) * cols + gc] + gv2[(gr - 1) * cols + gc];
+        }
+    }
+    o
 }
 
 fn unwrap_one_tile_coh(
@@ -602,6 +739,66 @@ mod tests {
         let var = Array2::<f32>::from_elem((m, 24), 0.1);
         let k = stitching_offset(&tile_a, &unw_a, &tile_b, &unw_b, var.view());
         assert_eq!(k, 3, "stitching should recover the planted +3·2π step");
+    }
+
+    // Build seam-gradient arrays from a per-tile truth field on an R×C grid.
+    fn seams_from_truth(rows: usize, cols: usize, truth: &[i64]) -> (Vec<i64>, Vec<i64>) {
+        let mut gh = vec![0_i64; rows * (cols - 1)];
+        let mut gv = vec![0_i64; (rows - 1) * cols];
+        for gr in 0..rows {
+            for gc in 0..cols {
+                if gc + 1 < cols {
+                    gh[gr * (cols - 1) + gc] = truth[gr * cols + gc + 1] - truth[gr * cols + gc];
+                }
+                if gr + 1 < rows {
+                    gv[gr * cols + gc] = truth[(gr + 1) * cols + gc] - truth[gr * cols + gc];
+                }
+            }
+        }
+        (gh, gv)
+    }
+
+    #[test]
+    fn reconcile_mcf_recovers_consistent_offsets() {
+        // Consistent seams (zero curl) → MCF pushes no flow → exact recovery.
+        let (rows, cols) = (4usize, 5usize);
+        let truth: Vec<i64> = (0..rows * cols).map(|t| (2 * (t / cols) + 3 * (t % cols)) as i64).collect();
+        let (gh, gv) = seams_from_truth(rows, cols, &truth);
+        let wh = vec![100_i64; gh.len()];
+        let wv = vec![100_i64; gv.len()];
+        let off = reconcile_offsets_mcf(rows, cols, &gh, &wh, &gv, &wv);
+        for t in 0..rows * cols {
+            assert_eq!(off[t] - off[0], truth[t] - truth[0], "tile {t}");
+        }
+    }
+
+    #[test]
+    fn reconcile_mcf_breaks_low_confidence_wrong_seam() {
+        // One vertical and one (row-0) horizontal seam are corrupted with LOW
+        // confidence; every other seam is high confidence. The min-cost flow
+        // must correct the two cheap seams (not reroute through the expensive
+        // ones), recovering the planted ramp — the property a region-flip
+        // heuristic cannot guarantee.
+        let (rows, cols) = (4usize, 5usize);
+        let truth: Vec<i64> = (0..rows * cols).map(|t| (2 * (t / cols) + 3 * (t % cols)) as i64).collect();
+        let (mut gh, mut gv) = seams_from_truth(rows, cols, &truth);
+        let mut wh = vec![100_i64; gh.len()];
+        let mut wv = vec![100_i64; gv.len()];
+        // Corrupt gv at (gr=1, gc=2) by +7, low confidence.
+        gv[1 * cols + 2] += 7;
+        wv[1 * cols + 2] = 1;
+        // Corrupt gh at (gr=0, gc=1) by −4, low confidence (row 0 is on the
+        // integration path, so a wrong sign would show up directly).
+        gh[0 * (cols - 1) + 1] -= 4;
+        wh[0 * (cols - 1) + 1] = 1;
+        let off = reconcile_offsets_mcf(rows, cols, &gh, &wh, &gv, &wv);
+        for t in 0..rows * cols {
+            assert_eq!(
+                off[t] - off[0],
+                truth[t] - truth[0],
+                "tile {t}: MCF failed to correct the low-confidence wrong seams"
+            );
+        }
     }
 
     #[test]
