@@ -130,6 +130,57 @@ pub fn unwrap_with_components(
     Ok((unw, comps))
 }
 
+/// **Specialized — not a general substitute for [`unwrap`].**
+///
+/// [`unwrap`] with a virtual ground node, the coherence-cost twin of
+/// [`unwrap_crlb_grounded`]. Adds a single ground node connected to every
+/// boundary residue with a unit-capacity arc of `ground_cost`, so
+/// wrap-line endpoints can terminate at the image boundary independently
+/// of each other. This fixes the capacity-1 stacking failure documented
+/// in the ignored `diagonal_ramp_512` regression test: clean smooth ramps
+/// whose wrap-lines all exit at the same boundary segment.
+///
+/// **Do not use on noisy real-world IGs.** Empirical sweep on a Capella
+/// Palos Verdes scene (`paper/phass_experiments.md`, 2026-05-28 follow-up):
+/// K-agreement vs SNAPHU drops from 90.7 % (baseline) to ~20 % at every
+/// `ground_cost ∈ {0, 50, 100, 200}` tested. Real data has dense interior
+/// residue pairs that *want* to pair internally; routing them to ground
+/// along non-physical paths corrupts the unwrap. Same direction on a NISAR
+/// scene (80 % → 42 %).
+///
+/// Use [`unwrap`] for real data. This function is exported only for the
+/// boundary-stacking regression and for callers who have verified their
+/// scene is in that regime.
+pub fn unwrap_grounded(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    ground_cost: i32,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new_with_mask_and_ground(
+        &graph, residues.view(), &costs, mask, Some(ground_cost),
+    );
+    primal_dual::run(&graph, &mut net, 50);
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    Ok(unw)
+}
+
 /// Top-level phase unwrap (CRLB-weighted cost — for phase-linked IGs).
 ///
 /// For interferograms formed from phase-linked SLCs (Dolphin, EVD, EMI),
