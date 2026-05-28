@@ -35,6 +35,51 @@ pub fn smooth_phase_gradients(
     smooth_phase_gradients_with_mask(igram, None)
 }
 
+/// Raw per-arc wrapped phase gradients (no smoothing).
+///
+/// Returns `(phase_dy, phase_dx)` with shapes `(m-1, n)` and `(m, n-1)`
+/// respectively — the same shapes as [`smooth_phase_gradients`]. Each
+/// entry is `arg(igram[h] * conj(igram[t]))` for the corresponding arc.
+pub fn phase_gradients_raw(
+    igram: ArrayView2<Complex32>,
+) -> (Array2<f32>, Array2<f32>) {
+    let (m, n) = igram.dim();
+    let mut phase_dy = Array2::<f32>::zeros((m - 1, n));
+    phase_dy
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n {
+                let z = igram[(i + 1, j)] * igram[(i, j)].conj();
+                row[j] = z.arg();
+            }
+        });
+    let mut phase_dx = Array2::<f32>::zeros((m, n - 1));
+    phase_dx
+        .axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n - 1 {
+                let z = igram[(i, j + 1)] * igram[(i, j)].conj();
+                row[j] = z.arg();
+            }
+        });
+    (phase_dy, phase_dx)
+}
+
+/// Wrap a phase value into `(-π, π]`. Used by the deviation-cost mode to
+/// keep `dpsi_arc - dpsi_smoothed` in the same domain as a wrapped gradient.
+#[inline]
+fn wrap_to_pi(x: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let y = (x + PI).rem_euclid(TAU) - PI;
+    // rem_euclid can return exactly TAU on negative-zero inputs in some
+    // builds; bring back to (-π, π].
+    if y > PI { y - TAU } else if y <= -PI { y + TAU } else { y }
+}
+
 /// Same as [`smooth_phase_gradients`] but mask-aware: at pixels whose
 /// 7×7 window overlaps masked-out pixels, the average is taken over the
 /// *valid* pixels only (rather than including masked zeros). This is
@@ -186,10 +231,8 @@ pub fn box_filter_2d(a: ArrayView2<f32>, k: usize) -> Array2<f32> {
 ///
 /// `igram`, `corr` have shape `(m_phase, n_phase)`. The residue grid (= node
 /// grid) has shape `(m_phase + 1, n_phase + 1) = (m, n)`. The returned cost
-/// array has length `num_forward`, indexed by `arc_id` per `crate::grid`
-/// layout. Reverse-arc costs are implicit (`-forward`) and reconstructed by
-/// `Network` on demand; storing them was a ~130 MB wasted alloc + copy on a
-/// 4096² scene.
+/// array has length `num_forward`; reverse-arc costs are implicit
+/// (`-forward`) and reconstructed by `Network` on demand.
 pub fn compute_carballo_costs(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -303,28 +346,71 @@ pub fn compute_carballo_costs(
     // lines, which currently breaks our Dijkstra-based SSP path; a
     // Bellman-Ford pre-pass for initial potentials would fix that.
     let use_llr = use_llr_cost();
+    let use_deviation = deviation_cost_enabled();
+    let hard_cut = hard_cut_threshold();
+    let phass_good_corr = phass_cost_good_corr();
     let lut = lut::get_or_build(nlooks);
+
+    // Compute un-smoothed per-arc wrapped gradients when needed by any
+    // experimental cost variant: deviation-cost (uses raw-minus-smoothed
+    // as the cost input) or hard-cut (zeros cost where |raw dpsi| ≥
+    // threshold, PHASS-style).
+    let need_raw = use_deviation || hard_cut.is_some();
+    let (phase_dy_raw_opt, phase_dx_raw_opt) = if need_raw {
+        let (rdy, rdx) = phase_gradients_raw(igram);
+        (Some(rdy), Some(rdx))
+    } else {
+        (None, None)
+    };
+    let phase_dy_raw_v = phase_dy_raw_opt.as_ref().map(|a| a.view());
+    let phase_dx_raw_v = phase_dx_raw_opt.as_ref().map(|a| a.view());
 
     // Cost of pushing +2π through this arc, given a smoothed gradient α
     // and edge coherence γ. The opposite direction is `cost_dir(-α, γ)`.
+    //
+    // Two cost shapes:
+    //  * **default Carballo**: `γ · max(0, π − α)` — direction-aware,
+    //    biased by the local smoothed gradient.
+    //  * **PHASS-style** (`WHIRLWIND_PHASS_COST=<good_corr>`): cost is
+    //    `γ_edge² · π` for both directions (symmetric, no α term),
+    //    saturated to `good_corr² · π` whenever `γ > good_corr`. This
+    //    mirrors PHASS's `min(γ_p,γ_q)² · cost_scale` saturated at
+    //    `good_corr² · cost_scale` (we keep the π factor so absolute
+    //    cost magnitudes stay comparable to the Carballo path).
+    //
+    // A *faithful* port of PHASS's recipe (γ²·100 base with a hard
+    // jump to 255 above good_corr²) was tested on 2026-05-28 and is
+    // pathological in our linear-cost SSP: PV (750k px, baseline 0.7 s)
+    // didn't complete in 14 minutes, NISAR was killed at 17 min vs the
+    // 75 s baseline. The 255-cliff creates many near-tied cost
+    // candidates in Dial's bucket-queue Dijkstra; PHASS's own solver
+    // dodges this by zero-ing the *reduced* cost on any arc that has
+    // already carried flow (ASSP.cc:2034) — effectively making each
+    // wrap line a free reusable highway. That trick is not
+    // representable in our unit-capacity / linear-cost setup. See
+    // paper/phass_experiments.md for the full writeup.
     let cost_dir = |alpha: f32, gamma: f32| -> f32 {
-        if use_llr {
+        let pi = std::f32::consts::PI;
+        if let Some(good_corr) = phass_good_corr {
+            // PHASS cost: coherence-squared, saturated above good_corr.
+            let g = gamma.min(1.0).max(0.0);
+            let g_sat = g.min(good_corr);
+            g_sat * g_sat * pi
+        } else if use_llr {
             let p0 = lut.eval(alpha, gamma);
             let p1 = lut.eval(alpha - TAU, gamma);
             -((p1.max(1e-30)).ln() - (p0.max(1e-30)).ln())
         } else {
-            let pi = std::f32::consts::PI;
             (gamma * (pi - alpha)).max(0.0)
         }
     };
 
-    // Allocate the forward arc-cost array and split it into the 4 direction
-    // slabs. Each slab is a disjoint &mut [i32], so we can fill them in
-    // parallel without aliasing. Layout (see `crate::grid`):
-    //   [0,        n_v)              DOWN
-    //   [n_v,      2*n_v)            UP
-    //   [2*n_v,    2*n_v + n_h)      RIGHT
-    //   [2*n_v + n_h, num_forward)   LEFT
+    // Forward-arc cost vector split into 4 direction slabs. Each slab is a
+    // disjoint &mut [i32], so we fill them in parallel without aliasing.
+    //   [0,            n_v)             DOWN
+    //   [n_v,          2*n_v)           UP
+    //   [2*n_v,        2*n_v + n_h)     RIGHT
+    //   [2*n_v + n_h,  num_forward)     LEFT
     let mut cost = vec![0_i32; g.num_forward];
     let (down_slab, rest) = cost.split_at_mut(g.n_v);
     let (up_slab, rest) = rest.split_at_mut(g.n_v);
@@ -355,7 +441,12 @@ pub fn compute_carballo_costs(
                 return; // residue rows past last pixel-edge row stay zero
             }
             for j in 0..n_phase {
-                let alpha = phase_dy_s_v[(i, j)];
+                let alpha = if use_deviation {
+                    let raw = phase_dy_raw_v.as_ref().unwrap()[(i, j)];
+                    wrap_to_pi(raw - phase_dy_s_v[(i, j)])
+                } else {
+                    phase_dy_s_v[(i, j)]
+                };
                 let gamma = cor_dy_v[(i, j)];
                 let masked = mask_dy_ref
                     .as_ref()
@@ -365,6 +456,15 @@ pub fn compute_carballo_costs(
                     (0.0, 0.0)
                 } else {
                     (cost_dir(-alpha, gamma), cost_dir(alpha, gamma))
+                };
+                // PHASS-style hard cut: |wrap(dpsi_raw)| above threshold ⇒ cost = 0
+                // (free routing channel where a wrap line is likely present).
+                let (c_rt, c_lt) = match hard_cut {
+                    Some(t) => {
+                        let raw = phase_dy_raw_v.as_ref().unwrap()[(i, j)].abs();
+                        if raw >= t { (0.0, 0.0) } else { (c_rt, c_lt) }
+                    }
+                    None => (c_rt, c_lt),
                 };
                 right_row[j] = (c_rt * COST_SCALE).round() as i32;
                 left_row[j] = (c_lt * COST_SCALE).round() as i32;
@@ -382,7 +482,12 @@ pub fn compute_carballo_costs(
         .enumerate()
         .for_each(|(i, (down_row, up_row))| {
             for j in 0..n_phase - 1 {
-                let alpha = phase_dx_s_v[(i, j)];
+                let alpha = if use_deviation {
+                    let raw = phase_dx_raw_v.as_ref().unwrap()[(i, j)];
+                    wrap_to_pi(raw - phase_dx_s_v[(i, j)])
+                } else {
+                    phase_dx_s_v[(i, j)]
+                };
                 let gamma = cor_dx_v[(i, j)];
                 let masked = mask_dx_ref
                     .as_ref()
@@ -392,6 +497,13 @@ pub fn compute_carballo_costs(
                     (0.0, 0.0)
                 } else {
                     (cost_dir(alpha, gamma), cost_dir(-alpha, gamma))
+                };
+                let (c_dn, c_up) = match hard_cut {
+                    Some(t) => {
+                        let raw = phase_dx_raw_v.as_ref().unwrap()[(i, j)].abs();
+                        if raw >= t { (0.0, 0.0) } else { (c_dn, c_up) }
+                    }
+                    None => (c_dn, c_up),
                 };
                 let col = j + 1;
                 down_row[col] = (c_dn * COST_SCALE).round() as i32;
@@ -406,6 +518,70 @@ pub fn compute_carballo_costs(
 fn use_llr_cost() -> bool {
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| std::env::var("WHIRLWIND_LLR_COST").is_ok())
+}
+
+/// Cached env-var lookup for the deviation-cost experiment.
+///
+/// When enabled, [`compute_carballo_costs`] feeds the *per-arc deviation*
+/// `wrap(dpsi_arc - dpsi_smoothed_7x7)` into the Carballo cost formula
+/// instead of the smoothed gradient itself.
+///
+/// **Tested on NISAR α=0 (no Goldstein): makes things measurably worse.**
+/// Baseline 92.5 % K-match with SNAPHU 9×9 on cc=1 mainland; deviation
+/// cost dropped that to 86.5 % and halved the cc>0 coverage. Mechanism:
+/// the substitution does succeed in making isolated noise arcs cheap to
+/// route through — but in a smooth coherent ramp with random per-arc
+/// noise, those noise arcs have no geometric structure tied to true
+/// wrap-line topology, so MCF cheerfully routes 2π discontinuities
+/// through them and creates K-flips in the wrong places. The original
+/// 7×7 smoothing was load-bearing: by averaging over a window it picks
+/// up only *regional* wrap-line topology (which spans many arcs), not
+/// single-arc noise spikes. Substituting in raw-minus-smoothed destroys
+/// that regional preference.
+///
+/// Kept behind the env var for documentation / negative-result preservation.
+/// The legitimate path to closing the SNAPHU-no-filter gap is not this
+/// cost-input change but a *convex cost shape*: SNAPHU's smooth mode
+/// uses `(k·nshortcycle − offset)² / sigsq` per arc, which forces flow
+/// ≈ offset rather than just penalising |flow|>0. Our unit-capacity
+/// linear-cost solver cannot represent that without either Goldberg's
+/// parallel-arc convex reduction or an iterative-recost SSP loop.
+fn deviation_cost_enabled() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("WHIRLWIND_DEVIATION_COST").is_ok())
+}
+
+/// PHASS-style hard-cut threshold on the *raw* per-arc wrapped phase
+/// gradient. When set to T > 0, any arc whose `|wrap(Δphase_raw)| ≥ T`
+/// gets cost = 0 (free routing channel). Mirrors PHASS's
+/// `phase_diff_th = 1.0 rad` rule in `PhassUnwrapper.cc:172`. Used to
+/// test whether SNAPHU's no-Goldstein robustness can be approximated
+/// by single-arc cheap channels alongside our existing regional cost.
+fn hard_cut_threshold() -> Option<f32> {
+    static FLAG: OnceLock<Option<f32>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("WHIRLWIND_HARD_CUT_THRESH")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|&t| t > 0.0)
+    })
+}
+
+/// PHASS-style coherence-only cost. When set to a value G ∈ (0, 1],
+/// replaces the Carballo cost with `γ_edge² · π` symmetric in
+/// direction, saturated at `G² · π` whenever γ > G. Mirrors PHASS's
+/// `min(γ_p,γ_q)² · cost_scale` saturated at `good_corr² · cost_scale`
+/// (see `PhassUnwrapper.cc:119-141`). No phase-gradient input — PHASS
+/// instead uses hard cuts (see [`hard_cut_threshold`]) to encode wrap
+/// lines, which is testable independently.
+fn phass_cost_good_corr() -> Option<f32> {
+    static FLAG: OnceLock<Option<f32>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("WHIRLWIND_PHASS_COST")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .filter(|&g| (0.0..=1.0).contains(&g))
+    })
 }
 
 /// Cached env-var lookup for the multilook-coherence bias correction toggle.
@@ -728,7 +904,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_vanishes_for_large_l() {
+    fn bias_correction_vanishes_for_large_L() {
         // L→∞ ⇒ correction is the identity at every γ̂.
         for &g in &[0.3_f32, 0.5, 0.7, 0.9] {
             let corrected = correct_coh_bias(g, 10_000.0);
@@ -737,7 +913,7 @@ mod coh_bias_tests {
     }
 
     #[test]
-    fn bias_correction_degenerate_at_small_l() {
+    fn bias_correction_degenerate_at_small_L() {
         // L ≤ 1 is degenerate; return raw to avoid producing NaN.
         assert_eq!(correct_coh_bias(0.5, 1.0), 0.5);
         assert_eq!(correct_coh_bias(0.5, 0.5), 0.5);
