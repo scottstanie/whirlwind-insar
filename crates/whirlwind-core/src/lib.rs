@@ -181,6 +181,51 @@ pub fn unwrap_grounded(
     Ok(unw)
 }
 
+/// **Prototype — SNAPHU-style convex (quadratic) cost solver.**
+///
+/// Same coherence input as [`unwrap`], but the per-arc cost is parabolic
+/// in flow rather than linear: `c_e(k) = w_e · (k · 100 − offset_e)²`,
+/// where `offset_e` encodes the local smoothed phase gradient as a
+/// preferred integer flow direction, and `w_e` is the inverse noise
+/// variance from the Just/Bamler 1994 approximation. The Dial bucket-
+/// queue Dijkstra reads the *marginal* cost (cost of pushing one more
+/// unit at current flow) via [`Network::marginal_cost`] in convex mode.
+///
+/// Built to address the residual NISAR gap from the reuse prototype:
+/// path-dependence ruled out (`paper/phass_experiments.md` 2026-05-28
+/// follow-up), the 7 % residual error is the genuine cost-optimum of
+/// the linear coherence-cost model. Quadratic curvature should make
+/// large coherent multi-cycle deviations structurally expensive in a
+/// way linear cost cannot. See `paper/convex_cost_design.md`.
+pub fn unwrap_convex(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let (offsets, weights) = cost::compute_snaphu_smooth_costs(igram, corr, nlooks, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new_convex_with_mask(
+        &graph, residues.view(), &offsets, &weights, mask,
+    );
+    primal_dual::run(&graph, &mut net, 50);
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    Ok(unw)
+}
+
 /// **Prototype — PHASS-style flow-reuse solver.**
 ///
 /// Same Carballo coherence cost as [`unwrap`], same primal-dual driver,

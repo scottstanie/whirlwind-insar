@@ -148,6 +148,58 @@ binding `whirlwind.unwrap_convex(...)`. Companion experiment script
   computed wrong (offset polarity, σ² calibration) and we debug
   before pushing further.
 
+## First-run results (2026-05-28 evening)
+
+Phase 5+6 implementation completed. `unwrap_convex` in Rust and Python;
+`scripts/phass_experiments/run_convex.py` for reproduction.
+
+The end-to-end `diagonal_ramp_512_convex` test passes (max error 0.0
+rad) — algorithm is sound on synthetic.
+
+But on real scenes, the picture is split:
+
+| scene | mode | wall | K=match | `|dK|`=1 | `|dK|`≥2 |
+|---|---|---:|---:|---:|---:|
+| PV    | baseline (unit-cap)  | 0.7 s | 90.67 % | 1.09 % |  8.25 % |
+| PV    | reuse                | 3.7 s | 99.75 % | 0.25 % |  0.00 % |
+| PV    | **convex**           | 14.6 s | **99.68 %** | 0.32 % | **0.00 %** |
+| NISAR | baseline (unit-cap)  |  75 s | 80.01 % | 1.71 % | 18.28 % |
+| NISAR | reuse                |  93 s | 92.70 % | 0.24 % |  7.06 % |
+| NISAR | **convex**           | 402 s | **68.55 %** | 5.97 % | **25.48 %** |
+
+PV: convex matches reuse essentially perfectly. The diagonal_ramp test
+passes. The cost machinery and solver are correct.
+
+NISAR: convex regresses past the unit-cap baseline. The +3 cycle blob
+that reuse partly fixed grows back, and a new error mode appears. So
+the convex cost as I've implemented it is *not* what SNAPHU produces
+on the same data — somewhere between cost formulation and solver
+interaction, the prototype solves a different problem.
+
+Plausible suspects (in order of cheapness to test):
+* **σ² calibration.** I used the Just/Bamler small-angle
+  approximation `(1 − γ²) / (2L γ²)`. SNAPHU uses the full Lee 1994
+  variance. For low coh / few looks the two diverge noticeably.
+* **Offset polarity.** The Carballo per-direction split (DOWN gets
+  `+α`, UP gets `−α`) translates to opposite signed offsets on the
+  two arcs of one pixel edge. The math checks out on paper but
+  empirically: try the opposite convention and see if NISAR moves.
+* **Whole-image vs tiled.** SNAPHU runs 9×9 tiles + a separate
+  stitching pass. Whole-image convex MCF can lock into a different
+  global optimum on a large scene.
+* **Negative reduced costs without Bellman-Ford.** The analysis in
+  Phase 4 said the standard SSP potential update keeps reduced
+  costs ≥ 0 even in convex mode, but the proof assumes properties
+  that may not hold across iterations. The release-build `dial.rs`
+  `debug_assert!(rc >= 0)` is stripped; negative reduced costs would
+  silently corrupt the Dijkstra result.
+
+Hold the convex prototype here for now — the PV result and the
+synthetic test confirm the implementation works in principle, but the
+NISAR regression means convex-as-implemented is not the answer.
+Diagnosis on which of the four suspects above is the cause is the
+next step before deciding to push convex further.
+
 ## Out of scope (for this prototype)
 
 * **Combining convex + reuse.** Convex cost should subsume reuse

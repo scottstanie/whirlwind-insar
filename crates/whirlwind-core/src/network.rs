@@ -143,6 +143,20 @@ impl Network {
         net.convex_mode = true;
         net.offsets = offsets.to_vec();
         net.weights = weights.to_vec();
+        // Unit-capacity MCF starts reverse arcs as `is_saturated = true` so
+        // they're unreachable until forward flow opens them. Convex_mode
+        // wants reverse arcs available from t=0 (the cost is parabolic; the
+        // cheaper push direction can be backward). Unsaturate reverse arcs
+        // that aren't part of a masked-out edge — forbidden arcs (`fwd=true,
+        // rev=true`) stay forbidden; only the (fwd=false, rev=true) entries
+        // get unsaturated to (false, false).
+        let nf_total = net.num_forward();
+        for fwd in 0..nf_total {
+            let rev = fwd + nf_total;
+            if !net.is_saturated[fwd] {
+                net.is_saturated.set(rev, false);
+            }
+        }
         net
     }
 
