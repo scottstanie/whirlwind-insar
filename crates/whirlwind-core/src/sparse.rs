@@ -21,7 +21,7 @@
 //! one-shot entry point (e.g. to inject a B_perp warm-start via
 //! `Network::warm_start`).
 
-use crate::cost::COST_SCALE;
+use crate::cost::{COST_SCALE, CRLB_VARIANCE_FLOOR, CRLB_VARIANCE_NODATA};
 use crate::network::Network;
 use crate::primal_dual;
 use crate::residual_graph::ResidualGraph;
@@ -127,15 +127,22 @@ pub fn compute_triangle_residues(
 /// pre-saturated so MCF cannot route flow through them).
 ///
 /// Length of `costs` = `num_forward = 2 * E`, with the canonical and reversed
-/// forward arcs each getting the same cost (symmetric CRLB recipe —
-/// direction-dependent costs are reserved for a future Carballo-style
-/// implementation that needs the smoothed phase gradient on each
-/// triangulation edge).
+/// forward arcs each getting the same cost (symmetric — there is no α term
+/// on the sparse triangulation edges; direction-dependent costs are reserved
+/// for a future Carballo-style implementation that needs the smoothed phase
+/// gradient on each triangulation edge).
 ///
-/// Recipe: `cost(edge) = round((σ²_a + σ²_b) / 2 * COST_SCALE)`, clamped
-/// non-negative. Edges with non-finite variance at either endpoint are
-/// flagged in `forbidden_fwd`; their cost is set to 0 (any value works since
-/// MCF won't use them) and both forward arcs are forbidden.
+/// Recipe: per-pixel variances are clamped to `[CRLB_VARIANCE_FLOOR,
+/// CRLB_VARIANCE_NODATA]` (≤0 / non-finite → nodata), then
+/// `cost(edge) = round(π / (σ²_a + σ²_b) · COST_SCALE)`. This is the
+/// inverse-variance "reliability weight" convention used by the dense CRLB
+/// path: reliable edges get a *high* cost so the MCF avoids putting wraps
+/// there, and unreliable edges get a *low* cost so wrap lines are free to
+/// route through them.
+///
+/// Edges with non-finite variance at either endpoint are flagged in
+/// `forbidden_fwd`; their cost is set to 0 (any value works since MCF won't
+/// use them) and both forward arcs are forbidden.
 ///
 /// Returns `(costs, forbidden_fwd)`.
 pub fn compute_edge_costs(g: &TriangulatedGraph, variance: &[f32]) -> (Vec<i32>, BitVec) {
@@ -143,25 +150,36 @@ pub fn compute_edge_costs(g: &TriangulatedGraph, variance: &[f32]) -> (Vec<i32>,
     let nf = 2 * e;
     let mut costs = vec![0_i32; nf];
     let mut forbidden = bitvec![0; nf];
+    let pi = std::f32::consts::PI;
     for i in 0..e {
         let (pa, pb) = g.edge_pixel_pair(i);
-        let va = variance[pa as usize];
-        let vb = variance[pb as usize];
-        if !va.is_finite() || !vb.is_finite() {
+        let va_raw = variance[pa as usize];
+        let vb_raw = variance[pb as usize];
+        if !va_raw.is_finite() || !vb_raw.is_finite() {
             // Pre-saturate both forward arcs of this edge (canonical at index
             // `i` and reversed at index `i + e`). MCF will skip these arcs
-            // entirely. Without this guard, treating NaN as `var=0` produced
-            // a *cheap* edge — MCF then preferentially routes flow through
-            // unreliable pixels, the opposite of what we want.
+            // entirely.
             forbidden.set(i, true);
             forbidden.set(i + e, true);
             continue;
         }
-        let c = ((0.5 * (va + vb)) * COST_SCALE).round().max(0.0) as i32;
+        let va = per_pixel_var(va_raw);
+        let vb = per_pixel_var(vb_raw);
+        let w = 1.0 / (va + vb);
+        let c = (w * pi * COST_SCALE).round().max(0.0) as i32;
         costs[i] = c;
         costs[i + e] = c;
     }
     (costs, forbidden)
+}
+
+#[inline]
+fn per_pixel_var(v: f32) -> f32 {
+    if !v.is_finite() || v <= 0.0 {
+        CRLB_VARIANCE_NODATA
+    } else {
+        v.clamp(CRLB_VARIANCE_FLOOR, CRLB_VARIANCE_NODATA)
+    }
 }
 
 /// Integrate the flow-corrected wrapped gradients into per-pixel unwrapped
@@ -398,6 +416,47 @@ mod tests {
         // Tolerance: integer-cycle errors would be ≥ 2π ≈ 6.28, so anything
         // under 1 rad means MCF + integration recovered the ramp correctly.
         assert!(max_err < 0.5, "wrapping-ramp recovery error: {max_err}");
+    }
+
+    /// Reliable edges (low variance) must get a HIGH cost so MCF avoids
+    /// putting wraps there. Unreliable edges (high variance) must get a LOW
+    /// cost so wrap lines are free to route through them.
+    ///
+    /// Regression: an earlier version computed `cost ∝ variance`, which is
+    /// the inverted convention and silently routed wraps through reliable
+    /// pixels.
+    #[test]
+    fn reliable_edges_cost_more_than_unreliable() {
+        // Two reliable pixels close together and two unreliable pixels close
+        // together (and far from the first pair); the Delaunay triangulation
+        // is guaranteed to include both within-cluster edges.
+        let pts = vec![
+            Point { x: 0.0, y: 0.0 },
+            Point { x: 1.0, y: 0.1 },
+            Point { x: 10.0, y: 5.0 },
+            Point { x: 11.0, y: 5.1 },
+        ];
+        let g = TriangulatedGraph::new(&pts).unwrap();
+        // Pixels 0,1 reliable; pixels 2,3 unreliable.
+        let variance = vec![0.05_f32, 0.05, 5.0, 5.0];
+        let (costs, _forbidden) = compute_edge_costs(&g, &variance);
+
+        let e = g.num_edges();
+        let mut reliable_cost: Option<i32> = None;
+        let mut unreliable_cost: Option<i32> = None;
+        for i in 0..e {
+            let (pa, pb) = g.edge_pixel_pair(i);
+            let a_rel = pa <= 1 && pb <= 1;
+            let b_unrel = pa >= 2 && pb >= 2;
+            if a_rel { reliable_cost = Some(costs[i]); }
+            if b_unrel { unreliable_cost = Some(costs[i]); }
+        }
+        let r = reliable_cost.expect("reliable edge must exist in triangulation");
+        let u = unreliable_cost.expect("unreliable edge must exist in triangulation");
+        assert!(
+            r > 10 * u,
+            "reliable edge cost {r} must dominate unreliable {u} (inverse-variance convention)"
+        );
     }
 
     /// Edges whose endpoints have non-finite variance must be pre-saturated
