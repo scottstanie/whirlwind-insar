@@ -37,6 +37,49 @@ References (same NISAR scene):
 fastest path to SNAPHU-quality unwraps. The work documented below is
 the research effort to get there *without* Goldstein.
 
+## Has any of this slowed down the production path?
+
+**No.** The reuse / convex / grounded prototypes are all new
+top-level entry points (`unwrap_reuse`, `unwrap_convex`,
+`unwrap_grounded`); the original `unwrap` / `unwrap_with_components` /
+`unwrap_crlb_*` functions are byte-identical in their call paths
+because all the conditional logic for the prototypes goes through
+`reuse_mode` / `convex_mode` flags on `Network` that default to
+false and short-circuit out in the existing default paths.
+
+The original production path (Carballo cost + Goldstein α=0.7 + Dial
+bucket-queue Dijkstra + unit-capacity MCF) still clocks **38 s on
+NISAR for 99.90 % K-match** — unchanged from PR #19.
+
+Per-prototype wall times (NISAR 6811×6912, 25M valid px):
+
+| function | wall | × baseline | notes |
+|---|---:|---:|---|
+| `unwrap`         |  75 s | 1.0 × | linear coh cost, unit-cap MCF, Dial |
+| `unwrap`+Goldstein α=0.7 | 38 s | 0.5 × | *faster* than no Goldstein (filter shrinks the residue field) |
+| `unwrap_reuse`   |  93 s | 1.2 × | linear coh + multi-unit flow + reduced-cost-0 on used arcs |
+| `unwrap_convex`  | 402 s | 5.4 × | quadratic cost, heap backend (Dial bucket vec would be GB-scale on convex weights) |
+
+The convex prototype is the only one with notable slowdown. Two
+contributing factors:
+* Convex cost lives on much wider integer range (max marginal ≈
+  10⁷ vs ~300 for Carballo). The Dial bucket-queue Dijkstra needs
+  `K+1` buckets where K = max reduced cost — physically impossible
+  at convex magnitudes. The `shortest_path::dijkstra_multi_source`
+  dispatcher therefore forces convex networks to the binary-heap
+  backend, which is O(E log V) vs Dial's O(V + E + K) and slower
+  per-edge in practice.
+* The Lee 1994 variance LUT replacement for Just/Bamler (committed
+  earlier as the σ² fix) gave a side-effect 90× speedup on the
+  synthetic diagonal-ramp test (91 s → 0.97 s) because the weight
+  magnitudes are now more sensible. So the convex runtime is
+  *much* better than the first-cut implementation.
+
+The reuse prototype runtime tax (1.2× on NISAR, 5× on PV) is the
+honest cost of multi-unit flow without saturation. If we ever ship
+reuse as a non-prototype path, profiling its per-relax overhead is
+the obvious cleanup.
+
 ## What has been ruled out (don't re-run these)
 
 ### Cost-shape tweaks confined to the linear unit-capacity SSP
