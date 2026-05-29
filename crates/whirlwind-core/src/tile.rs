@@ -241,6 +241,7 @@ pub fn unwrap_tiled(
     mask: Option<ArrayView2<bool>>,
     tile_size: usize,
     overlap: usize,
+    multilook: usize,
 ) -> Result<Array2<f32>, UnwrapError> {
     let (m, n) = igram.dim();
     if (m, n) != corr.dim() {
@@ -248,6 +249,24 @@ pub fn unwrap_tiled(
     }
     if m < 2 || n < 2 {
         return Err(UnwrapError::TooSmall((m, n)));
+    }
+    // MULTILOOK-FIRST (for noisy / moderate-coherence scenes, e.g. Sentinel-1).
+    // whirlwind's linear cost mis-routes through noisy phase; coherently
+    // down-looking ×`multilook` suppresses that noise, after which the SAME
+    // tiled+anchor+cascade pipeline reaches SNAPHU quality. We tile the coarse
+    // (a whole-image coarse solve still has residual runaway), then upsample.
+    if multilook > 1 {
+        let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, multilook);
+        let (cm, cn) = cig.dim();
+        // Small coarse tiles bound the runaway (validated: whole-image coarse
+        // ≈83% vs tiled-coarse ≈97.7% on Atlanta). 1 ⇒ no further multilook.
+        let cts = 128.min(cm).min(cn);
+        let cov = (cts / 4).max(2);
+        let coarse = unwrap_tiled(
+            cig.view(), ccorr.view(), nlooks * (multilook * multilook) as f32,
+            Some(cmask.view()), cts, cov, 1,
+        )?;
+        return Ok(upsample_blockrep(&coarse, multilook, m, n));
     }
     if tile_size >= m && tile_size >= n {
         return crate::unwrap(igram, corr, nlooks, mask);
@@ -303,17 +322,65 @@ pub fn unwrap_tiled(
     }
     let offsets_2pi = reconcile_offsets_mcf(rows, cols, &gh, &wh, &gv, &wv);
 
-    // 3) Composite: first tile (top-left in BFS order) to claim a pixel wins.
-    let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
+    // 3) FEATHERED composite. A hard "first-tile-wins" switch leaves a faint
+    //    1-px seam line wherever two tiles' (offset-aligned) values differ by a
+    //    fraction of a cycle. Instead, blend overlapping tiles with a
+    //    triangular taper (peaks at tile centre, ≥1 at edges) so that small
+    //    disagreement is spread smoothly across the overlap. A genuine 2π tear
+    //    must NOT be averaged into a half-cycle, so we gate: pass 1 finds each
+    //    pixel's dominant (max-weight) tile value as a reference; pass 2
+    //    weighted-averages only tiles whose value agrees within π of it.
+    let taper = |p: usize, len: usize| -> f32 { (p + 1).min(len - p) as f32 };
+    let mut refv = Array2::<f32>::from_elem((m, n), f32::NAN);
+    let mut refw = Array2::<f32>::zeros((m, n));
     for (idx, (tile, unw)) in grid.tiles.iter().zip(tile_unws.iter()).enumerate() {
         let off = offsets_2pi[idx] as f32 * TAU;
-        for ti in 0..tile.rows() {
+        let (tr, tc) = (tile.rows(), tile.cols());
+        for ti in 0..tr {
             let gi = tile.r0 + ti;
-            for tj in 0..tile.cols() {
-                let gj = tile.c0 + tj;
-                if out[(gi, gj)].is_nan() {
-                    out[(gi, gj)] = unw[(ti, tj)] + off;
+            let wr = taper(ti, tr);
+            for tj in 0..tc {
+                let v = unw[(ti, tj)];
+                if !v.is_finite() {
+                    continue;
                 }
+                let w = wr * taper(tj, tc);
+                let gj = tile.c0 + tj;
+                if w > refw[(gi, gj)] {
+                    refw[(gi, gj)] = w;
+                    refv[(gi, gj)] = v + off;
+                }
+            }
+        }
+    }
+    let mut acc = Array2::<f32>::zeros((m, n));
+    let mut wsum = Array2::<f32>::zeros((m, n));
+    for (idx, (tile, unw)) in grid.tiles.iter().zip(tile_unws.iter()).enumerate() {
+        let off = offsets_2pi[idx] as f32 * TAU;
+        let (tr, tc) = (tile.rows(), tile.cols());
+        for ti in 0..tr {
+            let gi = tile.r0 + ti;
+            let wr = taper(ti, tr);
+            for tj in 0..tc {
+                let v = unw[(ti, tj)];
+                if !v.is_finite() {
+                    continue;
+                }
+                let gj = tile.c0 + tj;
+                let val = v + off;
+                if (val - refv[(gi, gj)]).abs() < TAU * 0.5 {
+                    let w = wr * taper(tj, tc);
+                    acc[(gi, gj)] += w * val;
+                    wsum[(gi, gj)] += w;
+                }
+            }
+        }
+    }
+    let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
+    for gi in 0..m {
+        for gj in 0..n {
+            if wsum[(gi, gj)] > 0.0 {
+                out[(gi, gj)] = acc[(gi, gj)] / wsum[(gi, gj)];
             }
         }
     }
@@ -587,18 +654,18 @@ fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
 /// INTEGER 2π level (via a coherence-weighted mode over the whole region), so a
 /// sub-cycle smoothing error in the anchor does not propagate, and a local
 /// anchor error is outvoted by the rest of its region.
-fn compute_coarse_anchor(
+/// Coherent ×`lk` down-look of the complex igram: unit-phasor block mean (the
+/// physically-correct coherent average — never average wrapped phase across
+/// 2π), block-mean coherence, and validity = a majority of the block valid.
+/// Suppresses noise and re-estimates phase; effective looks scale by `lk²`.
+fn multilook_complex(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
-    nlooks: f32,
     mask: Option<ArrayView2<bool>>,
     lk: usize,
-) -> Option<Array2<f32>> {
+) -> (Array2<Complex32>, Array2<f32>, Array2<bool>) {
     let (m, n) = igram.dim();
     let (cm, cn) = (m / lk, n / lk);
-    if cm < 2 || cn < 2 {
-        return None;
-    }
     let mut cig = Array2::<Complex32>::zeros((cm, cn));
     let mut ccorr = Array2::<f32>::zeros((cm, cn));
     let mut cmask = Array2::<bool>::from_elem((cm, cn), false);
@@ -616,7 +683,6 @@ fn compute_coarse_anchor(
                     }
                 }
             }
-            // Require a majority of the block valid so the coarse phasor is meaningful.
             if cnt * 2 >= lk * lk {
                 let mag = zs.norm();
                 cig[(ci, cj)] = if mag > 0.0 { zs / mag } else { zs };
@@ -625,28 +691,42 @@ fn compute_coarse_anchor(
             }
         }
     }
-    // One whole-image solve on the coarse image; effective looks scale by lk².
-    let cunw = crate::unwrap(
-        cig.view(),
-        ccorr.view(),
-        nlooks * (lk * lk) as f32,
-        Some(cmask.view()),
-    )
-    .ok()?;
-    // Block-replicate back to full resolution (nearest-neighbour: we only ever
-    // consume round((anchor − unw)/2π), an integer, so no smooth interp needed).
-    let mut anchor = Array2::<f32>::from_elem((m, n), f32::NAN);
+    (cig, ccorr, cmask)
+}
+
+/// Block-replicate a coarse field to `(m, n)` (nearest-neighbour). The trailing
+/// `< lk` strip (when `m`/`n` aren't divisible by `lk`) has no coarse cell and
+/// stays NaN.
+fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Array2<f32> {
+    let (cm, cn) = coarse.dim();
+    let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
     for i in 0..m {
         for j in 0..n {
-            // The trailing < lk strip (m, n not divisible by lk) has no coarse
-            // cell — leave it NaN so those pixels keep their tiled level.
             let (ci, cj) = (i / lk, j / lk);
-            if ci < cm && cj < cn && cunw[(ci, cj)].is_finite() {
-                anchor[(i, j)] = cunw[(ci, cj)];
+            if ci < cm && cj < cn && coarse[(ci, cj)].is_finite() {
+                out[(i, j)] = coarse[(ci, cj)];
             }
         }
     }
-    Some(anchor)
+    out
+}
+
+fn compute_coarse_anchor(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    lk: usize,
+) -> Option<Array2<f32>> {
+    let (m, n) = igram.dim();
+    if m / lk < 2 || n / lk < 2 {
+        return None;
+    }
+    let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, lk);
+    // One whole-image solve on the tiny coarse image; effective looks ×lk².
+    let cunw = crate::unwrap(cig.view(), ccorr.view(), nlooks * (lk * lk) as f32, Some(cmask.view())).ok()?;
+    // Block-replicate to full res (we only consume round((anchor−unw)/2π)).
+    Some(upsample_blockrep(&cunw, lk, m, n))
 }
 
 fn coarse_refine(
@@ -1219,7 +1299,7 @@ mod tests {
         let corr = Array2::<f32>::from_elem((m, n), 0.9);
 
         let whole = unwrap(igram.view(), corr.view(), 10.0, None).unwrap();
-        let tiled = unwrap_tiled(igram.view(), corr.view(), 10.0, None, 32, 8).unwrap();
+        let tiled = unwrap_tiled(igram.view(), corr.view(), 10.0, None, 32, 8, 1).unwrap();
 
         let align = |u: &Array2<f32>| -> Array2<f32> {
             let off = u.iter().zip(truth.iter()).map(|(&u, &t)| u - t).sum::<f32>()

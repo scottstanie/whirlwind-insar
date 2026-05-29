@@ -32,7 +32,7 @@ use pyo3::types::PyDict;
 ///   overlap-median 2π reconciliation. Bounds per-IG MCF memory to
 ///   tile-size scale and keeps flow local (prevents whole-frame runaway).
 #[pyfunction]
-#[pyo3(signature = (igram, corr, nlooks, mask = None, tile_size = 0, tile_overlap = 0))]
+#[pyo3(signature = (igram, corr, nlooks, mask = None, tile_size = 0, tile_overlap = 0, multilook = 1))]
 fn unwrap<'py>(
     py: Python<'py>,
     igram: PyReadonlyArray2<'py, Complex32>,
@@ -41,15 +41,20 @@ fn unwrap<'py>(
     mask: Option<PyReadonlyArray2<'py, bool>>,
     tile_size: usize,
     tile_overlap: usize,
+    multilook: usize,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let ig = igram.as_array();
     let co = corr.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
-    let use_tiling = tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size;
+    // `multilook > 1` routes through the tiled path's multilook-first branch
+    // (coherent down-look → tiled+anchor+cascade on the coarse → upsample) for
+    // noisy / moderate-coherence scenes, even when no tile_size is given.
+    let use_tiling =
+        multilook > 1 || (tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size);
 
     let unw = py.detach(|| {
         if use_tiling {
-            whirlwind_core::tile::unwrap_tiled(ig, co, nlooks, m, tile_size, tile_overlap)
+            whirlwind_core::tile::unwrap_tiled(ig, co, nlooks, m, tile_size, tile_overlap, multilook)
         } else {
             whirlwind_core::unwrap(ig, co, nlooks, m)
         }

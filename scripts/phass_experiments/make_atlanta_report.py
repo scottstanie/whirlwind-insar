@@ -66,7 +66,7 @@ def main() -> None:
     mask = np.load(OUT / "atlanta_mask.npy")
     wrapped = np.load(OUT / "atlanta_wrapped.npy")
     fine = np.load(OUT / "atlanta_anchor_unw.npy")                 # fine tiled (26%)
-    ml8 = pad_to(np.load(OUT / "atlanta_ml8_tiled128_unw.npy"), mask.shape)  # 97.66%
+    ml8 = pad_to(np.load(OUT / "atlanta_ml8api_unw.npy"), mask.shape)  # multilook=8 API, 97.7%
     refu = np.nan_to_num(kref) * TAU + wrapped
     labels, counts = np.unique(cc[cc > 0], return_counts=True)
     mainland = mask & (cc == int(labels[np.argmax(counts)]))
