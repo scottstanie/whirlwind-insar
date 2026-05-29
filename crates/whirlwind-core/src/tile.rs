@@ -412,13 +412,15 @@ pub fn unwrap_tiled(
         }
     }
 
-    // 5) Heal residual 1-px MCF "ghost" discharge lines: a thin vertical/
-    //    horizontal strip the per-tile solve left a full cycle off. Snap any
-    //    pixel whose two opposite neighbours agree it is the same nonzero
-    //    integer #cycles off. Coherence-gated (decorrelated columns don't
-    //    matter and shouldn't be touched). `WHIRLWIND_NO_HEAL=1` disables it.
+    // 5) Heal residual thin MCF "sliver" artifacts: a ≤4-px vertical/horizontal
+    //    run the per-tile residue-pairing left a constant integer #cycles off
+    //    from a surround that AGREES on both sides (a tie-break in noise, not a
+    //    cost-shape error — present under linear and convex costs alike, so no
+    //    cost removes it). Bounded + coherence-gated; cannot fire across a real
+    //    fringe (its two sides sit at different levels). `WHIRLWIND_NO_HEAL=1`
+    //    disables it.
     if std::env::var("WHIRLWIND_NO_HEAL").is_err() {
-        heal_thin_lines(&mut out, corr, mask, 0.2, 6);
+        heal_thin_slivers(&mut out, corr, mask, 0.2, 4, 6);
     }
     Ok(out)
 }
@@ -948,49 +950,113 @@ fn coarse_refine(
     }
 }
 
-/// Heal 1-px "ghost" discharge lines the per-tile MCF can leave: a thin
-/// vertical or horizontal strip unwrapped a full cycle off in an otherwise
-/// locally-consistent area. A pixel is snapped iff BOTH of an opposite
-/// neighbour pair (left+right, or up+down) agree it sits the SAME nonzero
-/// integer number of cycles off. That condition cannot fire on a real fringe
-/// (there the two neighbour offsets differ), so genuine signal is untouched.
-/// Coherence-gated: decorrelated columns (coh ≤ `min_coh`) carry no signal and
-/// are skipped. Iterated so 1-px strips adjacent to freshly-healed pixels
-/// settle; fixes within an iteration are computed against the pre-iteration
-/// field then applied together (order-independent).
-fn heal_thin_lines(
+/// Heal thin "sliver" artifacts the MCF residue-pairing can leave: a thin
+/// (≤ `max_w` px wide) run of pixels unwrapped a constant nonzero integer
+/// number of cycles off from a coherent surround that AGREES on both sides.
+///
+/// These are tie-break artifacts — a spurious branch cut the unit-capacity MCF
+/// laid down in moderate-coherence noise (e.g. NISAR col 4032, a 2-px −1 sliver
+/// over ~420 rows on coh≈0.65 where SNAPHU is flat). They are NOT a cost-shape
+/// problem (present under both the linear and convex costs), so no per-arc cost
+/// removes them; a bounded integer-consistency cleanup is the right tool.
+///
+/// A run is snapped iff the coherent pixel just past EACH end sits the SAME
+/// nonzero integer `c` cycles above the run (`cL == cR == c ≠ 0`) — i.e. the
+/// run is a thin island `c` cycles below an otherwise-continuous surround. That
+/// cannot hold across a real fringe (its two sides sit at different levels), so
+/// genuine signal is untouched; and a real ≤`max_w`-px feature a full cycle off
+/// from an agreeing surround is an artifact, not deformation. Coherence-gated
+/// (`coh > min_coh`); runs in both orientations (the row pass catches vertical
+/// lines, the column pass horizontal); iterated so adjacent slivers settle,
+/// with fixes computed against the pre-iteration field then applied together.
+///
+/// `max_w = 1` reduces to the original immediate-neighbour 1-px heal.
+fn heal_thin_slivers(
     unw: &mut Array2<f32>,
     corr: ArrayView2<f32>,
     mask: Option<ArrayView2<bool>>,
     min_coh: f32,
+    max_w: usize,
     iters: usize,
 ) {
     let (m, n) = unw.dim();
     let ok = |unw: &Array2<f32>, i: usize, j: usize| {
         mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite() && corr[(i, j)] > min_coh
     };
+    // Pixels within this of the run base are treated as the same integer level.
+    let same_level = std::f32::consts::PI;
     for _ in 0..iters {
         let mut fixes: Vec<(usize, usize, f32)> = Vec::new();
+        // Row pass: vertical-line slivers (a run along columns within one row).
         for i in 0..m {
-            for j in 0..n {
-                if !ok(unw, i, j) {
+            let mut j = 1;
+            while j + 1 < n {
+                if !ok(unw, i, j) || !ok(unw, i, j - 1) {
+                    j += 1;
                     continue;
                 }
-                if j >= 1 && j + 1 < n && ok(unw, i, j - 1) && ok(unw, i, j + 1) {
-                    let kl = ((unw[(i, j - 1)] - unw[(i, j)]) / TAU).round() as i64;
-                    let kr = ((unw[(i, j + 1)] - unw[(i, j)]) / TAU).round() as i64;
-                    if kl == kr && kl != 0 {
-                        fixes.push((i, j, kl as f32 * TAU));
+                let cl = ((unw[(i, j - 1)] - unw[(i, j)]) / TAU).round() as i64;
+                if cl == 0 {
+                    j += 1;
+                    continue; // left neighbour is same level — not a left edge
+                }
+                let base = unw[(i, j)];
+                let mut e = j; // extend the same-level run rightward, bounded by max_w
+                while e + 1 < n
+                    && e + 1 - j < max_w
+                    && ok(unw, i, e + 1)
+                    && (unw[(i, e + 1)] - base).abs() < same_level
+                {
+                    e += 1;
+                }
+                if e + 1 < n && ok(unw, i, e + 1) {
+                    let cr = ((unw[(i, e + 1)] - unw[(i, e)]) / TAU).round() as i64;
+                    if cr == cl && cr != 0 {
+                        let d = cl as f32 * TAU;
+                        for jj in j..=e {
+                            fixes.push((i, jj, d));
+                        }
+                        j = e + 1;
                         continue;
                     }
                 }
-                if i >= 1 && i + 1 < m && ok(unw, i - 1, j) && ok(unw, i + 1, j) {
-                    let ku = ((unw[(i - 1, j)] - unw[(i, j)]) / TAU).round() as i64;
-                    let kd = ((unw[(i + 1, j)] - unw[(i, j)]) / TAU).round() as i64;
-                    if ku == kd && ku != 0 {
-                        fixes.push((i, j, ku as f32 * TAU));
+                j += 1;
+            }
+        }
+        // Column pass: horizontal-line slivers (a run along rows within one col).
+        for jc in 0..n {
+            let mut i = 1;
+            while i + 1 < m {
+                if !ok(unw, i, jc) || !ok(unw, i - 1, jc) {
+                    i += 1;
+                    continue;
+                }
+                let cu = ((unw[(i - 1, jc)] - unw[(i, jc)]) / TAU).round() as i64;
+                if cu == 0 {
+                    i += 1;
+                    continue;
+                }
+                let base = unw[(i, jc)];
+                let mut e = i;
+                while e + 1 < m
+                    && e + 1 - i < max_w
+                    && ok(unw, e + 1, jc)
+                    && (unw[(e + 1, jc)] - base).abs() < same_level
+                {
+                    e += 1;
+                }
+                if e + 1 < m && ok(unw, e + 1, jc) {
+                    let cd = ((unw[(e + 1, jc)] - unw[(e, jc)]) / TAU).round() as i64;
+                    if cd == cu && cd != 0 {
+                        let d = cu as f32 * TAU;
+                        for ii in i..=e {
+                            fixes.push((ii, jc, d));
+                        }
+                        i = e + 1;
+                        continue;
                     }
                 }
+                i += 1;
             }
         }
         if fixes.is_empty() {
@@ -1370,26 +1436,58 @@ mod tests {
     }
 
     #[test]
-    fn heal_thin_lines_removes_ghost_strip() {
+    fn heal_thin_slivers_removes_1px_2px_3px_and_spares_fringe() {
         use ndarray::Array2;
-        // Smooth ramp + a 1-px vertical column offset by +1 cycle in a
-        // coherent area: heal must snap it back; the smooth ramp (gradient ≪ π)
-        // must be untouched (its neighbour offsets round to 0).
-        let (m, n) = (40usize, 40usize);
+        // Smooth ramp + three slivers of width 1, 2, 3 each offset by an integer
+        // cycle in a coherent area: the bounded continuity-cleanup must snap all
+        // three back (the col-4032 case is the width-2 one). The smooth ramp
+        // (gradient ≪ π) must be untouched.
+        let (m, n) = (60usize, 60usize);
         let truth = Array2::from_shape_fn((m, n), |(i, j)| 0.05 * i as f32 + 0.04 * j as f32);
         let mut unw = truth.clone();
-        for i in 5..35 {
-            unw[(i, 20)] += TAU;
+        for i in 5..55 {
+            unw[(i, 10)] += TAU; // width-1, +1
+            unw[(i, 25)] -= TAU; // width-2, -1
+            unw[(i, 26)] -= TAU;
+            unw[(i, 40)] += TAU; // width-3, +1
+            unw[(i, 41)] += TAU;
+            unw[(i, 42)] += TAU;
         }
         let coh = Array2::<f32>::from_elem((m, n), 0.8);
-        heal_thin_lines(&mut unw, coh.view(), None, 0.2, 4);
+        heal_thin_slivers(&mut unw, coh.view(), None, 0.2, 4, 6);
         let mut maxres = 0.0_f32;
         for i in 0..m {
             for j in 0..n {
                 maxres = maxres.max((unw[(i, j)] - truth[(i, j)]).abs());
             }
         }
-        assert!(maxres < 1e-3, "ghost strip not healed: max residual {maxres}");
+        assert!(maxres < 1e-3, "slivers not healed: max residual {maxres}");
+    }
+
+    #[test]
+    fn heal_thin_slivers_spares_real_fringe_step() {
+        use ndarray::Array2;
+        // A genuine 2π step (left half one cycle below the right half) is a REAL
+        // discontinuity, not a thin sliver: the two sides do NOT agree on a
+        // common surround, so the cleanup must leave it alone. (A wide block, not
+        // a ≤4-px run.)
+        let (m, n) = (40usize, 40usize);
+        let mut unw = Array2::from_shape_fn((m, n), |(i, j)| 0.03 * i as f32 + 0.03 * j as f32);
+        for i in 0..m {
+            for j in 20..n {
+                unw[(i, j)] += TAU; // right half a full cycle up
+            }
+        }
+        let before = unw.clone();
+        let coh = Array2::<f32>::from_elem((m, n), 0.8);
+        heal_thin_slivers(&mut unw, coh.view(), None, 0.2, 4, 6);
+        let mut maxdelta = 0.0_f32;
+        for i in 0..m {
+            for j in 0..n {
+                maxdelta = maxdelta.max((unw[(i, j)] - before[(i, j)]).abs());
+            }
+        }
+        assert!(maxdelta < 1e-6, "cleanup wrongly touched a real 2π step: max delta {maxdelta}");
     }
 
     #[test]
