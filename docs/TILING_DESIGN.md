@@ -1,15 +1,22 @@
 # Tiling for whirlwind-rs — design + artifact analysis
 
-> **Status (2026-05):** *Stage 1* is implemented. The CRLB unwrap exposes
-> overlap-median-stitched tiling as `unwrap_crlb_tiled` in Rust and via
-> `tile_size` / `tile_overlap` kwargs on the Python `unwrap_crlb`; see
-> `ATBD-3d.md §10.6` for validation numbers (99.78 % per-pixel agreement
-> with the non-tiled output at `tile_size=512 / overlap=128`). Stage 2
-> (per-region SNAPHU-style secondary MCF) and Stage 3 (warm-started
-> full-image reoptimize) are not implemented; the document below is
-> retained as the original design rationale and a record of the known
-> failure modes (Chen & Zebker 2002, Fig 7) that motivate moving to
-> Stage 2 if the overlap-median stitch is insufficient.
+> **Status (2026-05, updated session 3).** Superseded on the critical path —
+> read this for design rationale + failure-mode analysis, but the production
+> pipeline is now richer than the Stage 1/2/3 plan below. The **coherence**
+> `unwrap(..., tile_size=512, tile_overlap=64)` runs: per-tile MCF → MCF
+> secondary-net seam reconciliation (`reconcile_offsets_mcf`, the planned
+> Stage 2, built) → **global coarse anchor** (multilook ×8, whole-image solve,
+> region-mode snap) → **multi-scale cascade** (`coarse_refine` f=16,8,4) →
+> **feathered seam composite**. This reaches **99.79 % K-match / 0 % multi-cycle
+> on NISAR in 3.9 s** vs SNAPHU 9×9's ~17 min, no Goldstein. Noisy scenes use
+> `multilook=L` (Atlanta S-1 → 97.7 %). The global anchor + cascade made the
+> planned per-region secondary MCF and Stage 3 warm-started reoptimize
+> unnecessary on the critical path. Method + figures:
+> [`../paper/report_anchor_cascade.md`](../paper/report_anchor_cascade.md).
+> The CRLB unwrap still exposes the simpler overlap-median tiling as
+> `unwrap_crlb_tiled` (`ATBD-3d.md §10.6`, 99.78 % per-pixel agreement). The
+> design rationale and the known failure modes (Chen & Zebker 2002, Fig 7)
+> below remain accurate and motivate the architecture above.
 >
 > A working Stage 3 prototype was *attempted* in a now-closed branch
 > (PR #7, May 2026); the primitives round-trip in isolation but do not

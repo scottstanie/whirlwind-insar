@@ -23,6 +23,20 @@ bounds memory to tile scale** — the "fast unwrapper that isn't a memory
 exploder" goal. It is exposed on the existing Python `unwrap` via
 `tile_size` / `tile_overlap` (mirrors `unwrap_crlb`).
 
+> **Update (session 3, committed e24e0ed / 8aa7a1d):** the no-Goldstein path
+> is now the **shippable default** and beats the table above. Tiled + a
+> **global coarse anchor** + a **multi-scale cascade** + a **feathered seam
+> composite** reach **99.79 % K-match (0 % multi-cycle) in 3.9 s** on this
+> NISAR frame — visually identical to SNAPHU 9×9, no Goldstein. For noisy
+> S-1-class scenes a `multilook=8` down-look first gets Atlanta to **97.7 %**
+> (SNAPHU = 97.9 %). Goldstein α=0.7 is now a **legacy/alternative**, not the
+> recommended default; convex cost is a longer-term lever, **not** the fix
+> (its solver is unsound — see Corrections #2 below). Full method + figures:
+> [`report_anchor_cascade.md`](report_anchor_cascade.md). The sections below
+> (why tiling wins, the stitch, the secondary net, coarse-refine, the
+> corrections, Atlanta) remain accurate and are the foundation that path is
+> built on.
+
 ## Why tiling *beats* whole-image (not just lower memory)
 
 A whole-image MCF finds the true cost-optimum; tiling can only approximate
@@ -191,14 +205,19 @@ NISAR vs SNAPHU 9×9 (ts=512, no Goldstein), full pipeline:
 |---|---:|---:|
 | tiled + consensus stitch | 96.6 % | 2.7 % |
 | + MCF secondary net | 97.5 % | 1.7 % |
-| **+ coarse region-refine** | **99.2 %** | **0.21 %** |
+| + coarse region-refine | 99.2 % | 0.21 % |
+| + global coarse anchor | 99.63 % | 0.00 % |
+| **+ multi-scale cascade (f=16,8,4)** | **99.89 %** | **0.00 %** |
+| + feathered seam composite | 99.79 % | 0.00 % |
 
-**99.2 % in 3.5 s, the rectangular artifacts gone, visually matching SNAPHU**
-on the land area — the target. (Residual: a handful of small ≤40 k-px blocks
-in low coherence + 8×-granular region boundaries; the convex per-tile cost is
-the remaining lever for those.) Coarsen factor (8) trades artifact-size
-sensitivity vs steep-fringe safety; gentle scenes like this NISAR frame are
-well inside the safe range.
+**A strong intermediate at 99.2 %; the final winning path** adds a **global
+coarse anchor** (snaps each region's integer cycle level to a seam-free
+multilooked whole-image solve → reaches the no-seam wrong islands the relative
+vote misses; 99.2→99.63, kills the multi-cycle streak), a **multi-scale
+cascade** (`coarse_refine` at f=16,8,4 → 99.63→99.89), and a **feathered seam
+composite** (blends overlaps to erase tile-seam lines — trades 0.10 % mainland
+K-match to cut seam tears 3–5×; 99.89→99.79). All visually match SNAPHU 9×9.
+Full method + figures: [`report_anchor_cascade.md`](report_anchor_cascade.md).
 
 ## Where the code lives
 
@@ -209,11 +228,20 @@ well inside the safe range.
   `goldstein`), `analyze_atlanta.py` (K-match vs OPERA, global + per-cc),
   `plot_atlanta.py`, `plot_nisar_tiled.py`.
 
-## Decision rule for the next round
+## Decision rule (updated session 3)
 
-Goal = a shippable no-Goldstein unwrap: build the **secondary
-reconciliation network** (kills the low-coherence whole-tile offset
-islands), then **convex cost done right inside tiles** (deviation offset +
-warm-start; removes the runaway at the source and unlocks
-`single_tile_reoptimize`). Goldstein α=0.7 remains the working production
-default (99.9 %, 38 s) meanwhile.
+**The shippable no-Goldstein unwrap exists now: tiled + global coarse anchor +
+multi-scale cascade + feathered composite = 99.79 % K-match, 0 % multi-cycle,
+3.9 s on NISAR** (default path, committed e24e0ed / 8aa7a1d). For noisy /
+moderate-coherence scenes pass `multilook=L` (Atlanta S-1 → 97.7 %). The
+secondary reconciliation network was built (`reconcile_offsets_mcf`) and the
+coarse anchor + cascade superseded the planned per-region secondary MCF on the
+critical path. Goldstein α=0.7 is now a **legacy/alternative**, not the
+recommended default.
+
+**Convex cost is a longer-term lever, NOT the current fix.** Its solver is
+unsound (no Bellman-Ford; negative marginal costs routed through plain
+Dijkstra — see Corrections #2). The general win it *could* bring is letting the
+*fine* per-tile solve survive noisy phase without pre-multilooking (so noisy
+scenes wouldn't need `multilook=`). Remaining levers: expose/auto-tune
+`multilook`; convex/statistical per-tile cost; finer seam healing.

@@ -6,9 +6,17 @@ bindings.
 
 Two entry points, sharing the same minimum-cost-flow core:
 
-- **`whirlwind.unwrap(igram, corr, nlooks, mask=None)`** — classical
-  2D unwrap with the Carballo/SNAPHU-style coherence cost. Designed as a
-  drop-in for boxcar interferograms.
+- **`whirlwind.unwrap(igram, corr, nlooks, mask=None, tile_size=512, tile_overlap=64, multilook=1)`**
+  — classical 2D unwrap with the Carballo/SNAPHU-style coherence cost. The
+  real-world default is the **tiled** path (per-tile MCF + global coarse
+  anchor + multi-scale cascade): it reaches SNAPHU quality with no Goldstein
+  workaround, stays memory-bounded, and avoids the whole-image runaway. On a
+  NISAR frame it matches SNAPHU 9×9 at **99.79% K-match** (cc=1 mainland,
+  0% multi-cycle) in **3.9 s** vs SNAPHU's 17 min. For noisy / moderate-
+  coherence scenes (e.g. Sentinel-1) pass **`multilook=8`**: a coherent
+  down-look first suppresses the noise the linear cost can't route through —
+  Atlanta S-1 then unwraps at 97.7% (matching SNAPHU's 97.9%) where the
+  fine solve alone gets 26%. (committed e24e0ed / 8aa7a1d)
 - **`whirlwind.unwrap_crlb(igram, variance, mask=None, tile_size=…)`** —
   CRLB-weighted unwrap for phase-linked interferograms (Dolphin / EVD /
   EMI). The per-pixel CRLB phase variance the phase-linker emits is a
@@ -112,7 +120,13 @@ cargo run --release -p whirlwind-cli -- unwrap \
 import whirlwind as ww
 
 # igram: complex64 (m, n); corr: float32 (m, n) in [0, 1]; mask optional bool.
-unw = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)   # → float32 (m, n)
+# Tiled is the production default: per-tile MCF + global coarse anchor +
+# multi-scale cascade. Reaches SNAPHU quality, no Goldstein, memory-bounded.
+unw = ww.unwrap(igram, corr, nlooks=10.0, mask=mask,
+                tile_size=512, tile_overlap=64)         # → float32 (m, n)
+
+# Noisy / moderate-coherence scene (e.g. Sentinel-1)? Multilook-first:
+unw = ww.unwrap(igram, corr, nlooks=50.0, mask=mask, multilook=8)
 ```
 
 ### Single interferogram, CRLB cost (phase-linked SLCs)
@@ -151,6 +165,14 @@ per-IG RMS of 2.31 rad (anchored at Dolphin's own reference pixel). See
 [`ATBD-3d.md §9`](ATBD-3d.md#9-comparison-with-existing-tools) for the
 full table + figures and `scripts/compare_to_dolphin_unwrapped.py` for
 the validator that produced the numbers.
+
+On a NISAR frame (6811 × 6912) the tiled + anchor + cascade path matches
+SNAPHU 9×9 at **99.79 % K-match** — per-pixel integer-cycle (2π) agreement
+on SNAPHU's cc==1 mainland, with **0 %** multi-cycle (|ΔK|≥2) error — in
+**3.9 s** vs SNAPHU's ~17 min, no Goldstein. On the noisy Atlanta Sentinel-1
+OPERA frame, `multilook=8` reaches **97.7 %** (SNAPHU/OPERA = 97.9 %). See
+[`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) for the
+method, figures, and full progression.
 
 The full pipeline is reproducible end-to-end on any Dolphin output
 directory:
@@ -205,11 +227,13 @@ mask vs 75 s without (139×)**. See `PERFORMANCE.md` for details.
 | 2D MCF unwrap (CRLB cost) | done |
 | Mask support, end-to-end | done |
 | Tiled MCF + overlap-median stitch | done (`unwrap_crlb_tiled`) |
+| Tiled coherence path + global coarse anchor + multi-scale cascade | **done, DEFAULT** (`unwrap(…, tile_size, tile_overlap)`, e24e0ed) |
+| Feathered seam composite + `multilook=` for noisy scenes | done (8aa7a1d) |
 | Virtual ground-node MCF | done (`unwrap_crlb_grounded`) |
 | Temporal closure correction (tree projection) | done, off by default — see [ATBD-3d §10.2](ATBD-3d.md#102-closure-correction-now-hurts-more-than-it-helps) |
 | Per-pixel quality map from temporal triangles | done (`quality_triangles`) |
 | `pyo3` Python bindings, CLI, real-data verification, snaphu benchmark | done |
-| Per-region SNAPHU-style secondary MCF (TILING_DESIGN Stage 2) | not implemented |
+| Per-region SNAPHU-style secondary MCF (TILING_DESIGN Stage 2) | superseded — global coarse anchor + cascade reach SNAPHU quality without it |
 | Spatial-coupling / LAMBDA-style integer LS for 3D | not implemented (future work, [ATBD-3d §10.5](ATBD-3d.md#105-what-would-actually-beat-the-current-default)) |
 
 ## License

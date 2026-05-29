@@ -18,8 +18,20 @@ def unwrap(
     corr: NDArray[np.float32],
     nlooks: float,
     mask: NDArray[np.bool_] | None = ...,
+    tile_size: int = ...,
+    tile_overlap: int = ...,
+    multilook: int = ...,
 ) -> NDArray[np.float32]:
-    """2D phase unwrap with the Carballo/SNAPHU-style coherence cost."""
+    """2D phase unwrap with the Carballo/SNAPHU-style coherence cost.
+
+    With ``tile_size>=4`` and ``2<=tile_overlap<tile_size`` (recommended:
+    ``tile_size=512, tile_overlap=64``) runs the tiled path: per-tile MCF +
+    global coarse anchor + multi-scale cascade — the production default, which
+    reaches SNAPHU quality without Goldstein and stays memory-bounded.
+    ``multilook=L`` (L>1) coherently down-looks the igram ×L first (for noisy /
+    moderate-coherence scenes, e.g. Sentinel-1) then tiles+anchors the coarse
+    and upsamples; routes through the tiled path even with no ``tile_size``.
+    """
 
 def unwrap_crlb(
     igram: NDArray[np.complex64],

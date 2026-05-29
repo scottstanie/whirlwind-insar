@@ -3,6 +3,18 @@
 All numbers below from `cargo run --release --example bench_scale -- --huge`
 on an Apple M-series laptop (12 perf cores, 36 GB RAM).
 
+> **What these numbers are (read first).** The tables below benchmark the
+> **whole-image MCF** on synthetic scenes — a valid *baseline*, but **not** the
+> production path. The shipped default is the **tiled** path (per-tile MCF +
+> global coarse anchor + multi-scale cascade); whole-image MCF *runs away* on
+> real noisy scenes (NISAR: 80 % K-match, 18 % multi-cycle) whereas tiled +
+> anchor + cascade reaches **99.79 % K-match / 0 % multi-cycle in 3.9 s** vs
+> SNAPHU 9×9's ~17 min, and stays memory-bounded to tile scale. Tiling is a
+> **correctness necessity**, not just an optimization. Real-scene method,
+> numbers, and figures: [`../paper/report_anchor_cascade.md`](../paper/report_anchor_cascade.md).
+> The synthetic baselines and the memory/parallelism analysis below remain
+> accurate for what they measure (the per-tile core).
+
 ## Methodology
 
 `crates/whirlwind-core/examples/bench_scale.rs` builds three synthetic scenes at
