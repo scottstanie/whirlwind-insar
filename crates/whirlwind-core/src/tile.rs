@@ -411,6 +411,13 @@ pub fn unwrap_tiled(
             coarse_refine(&mut out, corr, mask, f, av);
         }
     }
+
+    // 5) Heal residual 1-px MCF "ghost" discharge lines: a thin vertical/
+    //    horizontal strip the per-tile solve left a full cycle off. Snap any
+    //    pixel whose two opposite neighbours agree it is the same nonzero
+    //    integer #cycles off. Coherence-gated (decorrelated columns don't
+    //    matter and shouldn't be touched).
+    heal_thin_lines(&mut out, corr, mask, 0.2, 6);
     Ok(out)
 }
 
@@ -939,6 +946,60 @@ fn coarse_refine(
     }
 }
 
+/// Heal 1-px "ghost" discharge lines the per-tile MCF can leave: a thin
+/// vertical or horizontal strip unwrapped a full cycle off in an otherwise
+/// locally-consistent area. A pixel is snapped iff BOTH of an opposite
+/// neighbour pair (left+right, or up+down) agree it sits the SAME nonzero
+/// integer number of cycles off. That condition cannot fire on a real fringe
+/// (there the two neighbour offsets differ), so genuine signal is untouched.
+/// Coherence-gated: decorrelated columns (coh ≤ `min_coh`) carry no signal and
+/// are skipped. Iterated so 1-px strips adjacent to freshly-healed pixels
+/// settle; fixes within an iteration are computed against the pre-iteration
+/// field then applied together (order-independent).
+fn heal_thin_lines(
+    unw: &mut Array2<f32>,
+    corr: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    min_coh: f32,
+    iters: usize,
+) {
+    let (m, n) = unw.dim();
+    let ok = |unw: &Array2<f32>, i: usize, j: usize| {
+        mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite() && corr[(i, j)] > min_coh
+    };
+    for _ in 0..iters {
+        let mut fixes: Vec<(usize, usize, f32)> = Vec::new();
+        for i in 0..m {
+            for j in 0..n {
+                if !ok(unw, i, j) {
+                    continue;
+                }
+                if j >= 1 && j + 1 < n && ok(unw, i, j - 1) && ok(unw, i, j + 1) {
+                    let kl = ((unw[(i, j - 1)] - unw[(i, j)]) / TAU).round() as i64;
+                    let kr = ((unw[(i, j + 1)] - unw[(i, j)]) / TAU).round() as i64;
+                    if kl == kr && kl != 0 {
+                        fixes.push((i, j, kl as f32 * TAU));
+                        continue;
+                    }
+                }
+                if i >= 1 && i + 1 < m && ok(unw, i - 1, j) && ok(unw, i + 1, j) {
+                    let ku = ((unw[(i - 1, j)] - unw[(i, j)]) / TAU).round() as i64;
+                    let kd = ((unw[(i + 1, j)] - unw[(i, j)]) / TAU).round() as i64;
+                    if ku == kd && ku != 0 {
+                        fixes.push((i, j, ku as f32 * TAU));
+                    }
+                }
+            }
+        }
+        if fixes.is_empty() {
+            break;
+        }
+        for (i, j, d) in fixes {
+            unw[(i, j)] += d;
+        }
+    }
+}
+
 fn unwrap_one_tile_coh(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -1283,6 +1344,29 @@ mod tests {
             }
         }
         assert!(maxres < 1e-3, "anchor failed to fix isolated island: max residual {maxres} rad");
+    }
+
+    #[test]
+    fn heal_thin_lines_removes_ghost_strip() {
+        use ndarray::Array2;
+        // Smooth ramp + a 1-px vertical column offset by +1 cycle in a
+        // coherent area: heal must snap it back; the smooth ramp (gradient ≪ π)
+        // must be untouched (its neighbour offsets round to 0).
+        let (m, n) = (40usize, 40usize);
+        let truth = Array2::from_shape_fn((m, n), |(i, j)| 0.05 * i as f32 + 0.04 * j as f32);
+        let mut unw = truth.clone();
+        for i in 5..35 {
+            unw[(i, 20)] += TAU;
+        }
+        let coh = Array2::<f32>::from_elem((m, n), 0.8);
+        heal_thin_lines(&mut unw, coh.view(), None, 0.2, 4);
+        let mut maxres = 0.0_f32;
+        for i in 0..m {
+            for j in 0..n {
+                maxres = maxres.max((unw[(i, j)] - truth[(i, j)]).abs());
+            }
+        }
+        assert!(maxres < 1e-3, "ghost strip not healed: max residual {maxres}");
     }
 
     #[test]
