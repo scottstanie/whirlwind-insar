@@ -320,8 +320,30 @@ pub fn unwrap_tiled(
 
     // 4) Coarse region-refinement: remove residual whole-region 2π-offset
     //    artifacts (rectangular blocks bounded by high-coherence 2π rings)
-    //    that the per-tile MCF / seam reconciliation leaves behind.
-    coarse_refine(&mut out, corr, mask, 8);
+    //    that the per-tile MCF / seam reconciliation leaves behind. A
+    //    globally-consistent coarse anchor (one seam-free whole-image solve on
+    //    a heavily-multilooked copy) pins each region's integer cycle level —
+    //    this reaches low-coherence "wrong islands" that share no
+    //    high-confidence seam with the mainland, which the relative
+    //    largest-region vote cannot. `.ok()` ⇒ a degenerate coarse solve falls
+    //    back to the anchorless vote rather than failing the whole unwrap.
+    // `WHIRLWIND_NO_ANCHOR=1` disables the global anchor (falls back to the
+    // relative largest-region vote) — for before/after comparison only.
+    // Default: build the global coarse anchor and refine coarse→fine
+    // (f=16,8,4). The coarse→fine cascade re-anchors at each scale, so a wrong
+    // block fragmented at one scale is caught whole at a coarser one, and
+    // region boundaries resolve below the single-pass 8-px granularity.
+    // `WHIRLWIND_NO_ANCHOR=1` reverts to the old single-f=8, anchorless vote
+    // (for before/after comparison).
+    if std::env::var("WHIRLWIND_NO_ANCHOR").is_ok() {
+        coarse_refine(&mut out, corr, mask, 8, None);
+    } else {
+        let anchor = compute_coarse_anchor(igram, corr, nlooks, mask, 8);
+        let av = anchor.as_ref().map(|a| a.view());
+        for &f in &[16usize, 8, 4] {
+            coarse_refine(&mut out, corr, mask, f, av);
+        }
+    }
     Ok(out)
 }
 
@@ -552,11 +574,87 @@ fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
 /// boundary jumps (high-coherence rings are expensive → flipped away;
 /// legitimate low-coherence cuts are cheap → kept). The per-region integer
 /// offset (× 2π) is added back to the full-resolution `unw` in place.
+/// Build a globally-consistent coarse "anchor" unwrap to pin per-region cycle
+/// levels to. Multilook the COMPLEX igram by `lk`× (coherent down-look — never
+/// average wrapped phase, which is meaningless across 2π), unwrap the tiny
+/// coarse image in ONE whole-image solve (no tiles ⇒ no seams ⇒ one
+/// self-consistent surface), and block-replicate it back to full resolution.
+///
+/// Down-looking by `lk` multiplies the effective looks by `lk²`, so coarse
+/// coherence is far higher than the full-res input — the coarse solve is
+/// reliable and free of the long-distance runaway that corrupts a full-res
+/// whole-image solve. The anchor is consumed only to choose each region's
+/// INTEGER 2π level (via a coherence-weighted mode over the whole region), so a
+/// sub-cycle smoothing error in the anchor does not propagate, and a local
+/// anchor error is outvoted by the rest of its region.
+fn compute_coarse_anchor(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    lk: usize,
+) -> Option<Array2<f32>> {
+    let (m, n) = igram.dim();
+    let (cm, cn) = (m / lk, n / lk);
+    if cm < 2 || cn < 2 {
+        return None;
+    }
+    let mut cig = Array2::<Complex32>::zeros((cm, cn));
+    let mut ccorr = Array2::<f32>::zeros((cm, cn));
+    let mut cmask = Array2::<bool>::from_elem((cm, cn), false);
+    for ci in 0..cm {
+        for cj in 0..cn {
+            let (mut zs, mut cs, mut cnt) = (Complex32::new(0.0, 0.0), 0.0_f32, 0_usize);
+            for di in 0..lk {
+                for dj in 0..lk {
+                    let (i, j) = (ci * lk + di, cj * lk + dj);
+                    let ok = mask.map(|mk| mk[(i, j)]).unwrap_or(true) && igram[(i, j)].norm() > 0.0;
+                    if ok {
+                        zs += igram[(i, j)];
+                        cs += corr[(i, j)];
+                        cnt += 1;
+                    }
+                }
+            }
+            // Require a majority of the block valid so the coarse phasor is meaningful.
+            if cnt * 2 >= lk * lk {
+                let mag = zs.norm();
+                cig[(ci, cj)] = if mag > 0.0 { zs / mag } else { zs };
+                ccorr[(ci, cj)] = cs / cnt as f32;
+                cmask[(ci, cj)] = true;
+            }
+        }
+    }
+    // One whole-image solve on the coarse image; effective looks scale by lk².
+    let cunw = crate::unwrap(
+        cig.view(),
+        ccorr.view(),
+        nlooks * (lk * lk) as f32,
+        Some(cmask.view()),
+    )
+    .ok()?;
+    // Block-replicate back to full resolution (nearest-neighbour: we only ever
+    // consume round((anchor − unw)/2π), an integer, so no smooth interp needed).
+    let mut anchor = Array2::<f32>::from_elem((m, n), f32::NAN);
+    for i in 0..m {
+        for j in 0..n {
+            // The trailing < lk strip (m, n not divisible by lk) has no coarse
+            // cell — leave it NaN so those pixels keep their tiled level.
+            let (ci, cj) = (i / lk, j / lk);
+            if ci < cm && cj < cn && cunw[(ci, cj)].is_finite() {
+                anchor[(i, j)] = cunw[(ci, cj)];
+            }
+        }
+    }
+    Some(anchor)
+}
+
 fn coarse_refine(
     unw: &mut Array2<f32>,
     coh: ArrayView2<f32>,
     mask: Option<ArrayView2<bool>>,
     f: usize,
+    anchor: Option<ArrayView2<f32>>,
 ) {
     use std::collections::HashMap;
     let (m, n) = unw.dim();
@@ -620,66 +718,119 @@ fn coarse_refine(
         }
     }
 
-    // 3) Inter-region edges (jump + coherence² weight): edge A→B with jump j
-    //    wants `off_A − off_B = j` to zero the boundary jump.
-    let mut sizes: HashMap<usize, usize> = HashMap::new();
-    for idx in 0..mh * mw {
-        if cvalid[idx] {
-            *sizes.entry(uf_find(&mut parent, idx)).or_insert(0) += 1;
+    // 3) Per-region integer 2π offset.
+    let mut off: HashMap<usize, i64> = HashMap::new();
+    if let Some(anchor) = anchor {
+        // ANCHOR MODE. Snap each region's offset to a globally-consistent
+        // coarse whole-image unwrap. The anchor carries no tile seams, so it
+        // resolves the integer ambiguity even for low-coherence regions the
+        // largest-region vote (below) cannot reach (their boundary edges
+        // carry near-zero coherence weight). We take the coherence-weighted
+        // MODE of round((anchor − unw)/2π) over each whole region, so a local
+        // sub-region anchor error is outvoted — only the region's dominant
+        // (correct) integer survives.
+        let mut canchor = vec![0_f64; mh * mw];
+        let mut cavalid = vec![false; mh * mw];
+        for ci in 0..mh {
+            for cj in 0..mw {
+                let (mut s, mut cnt) = (0_f64, 0_usize);
+                for di in 0..f {
+                    for dj in 0..f {
+                        let (i, j) = (ci * f + di, cj * f + dj);
+                        if anchor[(i, j)].is_finite() {
+                            s += anchor[(i, j)] as f64;
+                            cnt += 1;
+                        }
+                    }
+                }
+                if cnt >= f {
+                    canchor[ci * mw + cj] = s / cnt as f64;
+                    cavalid[ci * mw + cj] = true;
+                }
+            }
         }
-    }
-    let Some((&anchor, _)) = sizes.iter().max_by_key(|kv| *kv.1) else { return };
-
-    let mut adj: HashMap<usize, Vec<(usize, i64, f64)>> = HashMap::new();
-    for ci in 0..mh {
-        for cj in 0..mw {
-            let idx = ci * mw + cj;
-            if !cvalid[idx] {
+        let mut votes: HashMap<usize, HashMap<i64, f64>> = HashMap::new();
+        for idx in 0..mh * mw {
+            if !cvalid[idx] || !cavalid[idx] {
                 continue;
             }
-            let ra = uf_find(&mut parent, idx);
-            let mut consider = |idx2: usize, adj: &mut HashMap<usize, Vec<(usize, i64, f64)>>| {
-                let j = cyc(idx, idx2);
-                if j != 0 {
-                    let rb = uf_find(&mut parent, idx2);
-                    let w = ccoh[idx].min(ccoh[idx2]).powi(2);
-                    adj.entry(ra).or_default().push((rb, j, w));
-                    adj.entry(rb).or_default().push((ra, -j, w));
-                }
-            };
-            if cj + 1 < mw && cvalid[idx + 1] {
-                consider(idx + 1, &mut adj);
-            }
-            if ci + 1 < mh && cvalid[idx + mw] {
-                consider(idx + mw, &mut adj);
-            }
+            let k = ((canchor[idx] - cunw[idx]) / tau).round() as i64;
+            let r = uf_find(&mut parent, idx);
+            *votes
+                .entry(r)
+                .or_default()
+                .entry(k)
+                .or_insert(0.0) += ccoh[idx].max(1e-6);
         }
-    }
-
-    // 4) Iterative coherence-weighted-mode offset, anchored to the largest
-    //    region. Distinct regions share only jump edges (no satisfied seams),
-    //    so the vote has no degenerate fixed point.
-    let mut off: HashMap<usize, i64> = HashMap::new();
-    let regions: Vec<usize> = adj.keys().copied().filter(|&r| r != anchor).collect();
-    for _ in 0..200 {
-        let mut changed = false;
-        for &r in &regions {
-            let mut votes: HashMap<i64, f64> = HashMap::new();
-            for &(nb, j, w) in &adj[&r] {
-                *votes.entry(off.get(&nb).copied().unwrap_or(0) + j).or_insert(0.0) += w;
-            }
-            let best = votes
+        for (r, vmap) in &votes {
+            let best = vmap
                 .iter()
                 .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
                 .map(|kv| *kv.0)
                 .unwrap_or(0);
-            if best != off.get(&r).copied().unwrap_or(0) {
-                off.insert(r, best);
-                changed = true;
+            off.insert(*r, best);
+        }
+    } else {
+        // NO-ANCHOR FALLBACK. Inter-region edges (jump + coherence² weight):
+        // edge A→B with jump j wants `off_A − off_B = j` to zero the boundary
+        // jump. Iterative coherence-weighted-mode vote anchored to the largest
+        // region. Distinct regions share only jump edges (no satisfied seams),
+        // so the vote has no degenerate fixed point.
+        let mut sizes: HashMap<usize, usize> = HashMap::new();
+        for idx in 0..mh * mw {
+            if cvalid[idx] {
+                *sizes.entry(uf_find(&mut parent, idx)).or_insert(0) += 1;
             }
         }
-        if !changed {
-            break;
+        let Some((&anchor_region, _)) = sizes.iter().max_by_key(|kv| *kv.1) else { return };
+
+        let mut adj: HashMap<usize, Vec<(usize, i64, f64)>> = HashMap::new();
+        for ci in 0..mh {
+            for cj in 0..mw {
+                let idx = ci * mw + cj;
+                if !cvalid[idx] {
+                    continue;
+                }
+                let ra = uf_find(&mut parent, idx);
+                let mut consider = |idx2: usize, adj: &mut HashMap<usize, Vec<(usize, i64, f64)>>| {
+                    let j = cyc(idx, idx2);
+                    if j != 0 {
+                        let rb = uf_find(&mut parent, idx2);
+                        let w = ccoh[idx].min(ccoh[idx2]).powi(2);
+                        adj.entry(ra).or_default().push((rb, j, w));
+                        adj.entry(rb).or_default().push((ra, -j, w));
+                    }
+                };
+                if cj + 1 < mw && cvalid[idx + 1] {
+                    consider(idx + 1, &mut adj);
+                }
+                if ci + 1 < mh && cvalid[idx + mw] {
+                    consider(idx + mw, &mut adj);
+                }
+            }
+        }
+
+        let regions: Vec<usize> = adj.keys().copied().filter(|&r| r != anchor_region).collect();
+        for _ in 0..200 {
+            let mut changed = false;
+            for &r in &regions {
+                let mut votes: HashMap<i64, f64> = HashMap::new();
+                for &(nb, j, w) in &adj[&r] {
+                    *votes.entry(off.get(&nb).copied().unwrap_or(0) + j).or_insert(0.0) += w;
+                }
+                let best = votes
+                    .iter()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .map(|kv| *kv.0)
+                    .unwrap_or(0);
+                if best != off.get(&r).copied().unwrap_or(0) {
+                    off.insert(r, best);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
         }
     }
 
@@ -998,7 +1149,7 @@ mod tests {
             }
         }
         let coh = Array2::<f32>::from_elem((m, n), 0.9);
-        coarse_refine(&mut unw, coh.view(), None, 8);
+        coarse_refine(&mut unw, coh.view(), None, 8, None);
         // Field should equal truth up to one global integer-cycle constant.
         let kglob = ((unw[(0, 0)] - truth[(0, 0)]) / TAU).round();
         let mut maxres = 0.0_f32;
@@ -1009,6 +1160,49 @@ mod tests {
             }
         }
         assert!(maxres < 1e-3, "coarse_refine left a block offset: max residual {maxres} rad");
+    }
+
+    #[test]
+    fn coarse_refine_anchor_fixes_isolated_low_coh_island() {
+        use ndarray::Array2;
+        // The failure the global anchor exists to fix: a wrong-offset block in
+        // a LOW-coherence patch that is itself surrounded by an INVALID moat,
+        // so it shares no coarse no-jump edge with the high-coherence mainland.
+        // The relative largest-region vote (None) cannot reach it (no edges);
+        // the anchor snaps it absolutely.
+        let (m, n) = (64usize, 64usize);
+        let truth = Array2::from_shape_fn((m, n), |(i, j)| 0.05 * i as f32 + 0.04 * j as f32);
+        let mut unw = truth.clone();
+        // Island [16,48)×[16,48) offset by +2 cycles; ring [8,16)∪[48,56) invalid.
+        let mut mask = Array2::<bool>::from_elem((m, n), true);
+        for i in 0..m {
+            for j in 0..n {
+                let in_ring = (8..56).contains(&i) && (8..56).contains(&j)
+                    && !((16..48).contains(&i) && (16..48).contains(&j));
+                if in_ring {
+                    mask[(i, j)] = false;
+                }
+                if (16..48).contains(&i) && (16..48).contains(&j) {
+                    unw[(i, j)] += 2.0 * TAU;
+                }
+            }
+        }
+        // Low coherence on the island, high on the mainland.
+        let coh = Array2::from_shape_fn((m, n), |(i, j)| {
+            if (16..48).contains(&i) && (16..48).contains(&j) { 0.3 } else { 0.9 }
+        });
+        // A correct anchor (= truth) — the global coarse solve's role.
+        let anchor = truth.clone();
+        coarse_refine(&mut unw, coh.view(), Some(mask.view()), 8, Some(anchor.view()));
+        let kglob = ((unw[(20, 20)] - truth[(20, 20)]) / TAU).round();
+        let mut maxres = 0.0_f32;
+        for i in 16..48 {
+            for j in 16..48 {
+                let r = (unw[(i, j)] - truth[(i, j)] - TAU * kglob).abs();
+                maxres = maxres.max(r);
+            }
+        }
+        assert!(maxres < 1e-3, "anchor failed to fix isolated island: max residual {maxres} rad");
     }
 
     #[test]
