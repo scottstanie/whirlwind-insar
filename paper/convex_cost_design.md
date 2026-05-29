@@ -23,10 +23,18 @@ c_e(k) = (k · nshortcycle − offset_e)² / σ²_e
 * `nshortcycle` is a fixed integer (SNAPHU uses 100, scaling phase
   cycles to integer units). For us: keep as 1 since flow is already
   in integer cycles.
-* `offset_e` is the per-arc *preferred* integer flow. SNAPHU
-  computes `offset = round(avgdpsi · nshortcycle / 2π)` where
-  `avgdpsi` is the box-smoothed wrapped phase gradient. The arc
-  actively wants its flow to equal `offset`.
+* `offset_e` is the per-arc *preferred* integer flow. **CORRECTION
+  (2026-05-28, verified against SNAPHU source):** SNAPHU computes
+  `offset = nshortcycle · (dpsi − avgdpsi)` — the DEVIATION of the raw
+  wrapped gradient from its local box-mean — NOT `avgdpsi` alone
+  (`snaphu_cost.c:1115-1116`; `dpsi` in cycles from `snaphu_util.c:149`).
+  This deviation spikes toward ±1 cycle at an isolated wrap line (raw ≈ ±π
+  while the box-mean ≈ 0) yet is ≈0 in smooth regions — the wrap-line
+  routing signal the smoothed gradient lacks. The absolute (ramp-scale)
+  flow comes from SNAPHU's coarse `unwrappedest` shift
+  (`snaphu_cost.c:1127-1132`); whirlwind's analog is the anchor/cascade, so
+  the deviation cost belongs in the per-tile solve, not whole-image. The
+  original "offset = avgdpsi" here was the implementation's bug (Suspect 5).
 * `σ²_e` is the per-arc noise variance. SNAPHU uses Lee 1994 PDF
   conditioned on coherence; we can do the same via the existing
   `cost::lee_pdf` LUT.
@@ -285,6 +293,37 @@ magnitudes.)
 Three suspects remain (offset polarity, whole-image vs tiled, and
 the no-Bellman-Ford assumption from Phase 4). Holding the convex
 prototype here per the original decision to pause + diagnose.
+
+## Resolution (2026-05-28 evening): offset fixed + solver made sound — convex is NOT a win
+
+All three remaining suspects addressed:
+* **Offset (Suspect 5):** switched to SNAPHU's true `nshortcycle·(dpsi −
+  avgdpsi)` deviation (was `avgdpsi` alone). Offsets now reach ±~100 and
+  carry wrap-line signal. Unit test `deviation_offset_zero_on_ramp_nonzero_at_feature`.
+* **Solver soundness (no-Bellman-Ford assumption):** replaced by
+  `Network::preload_convex_min` — pre-load each arc to `k* = round(offset/100)`,
+  adjust excess; at `k*` all residual marginals are ≥0 so zero potentials are
+  valid and Dijkstra/heap stays sound (textbook ordered-parallel-arc convex MCF,
+  no negative cycles, no Bellman-Ford). Soundness test
+  `preload_makes_all_marginals_nonnegative`. The old `unwrap_convex` solve was
+  silently corrupt in release (negative undo-arc marginals after a push, with
+  `debug_assert!(rc>=0)` stripped) — that is now fixed.
+
+**Empirical verdict — the convex cost is correct + sound but NOT the win:**
+| scene / mode | linear | convex (fixed) |
+|---|---|---|
+| Atlanta 5× whole-image | 11.4% | 11.0% (no help) |
+| Atlanta 5× tiled256+anchor | 47.3% | 51.7% (+4.4%) |
+| NISAR tiled512+anchor (mainland) | 99.81% | 99.54% (REGRESSION), 91s vs 4s |
+
+Convex helps Atlanta modestly (well short of snaphu's 97.9% / multilook's 97.7%)
+and REGRESSES NISAR while being ~20× slower. It does NOT fix the col-4032
+spurious sliver (present under both costs → a residue-pairing tie-break, not a
+cost-shape issue). **Conclusion: keep convex as a correct, sound, opt-in lane
+(`unwrap_convex`, `WHIRLWIND_TILE_CONVEX=1`), NOT the default. The dominant lever
+for noisy scenes is coherent multilooking (noise/residue suppression), not the
+per-arc cost shape.** This also retires the "linear cost can't route noise"
+framing: the cost is ~4% of Atlanta's gap.
 
 ## Out of scope (for this prototype)
 

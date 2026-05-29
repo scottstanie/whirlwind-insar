@@ -109,10 +109,14 @@ impl Network {
     /// [`Network::marginal_cost`] instead in convex mode.
     ///
     /// Arcs are effectively multi-unit capacity in convex mode (no
-    /// saturation bit toggling on push). Marginal cost can be negative
-    /// when current flow is below offset (i.e. the arc *wants* a +1
-    /// push); the caller must run a Bellman-Ford pre-pass to set valid
-    /// initial potentials before invoking the primal-dual solver.
+    /// saturation bit toggling on push). At flow 0 the marginal cost is
+    /// negative whenever `|offset| > 50` (the arc *wants* flow toward its
+    /// parabola minimum `k* = round(offset/100)`), which would corrupt the
+    /// Dijkstra/heap SSP. The caller MUST call [`Network::preload_convex_min`]
+    /// first: it loads each arc to `k*` and adjusts node excess, after which
+    /// every residual marginal is ≥0 and zero initial potentials are valid —
+    /// no Bellman-Ford pre-pass needed (every subsequent push moves away from
+    /// the minimum → non-negative, non-decreasing marginals).
     pub fn new_convex_with_mask(
         g: &RectangularGridGraph,
         residues: ArrayView2<i32>,
@@ -658,6 +662,44 @@ impl Network {
         w * (sign * 2 * ns * u + ns * ns)
     }
 
+    /// Pre-load each convex arc's flow to its per-arc parabola minimum
+    /// `k* = round(offset / nshortcycle)`, then adjust node excess so the
+    /// residual problem restores conservation.
+    ///
+    /// This is what makes the convex solve SOUND. The parabolic cost
+    /// `w·(k·100 − offset)²` is minimized at integer `k*`; at `k*` BOTH the
+    /// forward (`k*→k*+1`) and reverse (`k*→k*−1`) marginal costs are ≥0
+    /// (a move in either direction climbs the parabola). So after pre-loading
+    /// every arc to its own `k*`, all residual marginals are ≥0 — zero initial
+    /// potentials are valid and the successive-shortest-path solver (Dijkstra /
+    /// heap) stays sound for the rest of the run, since every subsequent push
+    /// moves an arc *away* from its minimum (non-negative, non-decreasing
+    /// marginal: the textbook ordered-parallel-arc reduction of convex-cost MCF,
+    /// Ahuja–Magnanti–Orlin §14.5). No Bellman-Ford pre-pass and no negative
+    /// cycles are needed — the negativity the old `unwrap_convex` tripped over
+    /// (a forward push at `k=0` when `offset>50`, then a negative undo arc) is
+    /// eliminated by starting at `k*` instead of `0`.
+    ///
+    /// A forward unit on arc (t→h) is `decrease_excess(t)+increase_excess(h)`
+    /// (see `primal_dual::run` augment), so loading `k*` units gives
+    /// `excess[t] -= k*; excess[h] += k*`. Masked/forbidden edges have
+    /// `offset = 0 ⇒ k* = 0` and are skipped.
+    pub fn preload_convex_min<G: ResidualGraph>(&mut self, g: &G) {
+        assert!(self.convex_mode, "preload_convex_min requires convex_mode");
+        const NS: i64 = 100; // NSHORTCYCLE, matches marginal_cost
+        for fwd in 0..self.num_grid_forward {
+            let o = self.offsets[fwd] as i64;
+            let kstar = ((o as f64) / (NS as f64)).round() as i32;
+            if kstar == 0 {
+                continue;
+            }
+            let (t, h) = self.arc_endpoints(g, fwd);
+            self.flow_count[fwd] = kstar;
+            self.excess[t] -= kstar;
+            self.excess[h] += kstar;
+        }
+    }
+
     /// Net signed flow on the forward partner of `arc`. In MCF mode this is
     /// 0 or 1 (forward saturated ⇒ 1, else 0). In reuse_mode / convex_mode
     /// this is `flow_count[fwd]` and can have any magnitude.
@@ -813,5 +855,43 @@ mod convex_marginal_tests {
         let costs = vec![10_i32; g.num_forward];
         let net = Network::new(&g, residues.view(), &costs);
         assert_eq!(net.marginal_cost(0), 0);
+    }
+
+    /// SOUNDNESS of `preload_convex_min`: a large offset (|offset|>50) makes the
+    /// forward marginal NEGATIVE at f=0 — which would silently corrupt the
+    /// release Dijkstra (its `debug_assert!(rc>=0)` is compiled out). After
+    /// pre-loading each arc to k*=round(offset/100), EVERY arc's marginal in
+    /// BOTH directions must be ≥0 (zero potentials are then valid), and the
+    /// excess adjustment must preserve sum(excess)=0.
+    #[test]
+    fn preload_makes_all_marginals_nonnegative() {
+        let g = RectangularGridGraph::new(3, 3);
+        let nf = g.num_forward;
+        let mut offsets = vec![0_i32; nf];
+        let weights = vec![3_i32; nf];
+        // Offsets that exceed the ±50 cap → negative forward marginal at f=0.
+        offsets[0] = 90; // k* = 1
+        offsets[1] = -90; // k* = -1
+        offsets[2] = 55; // k* = 1 (round(0.55))
+        let residues = Array2::<i32>::zeros((3, 3));
+        let mut net = Network::new_convex_with_mask(&g, residues.view(), &offsets, &weights, None);
+
+        // Pre-condition: arc 0's forward marginal is NEGATIVE at f=0.
+        assert!(net.marginal_cost(0) < 0, "offset=90 should give negative f=0 marginal");
+
+        net.preload_convex_min(&g);
+
+        assert_eq!(net.flow_count[0], 1, "offset 90 → k*=1");
+        assert_eq!(net.flow_count[1], -1, "offset -90 → k*=-1");
+        assert_eq!(net.flow_count[2], 1, "offset 55 → k*=1");
+
+        // Soundness invariant: all reduced costs at zero potential (= marginals
+        // at the pre-loaded flow) are ≥0 in both directions.
+        for fwd in 0..nf {
+            assert!(net.marginal_cost(fwd) >= 0, "fwd arc {fwd} marginal < 0 after preload");
+            assert!(net.marginal_cost(fwd + nf) >= 0, "rev arc {fwd} marginal < 0 after preload");
+        }
+        // Conservation preserved.
+        assert_eq!(net.excess.iter().sum::<i32>(), 0, "preload must keep sum(excess)=0");
     }
 }

@@ -341,10 +341,18 @@ pub fn compute_carballo_costs(
     // produced block-2π errors in coherent regions on real NISAR data; see
     // `paper/binary_vs_continuous.md` "Posterior reliability" section.
     //
-    // The full Bayesian LLR (using the Lee 1994 PDF) is retained behind
-    // `WHIRLWIND_LLR_COST=1` for experiments. It can go negative at wrap
-    // lines, which currently breaks our Dijkstra-based SSP path; a
-    // Bellman-Ford pre-pass for initial potentials would fix that.
+    // The "LLR" cost behind `WHIRLWIND_LLR_COST=1` is INERT, not a working
+    // statistical cost: the Lee-1994 PDF depends on α only through cos(α)
+    // (`lee_pdf.rs`: `beta = γ·cos(α)`), so it is exactly 2π-periodic and
+    // `-(ln pdf(α−2π) − ln pdf(α)) ≡ 0` for every arc. (An earlier comment
+    // claimed it "can go negative at wrap lines and breaks Dijkstra" — that is
+    // wrong; the cost is identically zero, producing a degenerate all-zero MCF.)
+    // A real +2π-jump LLR must compare two models of the SAME observed gradient
+    // (e.g. PDF conditioned on α−offset, the shift parameter the module doc
+    // promises), not p(α) vs p(α−2π) of the same periodic noise PDF. The
+    // SNAPHU-equivalent statistical cost that DOES work is the convex parabola
+    // in `compute_snaphu_smooth_costs` (solved soundly via
+    // `Network::preload_convex_min`); see `unwrap_convex` / `WHIRLWIND_TILE_CONVEX`.
     let use_llr = use_llr_cost();
     let use_deviation = deviation_cost_enabled();
     let hard_cut = hard_cut_threshold();
@@ -934,15 +942,31 @@ pub fn compute_snaphu_smooth_costs(
     let n = n_phase + 1;
     let g = RectangularGridGraph::new(m, n);
 
-    // Wrapped phase gradient per arc direction. Default is the 7×7
-    // mask-aware smoothed version (same as Carballo). With
-    // `WHIRLWIND_CONVEX_OFFSET_RAW=1`, switch to the raw per-arc
-    // gradient — preserves wrap-line discontinuities (where |α|→π)
-    // that 7×7 smoothing washes out, at the cost of per-arc noise.
+    // SNAPHU's smooth-cost offset is the DEVIATION of the raw wrapped phase
+    // gradient from its local box-mean: `offset = nshortcycle · (dpsi −
+    // avgdpsi)` (snaphu_cost.c:1115-1116, with `dpsi` in cycles from
+    // snaphu_util.c:149). The deviation spikes toward ±1 cycle at an isolated
+    // wrap line (raw ≈ ±π while the box-mean ≈ 0) yet is ≈0 in smooth regions,
+    // which is exactly the routing signal the convex cost needs. The earlier
+    // implementation fed the *smoothed* gradient alone (`avgdpsi`), which the
+    // 7×7 box washes to ≈0 both in smooth areas AND across wrap lines — leaving
+    // |offset| ≲ 22 with no wrap-line information and the convex cost degenerate
+    // to pure `w·k²` (paper/convex_cost_design.md Suspect 5; the doc's prose
+    // mis-stated SNAPHU's offset as `avgdpsi` — the source uses the deviation).
+    //
+    // The difference is NOT re-wrapped: SNAPHU leaves `dpsi − avgdpsi` free to
+    // exceed ½ cycle so the parabola minimum can sit at k = ±1. The absolute
+    // (ramp-scale) flow is supplied separately by the coarse anchor / cascade,
+    // mirroring SNAPHU's `unwrappedest` offset shift (snaphu_cost.c:1127-1132) —
+    // so this cost belongs in the per-tile solve of the tiled+anchor pipeline,
+    // not a standalone whole-image solve.
+    let (raw_dy, raw_dx) = phase_gradients_raw(igram);
     let (phase_dy_s, phase_dx_s) = if convex_offset_raw() {
-        phase_gradients_raw(igram)
+        // research toggle: raw per-arc gradient alone (no deviation subtraction)
+        (raw_dy, raw_dx)
     } else {
-        smooth_phase_gradients_with_mask(igram, mask)
+        let (sm_dy, sm_dx) = smooth_phase_gradients_with_mask(igram, mask);
+        (&raw_dy - &sm_dy, &raw_dx - &sm_dx)
     };
 
     // Per-edge min-of-endpoints coherence (matches Carballo path).
@@ -1308,32 +1332,43 @@ mod convex_tests {
         assert_eq!(w_min, w_max, "uniform coherence should give uniform weights");
     }
 
-    /// Phase ramp inside (-π, π]: the smoothed gradient becomes the
-    /// per-row/column phase step, and the offsets should reflect it.
+    /// SNAPHU's offset is the DEVIATION of the raw wrapped gradient from its
+    /// local box-mean (`dpsi − avgdpsi`), not the smoothed gradient. So a
+    /// *uniform* ramp (where every arc's gradient equals its neighborhood mean)
+    /// gives ≈zero offsets — the absolute slope is the coarse anchor's job, not
+    /// the per-arc cost's. The offset spikes only where the gradient deviates
+    /// locally: a wrap line / discontinuity. This replaces the earlier test,
+    /// which asserted nonzero offsets on a uniform ramp under the (wrong)
+    /// smoothed-gradient offset model.
     #[test]
-    fn ramp_phase_gives_nonzero_offsets() {
-        let m = 32;
-        let n = 32;
-        // A ramp with phase step 1.0 rad/pixel along columns. Smoothed
-        // gradient ≈ 1.0; offset = round(1.0/(2π) · 100) = round(15.9) = 16.
-        let igram = Array2::from_shape_fn((m, n), |(_, j)| {
-            Complex32::from_polar(1.0, (j as f32) * 1.0)
-        });
+    fn deviation_offset_zero_on_ramp_nonzero_at_feature() {
+        let (m, n) = (32, 32);
         let corr = Array2::<f32>::from_elem((m, n), 0.95);
-        let (offsets, _) = compute_snaphu_smooth_costs(igram.view(), corr.view(), 10.0, None);
-        // Many arcs should be nonzero (offset ≈ ±16 for horizontal-pixel-edge
-        // arcs; ≈ 0 for vertical-pixel-edge arcs which see no row-direction
-        // gradient).
-        let nonzero = offsets.iter().filter(|&&o| o != 0).count();
+
+        // (1) Uniform ramp, 1.0 rad/px along columns: deviation ≈ 0 (raw == mean
+        // everywhere but the truncated-box border). Expect very few nonzeros.
+        let ramp = Array2::from_shape_fn((m, n), |(_, j)| Complex32::from_polar(1.0, j as f32));
+        let (off_ramp, _) = compute_snaphu_smooth_costs(ramp.view(), corr.view(), 10.0, None);
+        let nz_ramp = off_ramp.iter().filter(|&&o| o != 0).count();
         assert!(
-            nonzero > offsets.len() / 8,
-            "ramp should produce many nonzero offsets, got {nonzero} of {}",
-            offsets.len()
+            nz_ramp <= off_ramp.len() / 5,
+            "uniform ramp should give ~zero deviation offsets, got {nz_ramp} of {}",
+            off_ramp.len()
         );
-        // No offset should exceed nshortcycle/2 = 50.
-        let max_abs_off = offsets.iter().map(|o| o.abs()).max().unwrap();
-        assert!(max_abs_off <= NSHORTCYCLE / 2,
-                "offset out of (-50, 50] bound: {max_abs_off}");
+
+        // (2) Localized vertical wall (cols 15-16 raised toward π): the gradient
+        // at the wall edges deviates sharply from the ~0 neighborhood mean, so
+        // the deviation offset fires there.
+        let wall = Array2::from_shape_fn((m, n), |(_, j)| {
+            Complex32::from_polar(1.0, if (15..=16).contains(&j) { 3.0 } else { 0.0 })
+        });
+        let (off_wall, _) = compute_snaphu_smooth_costs(wall.view(), corr.view(), 10.0, None);
+        let nz_wall = off_wall.iter().filter(|&&o| o != 0).count();
+        assert!(nz_wall > 0, "localized wall should produce nonzero deviation offsets");
+        assert!(
+            nz_wall > nz_ramp,
+            "wall ({nz_wall}) should have more nonzero offsets than a uniform ramp ({nz_ramp})"
+        );
     }
 
     /// Masked arcs get weight=0 and offset=0 (free arc; will be forbidden

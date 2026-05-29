@@ -1002,6 +1002,13 @@ fn heal_thin_lines(
     }
 }
 
+/// `WHIRLWIND_TILE_CONVEX=1` → use the convex (SNAPHU-style) per-tile cost.
+fn tile_convex_enabled() -> bool {
+    use std::sync::OnceLock;
+    static F: OnceLock<bool> = OnceLock::new();
+    *F.get_or_init(|| std::env::var("WHIRLWIND_TILE_CONVEX").is_ok())
+}
+
 fn unwrap_one_tile_coh(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -1017,9 +1024,23 @@ fn unwrap_one_tile_coh(
     let (tm, tn) = ig.dim();
     let wrapped_phase = ig.mapv(|z| z.arg());
     let residues = residue::compute_with_mask(wrapped_phase.view(), mk);
-    let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
     let graph = RectangularGridGraph::new(tm + 1, tn + 1);
-    let mut net = Network::new_with_mask(&graph, residues.view(), &costs, mk);
+    // `WHIRLWIND_TILE_CONVEX=1` swaps the linear Carballo per-tile cost for the
+    // SNAPHU-style convex (quadratic) cost with the deviation offset, solved
+    // soundly via preload_convex_min. The deviation offset carries only
+    // wrap-line topology; the absolute (ramp) level comes from the
+    // anchor/cascade post-pass, so this is only meaningful inside the tiled
+    // pipeline. A/B experiment for whether convex curvature beats the linear
+    // cost's integration runaway on noisy scenes (Atlanta).
+    let mut net = if tile_convex_enabled() {
+        let (offsets, weights) = cost::compute_snaphu_smooth_costs(ig, co, nlooks, mk);
+        let mut net = Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mk);
+        net.preload_convex_min(&graph);
+        net
+    } else {
+        let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
+        Network::new_with_mask(&graph, residues.view(), &costs, mk)
+    };
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mk.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mk)

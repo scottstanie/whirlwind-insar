@@ -217,6 +217,11 @@ pub fn unwrap_convex(
     let mut net = network::Network::new_convex_with_mask(
         &graph, residues.view(), &offsets, &weights, mask,
     );
+    // Pre-load each arc to its parabola minimum k* = round(offset/100) so all
+    // residual marginals are ≥0 and the SSP solve is sound (see
+    // Network::preload_convex_min). Without this the solve silently corrupts in
+    // release once any |offset| > 50 (which the deviation offset now produces).
+    net.preload_convex_min(&graph);
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mask.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
