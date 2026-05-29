@@ -89,6 +89,11 @@ def plot_scene(name, ref_unw, ref_cc, ww_unw, wrapped, mask, kref, title, stride
     c = modal((kww - kref)[region])
     kww_c = kww - c
     match = float((np.abs((kww_c - kref)[region]) < 0.5).sum()) / int(region.sum()) * 100
+    # Honest full-image match (same mainland-aligned global offset). The full
+    # number is much lower than mainland because cc<1 / low-coh pixels are
+    # per-pixel-noisy and the reference itself is uncertain there.
+    fm = (kww_c - kref)[mask]
+    full_match = float((np.abs(fm[np.isfinite(fm)]) < 0.5).sum()) / int(np.isfinite(fm).sum()) * 100
 
     sk_disp = kref.astype(np.float32).copy(); sk_disp[~mask] = np.nan
     lo, hi = np.nanpercentile(sk_disp[mask], [1, 99])
@@ -112,7 +117,7 @@ def plot_scene(name, ref_unw, ref_cc, ww_unw, wrapped, mask, kref, title, stride
     # Row 1: K
     for ax, (t, k, cmap, vlo, vhi) in zip(axes[0], [
             ("reference K (SNAPHU/OPERA)", sk_disp, "twilight", lo, hi),
-            (f"whirlwind K  ({match:.2f}% match on mainland)", kww_c, "twilight", lo, hi),
+            (f"whirlwind K  ({match:.2f}% mainland / {full_match:.1f}% full image)", kww_c, "twilight", lo, hi),
             ("|dK| error vs reference (mainland)", None, "inferno", 0, 3)]):
         if k is None:
             e = np.abs(kww_c - kref).astype(np.float32); e[~region] = np.nan
@@ -173,22 +178,25 @@ def do_nisar():
     scc = np.load(OUT / "nisar_anchor_scc.npy").astype(np.int32)
     mask = np.load(OUT / "nisar_anchor_mask.npy")
     wrapped = np.load(OUT / "nisar_anchor_wrapped.npy")
-    wwu = np.load(OUT / "nisar_cascade_unw.npy")     # current default (anchor+cascade)
+    # Current default path: tiled512+anchor+cascade + bounded sliver cleanup.
+    wwu = np.load(OUT / "nisar_tileconvex_linear_unw.npy")
     sunw = sk * TAU + wrapped
     plot_scene("nisar", sunw, scc, wwu, wrapped, mask, sk,
-               "NISAR no-Goldstein: whirlwind tiled+anchor+cascade (3.9s) vs SNAPHU 9x9 (17 min)",
+               "NISAR no-Goldstein: whirlwind tiled+anchor+cascade+cleanup (6s) vs SNAPHU 9x9 (17 min)",
                stride=4)
 
 
 def do_atlanta():
-    kref = np.load(OUT / "atlanta_kref.npy")
-    cc = np.load(OUT / "atlanta_cc.npy").astype(np.int32)
-    mask = np.load(OUT / "atlanta_mask.npy")
-    wrapped = np.load(OUT / "atlanta_wrapped.npy")
-    wwu = np.load(OUT / "atlanta_anchor_unw.npy")
-    refu = kref * TAU + wrapped
+    # Current honest noisy-scene path: multilook=8 (coherent averaging suppresses
+    # the noise the fine solve can't route), reference arrays from run_atlanta_report.py.
+    kref = np.load(OUT / "atlanta_rep_kref.npy")
+    cc = np.load(OUT / "atlanta_rep_cc.npy").astype(np.int32)
+    mask = np.load(OUT / "atlanta_rep_mask.npy")
+    wrapped = np.load(OUT / "atlanta_rep_wrapped.npy")
+    wwu = np.load(OUT / "atlanta_rep_unw.npy")
+    refu = np.nan_to_num(kref) * TAU + wrapped
     plot_scene("atlanta", refu, cc, wwu, wrapped, mask, np.nan_to_num(kref),
-               "Atlanta S-1 OPERA: whirlwind tiled+anchor+cascade vs OPERA/SNAPHU reference",
+               "Atlanta S-1 OPERA: whirlwind multilook=8 + tiled+anchor+cascade vs OPERA/SNAPHU reference",
                stride=4)
 
 
