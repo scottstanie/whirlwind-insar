@@ -416,8 +416,10 @@ pub fn unwrap_tiled(
     //    horizontal strip the per-tile solve left a full cycle off. Snap any
     //    pixel whose two opposite neighbours agree it is the same nonzero
     //    integer #cycles off. Coherence-gated (decorrelated columns don't
-    //    matter and shouldn't be touched).
-    heal_thin_lines(&mut out, corr, mask, 0.2, 6);
+    //    matter and shouldn't be touched). `WHIRLWIND_NO_HEAL=1` disables it.
+    if std::env::var("WHIRLWIND_NO_HEAL").is_err() {
+        heal_thin_lines(&mut out, corr, mask, 0.2, 6);
+    }
     Ok(out)
 }
 
