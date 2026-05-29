@@ -26,6 +26,7 @@ pub mod grid;
 pub mod integrate;
 pub mod network;
 pub mod primal_dual;
+pub mod pyramid;
 pub mod residual_graph;
 pub mod residue;
 pub mod shortest_path;
