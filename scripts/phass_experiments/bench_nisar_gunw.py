@@ -438,11 +438,15 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
             rows.append(json.loads(result_json.read_text()))
             continue
 
-        ig = np.ascontiguousarray(ig_full[ys, xs])
-        coh = np.ascontiguousarray(coh_full[ys, xs])
+        # `ig` is the WRAPPED PHASE (real radians) — compute_compare_stats uses
+        # it as phase (ww_unw - ig). whirlwind.unwrap wants the COMPLEX igram
+        # exp(1j*phase); that is built at the call site below. Coerce dtypes
+        # (the pyo3 bindings are dtype-strict: float32 coh, bool mask).
+        ig = np.ascontiguousarray(ig_full[ys, xs], dtype=np.float32)
+        coh = np.ascontiguousarray(coh_full[ys, xs], dtype=np.float32)
         prod_unw = np.ascontiguousarray(prod_unw_full[ys, xs])
         prod_cc = np.ascontiguousarray(prod_cc_full[ys, xs])
-        mask = np.ascontiguousarray(base_mask_full[ys, xs])
+        mask = np.ascontiguousarray(base_mask_full[ys, xs], dtype=bool)
 
         if mask.sum() == 0:
             print(f"  {label}: no valid pixels, skipping", flush=True)
@@ -460,14 +464,15 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
         # memory-heavy path — kept available via --tile-size 0. Conncomp is not
         # returned by this entry point; the bench compares unwrapped phase /
         # ambiguity, which is what matters for artifact detection.
+        igc = np.ascontiguousarray(np.exp(1j * ig), dtype=np.complex64)  # complex igram for whirlwind
         if args.tile_size and args.tile_size > 0:
-            ww_unw = ww.unwrap(ig, coh, args.nlooks, mask,
+            ww_unw = ww.unwrap(igc, coh, args.nlooks, mask,
                                tile_size=args.tile_size, tile_overlap=args.tile_overlap,
                                multilook=args.multilook)
         elif args.multilook > 1:
-            ww_unw = ww.unwrap(ig, coh, args.nlooks, mask, multilook=args.multilook)
+            ww_unw = ww.unwrap(igc, coh, args.nlooks, mask, multilook=args.multilook)
         else:
-            ww_unw = ww.unwrap(ig, coh, args.nlooks, mask)
+            ww_unw = ww.unwrap(igc, coh, args.nlooks, mask)
         ww_cc = None
         runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
