@@ -377,10 +377,13 @@ pub fn auto_base_factor(
 /// Pyramidal coarse-to-fine phase unwrap (configurable base solver).
 ///
 /// Inputs match [`crate::unwrap`] plus:
-/// * `base_factor` — coarsest power-of-two down-look. `0` ⇒ choose it
-///   automatically via [`auto_base_factor`] (capped at 16). The schedule is
-///   `base_factor, base_factor/2, …, 1`; `1` degenerates to a single full-res
-///   solve with `solver`.
+/// * `base_factor` — coarsest power-of-two down-look. The schedule is
+///   `base_factor, base_factor/2, …, 1`. `1` (the recommended default) is a
+///   single full-res solve with `solver` — corner-safe and never aliasing.
+///   `N > 1` opts into a fixed cascade for noise suppression (coarsest level
+///   must stay unaliased, `N·g < π`). `0` opts into the EXPERIMENTAL automatic
+///   choice via [`auto_base_factor`] (capped at 16), which is synthetic-tuned
+///   and has the constant-ramp blind spot documented there.
 /// * `solver` — per-level base unwrap ([`BaseSolver::Reuse`] recommended).
 /// * `tile_size` — if ≥ 4, any level whose grid exceeds it is tiled (memory
 ///   bound for the finest levels of a large frame). `0` ⇒ never tile.

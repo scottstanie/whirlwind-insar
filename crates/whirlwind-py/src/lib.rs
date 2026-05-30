@@ -348,10 +348,13 @@ fn unwrap_convex<'py>(
 /// ``K`` used as a prior), so the surface is refined back to full resolution
 /// without ever re-aliasing.
 ///
-/// * ``base_factor`` — the coarsest down-look (power of two). ``0`` (default)
-///   chooses it automatically from a residue-density probe (the largest
-///   down-look that has not yet started aliasing the steepest fringe present).
-///   The coarsest level must stay unaliased: ``base_factor·g < π``.
+/// * ``base_factor`` — the coarsest down-look (power of two). ``1`` (default)
+///   does a single full-resolution solve — corner-safe and never aliasing, the
+///   conservative default. ``N > 1`` opts into a fixed ``N, N/2, …, 1`` cascade
+///   for noise suppression (the coarsest level must stay unaliased,
+///   ``N·g < π``). ``0`` opts into the EXPERIMENTAL automatic probe (largest
+///   unaliased down-look); it is synthetic-tuned and has a near-Nyquist
+///   constant-ramp blind spot — not the default. See ``paper/pyramid_aliasing.md``.
 /// * ``solver`` — per-level base unwrap: ``"reuse"`` (default), ``"convex"``,
 ///   or ``"linear"``. The linear coherence cost mis-routes the corners of
 ///   smooth steep signals (capacity-1 boundary stacking — ~88 % on a clean
@@ -361,7 +364,7 @@ fn unwrap_convex<'py>(
 ///
 /// See ``paper/pyramid_aliasing.md`` and ``scripts/dense_fringe_pyramid.py``.
 #[pyfunction]
-#[pyo3(signature = (igram, corr, nlooks = 1.0, mask = None, base_factor = 0, solver = "reuse", tile_size = 0))]
+#[pyo3(signature = (igram, corr, nlooks = 1.0, mask = None, base_factor = 1, solver = "reuse", tile_size = 0))]
 fn unwrap_pyramid<'py>(
     py: Python<'py>,
     igram: PyReadonlyArray2<'py, Complex32>,

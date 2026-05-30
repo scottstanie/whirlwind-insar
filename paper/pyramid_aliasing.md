@@ -14,31 +14,30 @@ coarse grid, and use that as a starting point?*
   block-replicated coarse `K` can never recover it. With `L = 8` a *mild* cone
   at `g = 0.2π` collapses from **98 %** K-correct (full-res) to **6 %**. This is
   the "averaged past aliasing, then locked onto the wrong K" case exactly.
-* **A pyramidal coarse-to-fine unwrap is a genuinely better default.** Refining
-  by powers of two and unwrapping only the *residual* against the upsampled
-  coarser solution (the previous level's `K` as a prior) recovers full
-  resolution without the single big jump. With the automatic base and reuse
-  solver below, `pyrA` is the best or tied-best method across almost the entire
-  dense-fringe / noise sweep — it never drowns in noise (unlike full-res) and
-  almost never aliases (unlike `ml*`). The one exception is a near-Nyquist
-  *constant-rate ramp* (`g ≳ 0.8π`), the auto-probe's documented blind spot,
-  where you should pass `base_factor=1` explicitly.
-* **The "corners" worry was a real bug — in the base solver, not the pyramid.**
-  The linear Carballo coherence cost ([`unwrap`]) mis-routes the CORNERS of a
-  smooth steep signal (the steepest part of a bowl) because the concentric
-  wrap-line rings must drain at the image boundary and the capacity-1 frame arcs
-  can't carry the stacked flow (same pathology as the ignored `diagonal_ramp_512`
+* **The most important finding is a base-solver bug, not a multilook one.** The
+  linear Carballo coherence cost ([`unwrap`]) mis-routes the CORNERS of a smooth
+  steep signal (the steepest part of a bowl) because the concentric wrap-line
+  rings must drain at the image boundary and the capacity-1 frame arcs can't
+  carry the stacked flow (same pathology as the ignored `diagonal_ramp_512`
   regression). On a *perfectly clean* `0.7π` bowl `unwrap` scores only **88 %**,
   all errors in the corners, while `unwrap_reuse` and `unwrap_convex` score
   **100 %**. (Noise dithers the ring alignment, so the pathology is worst on
-  clean/synthetic data.) The pyramid therefore defaults its per-level solver to
-  `"reuse"`.
-* **`base_factor` is chosen automatically.** `base_factor=0` (the default) runs
-  an Itoh-violation-rate probe and picks the largest down-look that has not yet
-  started aliasing the steepest fringe present.
-* **It is still not magic.** Nothing recovers a signal genuinely aliased at full
-  resolution (`g > π`, a hard Nyquist wall), and the auto-probe has a
-  constant-ramp blind spot (below).
+  clean/synthetic data.) For many "scary steep signal" cases the real fix is a
+  better default *cost*, not a pyramid — see the Assessment section.
+* **A pyramidal coarse-to-fine unwrap is a sound optional tool** for the
+  noisy-and-steep regime. Refining by powers of two and unwrapping only the
+  *residual* against the upsampled coarser solution (the previous level's `K` as
+  a prior) recovers full resolution without the single big multilook jump.
+  `unwrap_pyramid` defaults its per-level solver to `"reuse"` (corner-safe).
+* **The default is conservative: `base_factor=1`** — a single full-resolution
+  reuse solve that never aliases. `base_factor=N>1` opts into a fixed cascade
+  for noise suppression; `base_factor=0` opts into the **experimental** automatic
+  Itoh-violation-rate probe (synthetic-tuned, with a near-Nyquist constant-ramp
+  blind spot — not recommended on real data yet).
+* **It is not magic.** Nothing recovers a signal genuinely aliased at full
+  resolution (`g > π`, a hard Nyquist wall), the experimental auto-probe has a
+  constant-ramp blind spot (below), and the multi-level cascade has not been
+  shown to beat a simpler 2-level scheme — see the Assessment.
 * **Large frames are covered.** `tile_size>0` tiles the finest levels to bound
   peak memory; the coarsest (absolute) level reuses the anchored tiled path, the
   residual (relative) levels use a lightweight prediction-relative tiler.
@@ -228,15 +227,61 @@ near 6 % whenever `8·g > π`, regardless of how clean the data is. Figures
 * Keep the single-shot `multilook` path for what it is good at (cheap noise
   suppression on gently-sloped scenes), but **do not apply a large `multilook`
   blindly** to scenes that may contain dense fringes.
-* Prefer `unwrap_pyramid` (default `base_factor=0` auto, `solver="reuse"`) as the
-  safer noise-suppressing path: across the synthetic sweep `pyrA` is the best or
-  tied-best method almost everywhere. Override with `base_factor=1` for a scene
-  you suspect is a near-Nyquist constant-rate ramp (`g ≳ 0.8π`), the probe's
-  documented blind spot.
+* `unwrap_pyramid`'s **default is `base_factor=1, solver="reuse"`** — a single
+  corner-safe full-resolution solve that never aliases. This is deliberately
+  conservative: it is the right default for an unknown scene.
+* Opt into a fixed cascade (`base_factor=2`–`4`) only when you *know* the scene
+  is noisy enough to need it AND shallow enough that `base_factor·g < π`.
+* `base_factor=0` (the automatic Itoh probe) is **experimental**: synthetic-tuned
+  and with a near-Nyquist constant-ramp blind spot. Don't rely on it on real data
+  yet.
 * Set `tile_size>0` on large frames to bound peak memory.
-* Future work: combine the Itoh probe with a spectral (FFT-peak) fringe-rate
-  estimate to cover the constant-ramp blind spot, and calibrate `FLOOR`/`DECR` /
-  the reuse-vs-convex base-solver choice on real (not just synthetic) scenes.
+
+## Assessment — is the pyramid the right path?
+
+Honest verdict after building it: **the diagnosis is the durable result; the
+pyramid is a reasonable safety tool but not obviously the primary fix.**
+
+**What is solid.** (1) The aliasing characterization — multilook-first is safe
+only while `L·g < π`, eight times stricter than the true Nyquist limit, and the
+wrong `K` is unrecoverable. That justifies *not* applying a big blind multilook
+regardless of what replaces it. (2) The residual-against-prediction mechanism is
+standard multigrid and is sound as an *optional* tool for the noisy-and-steep
+regime.
+
+**What is fragile / oversold.** (1) The automatic base probe is a
+synthetic-tuned heuristic with a fundamental constant-ramp blind spot — hence
+it is no longer the default. (2) The *N*-level cascade has not been shown to beat
+a simple **2-level** scheme (denoise → coarse solve → one full-res residual
+pass); most of the value is plausibly in that first prediction, and the extra
+levels add machinery whose marginal benefit is unquantified. (3) Everything here
+is synthetic (cones, bowls, Goodman noise); the residual tiler's "residual stays
+within a cycle" assumption is untested when the coarse prediction is poor.
+
+**The deeper fix this surfaced.** The single most important finding is nearly
+orthogonal to the pyramid: the **linear coherence cost scores only 88 % on a
+perfectly clean, noise-free steep bowl** (all errors in the corners) while
+`reuse`/`convex` score 100 %. That is a base-solver / cost-model issue, not a
+multilook or pyramid one. For a large class of "scary steep signal" cases the
+right fix is therefore **a better default cost**, not a pyramid — full-res
+reuse/convex already nail clean steep bowls. This is independent evidence
+pointing the same way as the in-flight `convex_cost_design.md` NISAR work.
+
+**Suggested path forward (next increments, not this PR).**
+1. Evaluate making `reuse` (or `convex`) the default solver in the top-level
+   `unwrap`, pending real-data validation. That removes the corner failures
+   everywhere with zero pyramid machinery.
+2. Then the pyramid/multilook becomes a *narrow* tool for the genuinely
+   irreducible regime — noisy AND steep enough that the noise-suppressing
+   multilook you would need itself aliases. Worth measuring how large that
+   regime actually is on real data (in a volcano near-field the steep pixels are
+   often the *coherent* ones, so the noisy∩steep overlap may be small).
+3. Validate on one real dense-fringe scene (a known eruption or earthquake pair)
+   before trusting any of this; that is the missing piece that would settle
+   whether the pyramid is needed or a better base solver makes it redundant.
+4. If the auto-probe is pursued, combine the Itoh-violation rate with a spectral
+   (FFT-peak) fringe-rate estimate to cover the constant-ramp blind spot, and
+   calibrate `FLOOR`/`DECR` on real scenes.
 
 ## Regression coverage
 
