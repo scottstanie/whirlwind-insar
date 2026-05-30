@@ -267,6 +267,54 @@ right fix is therefore **a better default cost**, not a pyramid — full-res
 reuse/convex already nail clean steep bowls. This is independent evidence
 pointing the same way as the in-flight `convex_cost_design.md` NISAR work.
 
+**Why the better cost is better, and when.** The linear cost penalises `|flow|`
+only — "don't route flow here unless you must" — with *no preferred direction*.
+The corner/boundary failure follows directly: when concentric wrap-line rings
+all drain to the image boundary, the unit-capacity frame arcs stack up, the
+solver has no signal for the true per-arc cycle count, and the overflow spills
+onto interior arcs. `convex` uses `(k − offset)² / σ²` where `offset` encodes the
+local smoothed phase gradient, so it actively *pulls* each arc's flow toward the
+physically-correct integer and gets the topology right. `reuse` fixes the same
+failure differently: arcs become multi-unit at zero marginal cost after the
+first push, so the stacked drainage flows through instead of spilling. So the
+better cost helps exactly where there is **large-scale structure to get right**
+(steep gradients, boundary-draining wrap-lines, dense fringes) and stops helping
+under **pure high noise** (many independent residue dipoles that pair locally) —
+there the preferred-offset signal is itself noisy and there is no regional
+topology to recover.
+
+**Cost of the better cost — usually negative (it is faster).** Measured
+single-threaded (so the cost model is what is compared, not parallelism) on
+Goodman-noise cones, time relative to linear with K-correct in parens:
+
+| scene | linear | reuse | convex |
+|------|-------|------|-------|
+| 256², γ=0.7 | 34 ms (99) | 1.36× (100) | **0.90×** (100) |
+| 512², γ=0.7 | 245 ms (94) | 1.03× (100) | **0.52×** (100) |
+| 1024², γ=0.7 | 2546 ms (89) | 0.70× (100) | **0.23×** (100) |
+| 512², γ=0.6, ~260 res | 272 ms (94) | 0.91× (100) | **0.48×** (100) |
+| 512², γ=0.4, ~7k res | 367 ms (90) | 1.12× (100) | 1.77× (100) |
+| 512², γ=0.3, ~23k res | 543 ms (90) | 1.68× (99) | 2.68× (98) |
+
+The accuracy fix and the speed-up are the *same* phenomenon: with a correct
+preferred offset (convex) or free reuse, the solver reaches the optimum in far
+fewer augmentations instead of thrashing on the boundary-stacking pathology, and
+the margin *grows* with image size. The slowdown only appears in the
+low-coherence, tens-of-thousands-of-residues regime (convex up to ~2.7×, reuse
+~1.7×), where every arc carries multi-unit flow — and that is the same regime
+where one would be multilooking/pyramiding anyway, so the relevant comparison
+there is against a coarse solve, not full-res.
+
+**Caveats on this evidence.** Single-threaded synthetic cones with i.i.d.
+Goodman noise; real scenes have spatially-correlated noise and different
+absolute residue counts. And `convex`'s `offset` definition is known to be
+finicky — `convex_cost_design.md` and the `WHIRLWIND_DEVIATION_COST`
+negative-result note record an earlier wrong offset choice that hurt real NISAR
+data. The synthetic win may partly reflect that a smoothed-gradient offset is
+ideal on smooth synthetic cones. So "make convex the default" still needs a
+real-scene A/B before being trusted; `reuse` is the lower-risk first step (same
+cost shape question does not arise — it changes only arc capacity, not the cost).
+
 **Suggested path forward (next increments, not this PR).**
 1. Evaluate making `reuse` (or `convex`) the default solver in the top-level
    `unwrap`, pending real-data validation. That removes the corner failures
