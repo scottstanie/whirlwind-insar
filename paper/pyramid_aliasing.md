@@ -283,6 +283,43 @@ one regime (very low coherence) that justified it. A reasonable product choice:
 default to a small `base` (cheap, 2-level-equivalent) and only spend the full
 cascade when a large `base` is warranted.
 
+**Can `base` be auto-selected, or is it another SNAPHU-style expert knob?**
+This is the question that decides whether the pyramid is *usable* or just
+*capable*. The encouraging answer: unlike SNAPHU's many interacting parameters,
+the pyramid has essentially **one** knob with a *physical, measurable* ceiling
+(`base·g < π`, the coarsest-level Nyquist limit) and an **asymmetric** failure
+mode — too-small `base` only forgoes some denoising (a few K-points), too-large
+`base` aliases (catastrophic). So "pick the largest non-aliasing base" is a
+single well-posed estimation problem, not a search over a knob soup.
+
+`scripts/pyramid_auto_base.py` tests it over a (steepness, coherence) grid,
+comparing the data-driven Itoh-probe choice against an unknowable per-cell
+*oracle* and against every fixed default, by **regret** (oracle K − strategy K):
+
+| strategy | mean regret | worst-case regret |
+|---|---:|---:|
+| **probe (auto)** | **0.8** | **8.1** |
+| fixed `base=1` (conservative) | 5.9 | 38.9 |
+| fixed `base=2` | 3.1 | 36.0 |
+| fixed `base=4` | 21.0 | 92.5 |
+| fixed `base=8` | 25.4 | 89.8 |
+
+The probe lands **within ~1 K-point of the oracle on average** and never loses
+more than 8, while *no* fixed default is safe across the grid (every one has a
+30–90-point worst case — exactly the "works on almost every scene but only with
+the right setting" trap). This is the structural reason auto-selection looks
+tractable here where it isn't for SNAPHU: the goal is a single physical quantity
+(the aliasing onset), it is directly observable (the violation rate jumps when a
+down-look folds the fringes), and guessing low is cheap while guessing high is
+ruinous — so a conservative estimator is near-optimal.
+
+Two honest caveats keep this from being "solved": (1) the probe still has the
+near-Nyquist constant-rate-ramp blind spot (`g≳0.8π`, documented above), out of
+this grid's range; (2) all synthetic. But the regret structure is strong enough
+that promoting the probe from experimental to default is well-motivated *once it
+survives a real scene* — and even a wrong probe guess is bounded by the
+asymmetry, unlike a mis-set SNAPHU parameter.
+
 **The deeper fix this surfaced.** The single most important finding is nearly
 orthogonal to the pyramid: the **linear coherence cost scores only 88 % on a
 perfectly clean, noise-free steep bowl** (all errors in the corners) while
