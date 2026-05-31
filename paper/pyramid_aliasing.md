@@ -294,7 +294,25 @@ single well-posed estimation problem, not a search over a knob soup.
 
 `scripts/pyramid_auto_base.py` tests it over a (steepness, coherence) grid,
 comparing the data-driven Itoh-probe choice against an unknowable per-cell
-*oracle* and against every fixed default, by **regret** (oracle K − strategy K):
+*oracle* and against every fixed default, scored by **regret**.
+
+*Regret* is borrowed from decision theory: for one scene, it is how much
+K-correct (% of pixels on the right integer cycle) you give up by using a
+strategy's `base` instead of the best `base` you could possibly have chosen for
+that scene. Formally, for scene `s` and strategy `π` choosing base `bπ(s)` from
+`{1,2,4,8,16}`,
+
+> `regret(π, s) = max_b K(s, b) − K(s, bπ(s))`,
+
+where `K(s, b)` is the K-correct of the pyramid at base `b`. The `max_b` term is
+the **oracle** — the best achievable at any base, computed here by brute force
+because we know the synthetic truth (it is *not* available at run time; it only
+defines the ceiling we measure against). So regret = 0 means "chose the best
+possible base"; regret = 30 means "left 30 K-points on the table versus the best
+base for that scene." We report it two ways across the grid: **mean** (typical
+cost of the strategy) and **worst-case** (its biggest single failure — the
+number that matters for a default you can't babysit). Lower is better; a strategy
+with low mean *and* low worst-case is one you can ship unattended.
 
 | strategy | mean regret | worst-case regret |
 |---|---:|---:|
