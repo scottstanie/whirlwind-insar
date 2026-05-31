@@ -251,12 +251,37 @@ regime.
 
 **What is fragile / oversold.** (1) The automatic base probe is a
 synthetic-tuned heuristic with a fundamental constant-ramp blind spot — hence
-it is no longer the default. (2) The *N*-level cascade has not been shown to beat
-a simple **2-level** scheme (denoise → coarse solve → one full-res residual
-pass); most of the value is plausibly in that first prediction, and the extra
-levels add machinery whose marginal benefit is unquantified. (3) Everything here
-is synthetic (cones, bowls, Goodman noise); the residual tiler's "residual stays
-within a cycle" assumption is untested when the coarse prediction is poor.
+it is no longer the default. (2) Everything here is synthetic (cones, bowls,
+Goodman noise); the residual tiler's "residual stays within a cycle" assumption
+is untested when the coarse prediction is poor.
+
+**2-level vs N-level — the cascade earns its keep, but only in heavy noise.**
+A natural simplification is a *2-level* scheme: coarse solve at `base`, then one
+residual pass straight to full resolution (skip the intermediate octaves). Both
+share the coarse solve and the residual-against-prediction trick. Measured
+(`scripts/pyramid_2_vs_n.py`, gentle `g=0.08π` cone, reuse solver, 3 seeds):
+
+| base | γ | looks | full | 2-level | N-level |
+|---:|---:|---:|---:|---:|---:|
+| 8 | 0.60 | 4 | 99.9 | 99.9 | 99.9 |
+| 8 | 0.15 | 4 | 54.9 | 85.1 | **89.8** |
+| 8 | 0.12 | 4 | 35.6 | 55.4 | **86.8** |
+| 16 | 0.18 | 4 | 89.6 | 60.0 | **76.6** |
+| 16 | 0.12 | 4 | 35.6 | 24.1 | **46.9** |
+
+They **tie on clean and mild-noise data** — there the single jump is fine, so for
+most scenes the extra levels are unnecessary machinery. But in the
+**extreme-noise** regime the cascade wins decisively (up to +31 points), and by
+more the larger the `base`. Mechanism: 2-level's lone full-resolution residual
+pass sees the *full* per-pixel noise (its effective looks are not multiplied), so
+under heavy noise it drowns just like plain full-res; N-level's intermediate
+residuals run on down-looked grids with effective looks scaled by `f²`, staying
+unwrappable and handing a clean prediction to the next octave. A single
+`base→full` jump skips that progressive denoising. So the cascade is not
+redundant — it is precisely the machinery that makes the pyramid useful in the
+one regime (very low coherence) that justified it. A reasonable product choice:
+default to a small `base` (cheap, 2-level-equivalent) and only spend the full
+cascade when a large `base` is warranted.
 
 **The deeper fix this surfaced.** The single most important finding is nearly
 orthogonal to the pyramid: the **linear coherence cost scores only 88 % on a
@@ -327,6 +352,9 @@ cost shape question does not arise — it changes only arc capacity, not the cos
 3. Validate on one real dense-fringe scene (a known eruption or earthquake pair)
    before trusting any of this; that is the missing piece that would settle
    whether the pyramid is needed or a better base solver makes it redundant.
+   `scripts/cost_model_real_ab.py` runs the linear/reuse/convex A/B on a
+   downloaded GUNW `.h5` (the sandbox can't fetch one: Earthdata/ASF are
+   network-blocked and there are no credentials).
 4. If the auto-probe is pursued, combine the Itoh-violation rate with a spectral
    (FFT-peak) fringe-rate estimate to cover the constant-ramp blind spot, and
    calibrate `FLOOR`/`DECR` on real scenes.
