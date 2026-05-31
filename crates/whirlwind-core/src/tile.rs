@@ -669,7 +669,7 @@ fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
 /// physically-correct coherent average — never average wrapped phase across
 /// 2π), block-mean coherence, and validity = a majority of the block valid.
 /// Suppresses noise and re-estimates phase; effective looks scale by `lk²`.
-fn multilook_complex(
+pub(crate) fn multilook_complex(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
     mask: Option<ArrayView2<bool>>,
