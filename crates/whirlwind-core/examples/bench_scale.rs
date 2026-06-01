@@ -12,7 +12,9 @@ use std::time::Instant;
 use whirlwind_core::{cost, grid, integrate, network, primal_dual, residue, simulate};
 
 /// Peak resident set size in bytes, via getrusage. On macOS ru_maxrss is in
-/// bytes; on Linux it's in kilobytes — we normalize.
+/// bytes; on Linux it's in kilobytes — we normalize. `getrusage` is POSIX-only,
+/// so on non-unix (Windows CI) this is a no-op returning 0.
+#[cfg(unix)]
 fn peak_rss_bytes() -> u64 {
     let mut u: libc::rusage = unsafe { std::mem::zeroed() };
     unsafe {
@@ -24,6 +26,11 @@ fn peak_rss_bytes() -> u64 {
     } else {
         raw * 1024 // KiB -> bytes on Linux
     }
+}
+
+#[cfg(not(unix))]
+fn peak_rss_bytes() -> u64 {
+    0
 }
 
 fn fmt_bytes(b: u64) -> String {
