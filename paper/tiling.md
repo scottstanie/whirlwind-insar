@@ -245,3 +245,46 @@ Dijkstra — see Corrections #2). The general win it *could* bring is letting th
 *fine* per-tile solve survive noisy phase without pre-multilooking (so noisy
 scenes wouldn't need `multilook=`). Remaining levers: expose/auto-tune
 `multilook`; convex/statistical per-tile cost; finer seam healing.
+
+## Stage 3 (warm-started full-image reoptimize): why it was harder than 50 LOC
+
+(Folded in from the former `docs/TILING_DESIGN.md` so the dead-ends aren't
+re-explored. Stage 3 = SNAPHU's `-S`: warm-start the primal-dual over the full
+graph from the tiled flow — single-piece memory, short wall time because the
+seed is near-optimal.) The 50-LOC estimate missed two interacting constraints:
+
+1. **Unit-capacity model.** Each forward grid arc has capacity 1; reverse
+   residual arcs have cost `-c`. Once a forward arc is saturated by a warm
+   start, its residual reverse becomes available with negative cost.
+2. **Dial Dijkstra requires non-negative reduced costs.** With the default zero
+   potentials, a saturated warm-start arc immediately violates this
+   (`c - π[tail] + π[head] = -c < 0` on the residual reverse) and
+   `primal_dual::run` asserts on the first iteration.
+
+Two workarounds were prototyped (both since closed):
+
+- **(G) Don't saturate the bitvec.** Apply only the divergence of the warm-start
+  flow to `excess`; PD then routes the residual imbalance on the standard
+  residual graph (no negative reduced costs). *Feasible* (`div(init + corr) =
+  residue`, round-trips exactly through PD) *but not equivalent to a true
+  warm-start*: when two stitching errors' divergence pairs match up *across*
+  stitches, PD routes flow through a corridor and every edge along it gets its
+  cycle count shifted by 1, leaving a 2π error in some region. (Exposed on a 64²
+  ramp with 4×4 tiles: the median stitch left 6 source/sink pairs; PD balanced
+  all but one, which routed non-locally → unwrap 2π off at one pixel vs
+  non-tiled.)
+- **(C) Saturate the bitvec *and* recompute potentials by SPFA.** Set `π = -d`
+  (shortest-path distance in the residual graph). SPFA converges given no
+  negative cycles — but the warm-start flow from a median-stitched unwrap
+  *contained* negative residual cycles (SPFA detected one immediately): the seed
+  flow can be cost-reduced by cancelling a cycle. The standard fix is **Klein's
+  cycle-cancelling algorithm**, itself non-trivial and competitive in cost with
+  just calling `unwrap_crlb` from scratch on the full image.
+
+**Recommendation.** A working "polish" without Klein cycle-cancellation is to
+**not warm-start at all**: tile (cheap memory, fast feedback), and for users who
+want guaranteed equivalence with non-tiled, call `unwrap_crlb` directly on the
+full image (no memory benefit, trivial correctness). A genuine warm-start polish
+that recovers `unwrap_crlb`'s answer faster than `unwrap_crlb` itself appears to
+require either Stage 2 (region-grow on conncomps + secondary MCF on a coarsened
+graph) or Klein + Bellman-Ford.

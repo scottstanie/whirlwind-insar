@@ -549,11 +549,13 @@ def main() -> None:
                    help="run cycle-greedy MCF refinement on the raw 2D-unwrapped stack "
                         "instead of tree-based closure correction (slower, diagnostic)")
     p.add_argument("--closure", choices=["off", "tree"], default="off",
-                   help="temporal-closure correction. 'off' (default): emit raw per-IG "
-                        "unwraps with reference-pixel anchoring only (best per-IG accuracy "
-                        "with current cost+residue setup). 'tree': run CRLB-priority tree "
-                        "closure correction — guarantees temporal consistency Σ_e ε_e·y_e=0 "
-                        "but currently propagates per-IG outliers across the stack")
+                   help="temporal-closure correction. 'off' (default, production-recommended): "
+                        "emit raw per-IG unwraps with reference-pixel anchoring only — best "
+                        "per-IG accuracy (median absolute RMS vs SNAPHU 2.29 rad). 'tree': run "
+                        "CRLB-priority tree closure correction — guarantees exact temporal "
+                        "consistency Σ_e ε_e·y_e=0 but REGRESSES to 5.61 rad (2.4× worse) by "
+                        "propagating per-IG outliers across the stack; use only if you require "
+                        "exact closure (see ATBD-3d §10.2)")
     p.add_argument("--reference", default="auto",
                    help="reference pixel for absolute-phase anchoring: 'auto' "
                         "(lowest-Σ-CRLB pixel), 'dolphin' (read timeseries/reference_point.txt), "
