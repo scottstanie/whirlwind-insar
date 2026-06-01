@@ -66,8 +66,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "maturin>=1.5,<2.0" "numpy>=1.21" pytest pytest-randomly
 
-      - name: maturin develop
-        run: maturin develop --release
+      # Build + install the extension into the job's Python. `maturin develop`
+      # needs a virtualenv (setup-python doesn't provide one); `pip install .`
+      # builds via maturin (PEP 517) straight into the interpreter — no venv.
+      # (Debug profile is fine for the correctness tests; release.yml ships wheels.)
+      - name: build + install whirlwind
+        run: pip install .
 
       - name: pytest
         run: pytest python/tests -v

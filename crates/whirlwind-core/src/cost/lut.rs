@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 use std::sync::{Mutex, OnceLock};
 
-const N_ALPHA: usize = 257;   // odd → exact zero sample
+const N_ALPHA: usize = 257; // odd → exact zero sample
 const N_GAMMA: usize = 129;
 const ALPHA_LO: f32 = -3.0 * TAU; // wide enough to accommodate ±2π shifts
 const ALPHA_HI: f32 = 3.0 * TAU;
@@ -124,7 +124,11 @@ impl VarianceLut {
             }
             // Normalize in case the PDF doesn't integrate to exactly 1
             // (numerical error from finite samples). norm·dα ≈ 1.
-            sigma_sq[i] = if norm > 1e-12 { s2 / norm } else { (PI * PI) / 3.0 };
+            sigma_sq[i] = if norm > 1e-12 {
+                s2 / norm
+            } else {
+                (PI * PI) / 3.0
+            };
         }
         Self { nlooks, sigma_sq }
     }

@@ -64,10 +64,8 @@ pub fn unwrap_sparse(
     }
 
     let pts: Vec<Point> = points.iter().map(|&(x, y)| Point { x, y }).collect();
-    let g = TriangulatedGraph::with_max_edge_length(
-        &pts,
-        max_edge_length.unwrap_or(f64::INFINITY),
-    ).ok_or(SparseUnwrapError::DegenerateTriangulation)?;
+    let g = TriangulatedGraph::with_max_edge_length(&pts, max_edge_length.unwrap_or(f64::INFINITY))
+        .ok_or(SparseUnwrapError::DegenerateTriangulation)?;
 
     let residues = compute_triangle_residues(&g, wrapped_phase);
     let (costs, forbidden) = compute_edge_costs(&g, variance);
@@ -99,10 +97,7 @@ pub enum SparseUnwrapError {
 /// Per-triangle winding count (residue), plus the outer-face winding so the
 /// sum over all nodes balances to zero. Layout: indices `0..T` are triangles
 /// in delaunator order; index `T` is the outer face.
-pub fn compute_triangle_residues(
-    g: &TriangulatedGraph,
-    wrapped_phase: &[f32],
-) -> Vec<i32> {
+pub fn compute_triangle_residues(g: &TriangulatedGraph, wrapped_phase: &[f32]) -> Vec<i32> {
     let mut excess = vec![0_i32; g.num_nodes()];
     let mut total = 0_i32;
     for t in 0..g.num_triangles {
@@ -336,7 +331,10 @@ mod tests {
                 max_err = err;
             }
         }
-        assert!(max_err < 1e-3, "smooth ramp recovery error too large: {max_err}");
+        assert!(
+            max_err < 1e-3,
+            "smooth ramp recovery error too large: {max_err}"
+        );
     }
 
     /// Conservation: total residue (sum over all triangles + outer face) is 0
@@ -358,7 +356,10 @@ mod tests {
         let g = TriangulatedGraph::new(&pts).unwrap();
         let res = compute_triangle_residues(&g, &phase);
         let total: i32 = res.iter().sum();
-        assert_eq!(total, 0, "residues must balance to zero (outer face included)");
+        assert_eq!(
+            total, 0,
+            "residues must balance to zero (outer face included)"
+        );
     }
 
     /// Wrapping ramp on a regular dense grid sampled as "points": MCF should
@@ -402,7 +403,10 @@ mod tests {
                 n_finite += 1;
             }
         }
-        assert!(n_finite > 9 * n / 10, "expected most pixels finite, got {n_finite}/{n}");
+        assert!(
+            n_finite > 9 * n / 10,
+            "expected most pixels finite, got {n_finite}/{n}"
+        );
         let offset = offset_sum / n_finite as f64;
         let mut max_err = 0.0_f64;
         for i in 0..n {
@@ -448,8 +452,12 @@ mod tests {
             let (pa, pb) = g.edge_pixel_pair(i);
             let a_rel = pa <= 1 && pb <= 1;
             let b_unrel = pa >= 2 && pb >= 2;
-            if a_rel { reliable_cost = Some(costs[i]); }
-            if b_unrel { unreliable_cost = Some(costs[i]); }
+            if a_rel {
+                reliable_cost = Some(costs[i]);
+            }
+            if b_unrel {
+                unreliable_cost = Some(costs[i]);
+            }
         }
         let r = reliable_cost.expect("reliable edge must exist in triangulation");
         let u = unreliable_cost.expect("unreliable edge must exist in triangulation");
@@ -488,15 +496,32 @@ mod tests {
             let touches_nan = pa == 4 || pb == 4;
             if touches_nan {
                 n_incident_to_nan += 1;
-                assert!(forbidden[i],     "edge {i} touching NaN-variance pixel must be forbidden (fwd)");
-                assert!(forbidden[i + e], "edge {i} touching NaN-variance pixel must be forbidden (rev)");
+                assert!(
+                    forbidden[i],
+                    "edge {i} touching NaN-variance pixel must be forbidden (fwd)"
+                );
+                assert!(
+                    forbidden[i + e],
+                    "edge {i} touching NaN-variance pixel must be forbidden (rev)"
+                );
             } else {
-                assert!(!forbidden[i],     "edge {i} (no NaN) must not be forbidden (fwd)");
-                assert!(!forbidden[i + e], "edge {i} (no NaN) must not be forbidden (rev)");
+                assert!(
+                    !forbidden[i],
+                    "edge {i} (no NaN) must not be forbidden (fwd)"
+                );
+                assert!(
+                    !forbidden[i + e],
+                    "edge {i} (no NaN) must not be forbidden (rev)"
+                );
             }
-            if forbidden[i] { n_forbidden += 1; }
+            if forbidden[i] {
+                n_forbidden += 1;
+            }
         }
-        assert!(n_incident_to_nan >= 1, "test setup: expected at least one edge incident to pixel 4");
+        assert!(
+            n_incident_to_nan >= 1,
+            "test setup: expected at least one edge incident to pixel 4"
+        );
         assert_eq!(
             n_forbidden, n_incident_to_nan,
             "exactly the edges incident to the NaN-variance pixel should be forbidden"

@@ -29,21 +29,23 @@ pub enum DijkstraBackend {
 /// opt-in for further experimentation; for production use, leave the default.
 pub fn backend() -> DijkstraBackend {
     static BE: OnceLock<DijkstraBackend> = OnceLock::new();
-    *BE.get_or_init(|| match std::env::var("WHIRLWIND_DIJKSTRA").ok().as_deref() {
-        Some("heap") => DijkstraBackend::Heap,
-        Some("dial-par") | Some("parallel") => DijkstraBackend::DialParallel,
-        // Default is serial Dial.
-        _ => DijkstraBackend::DialSerial,
-    })
+    *BE.get_or_init(
+        || match std::env::var("WHIRLWIND_DIJKSTRA").ok().as_deref() {
+            Some("heap") => DijkstraBackend::Heap,
+            Some("dial-par") | Some("parallel") => DijkstraBackend::DialParallel,
+            // Default is serial Dial.
+            _ => DijkstraBackend::DialSerial,
+        },
+    )
 }
 
 /// Result of a multi-source Dijkstra over the residual graph from every
 /// `excess_node` simultaneously, using reduced costs as arc lengths.
 pub struct ShortestPaths {
     pub dist: Vec<i64>,
-    pub pred_arc: Vec<i32>,     // arc id of the predecessor arc, -1 if none
-    pub pred_node: Vec<i32>,    // tail of that arc
-    pub source: Vec<i32>,       // which excess source reached this node, -1 if not reached
+    pub pred_arc: Vec<i32>,  // arc id of the predecessor arc, -1 if none
+    pub pred_node: Vec<i32>, // tail of that arc
+    pub source: Vec<i32>,    // which excess source reached this node, -1 if not reached
     /// True iff the node has been popped (i.e. `dist[node]` is finalized).
     /// With early-exit Dijkstra a node may have a finite `dist` after
     /// relaxation but not be finalized; callers must consult `popped`
@@ -75,10 +77,7 @@ impl ShortestPaths {
 ///
 /// Backend is selected once per process via `backend()` (env-var
 /// `WHIRLWIND_DIJKSTRA`).
-pub fn dijkstra_multi_source<G: ResidualGraph>(
-    g: &G,
-    net: &Network,
-) -> ShortestPaths {
+pub fn dijkstra_multi_source<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
     // Convex mode produces marginal costs up to ~weight · 200 · nshortcycle²
     // (1e6+ for typical high-coherence arcs); Dial's bucket vec would need
     // that many entries. Route convex networks to the binary-heap backend,

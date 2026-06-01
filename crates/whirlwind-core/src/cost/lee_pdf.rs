@@ -70,9 +70,7 @@ pub fn pdf(alpha: f32, gamma: f32, nlooks: f32) -> f32 {
 
     // Term 2: (Γ(L+0.5)/Γ(L)) · β · (1-γ²)^L / (2 √π · (1-β²)^(L+0.5))
     // Evaluate in log-space too.
-    let log_t2_mag = lanczos_lgamma(n + 0.5)
-        - lanczos_lgamma(n)
-        + n * (1.0 - g2).ln()
+    let log_t2_mag = lanczos_lgamma(n + 0.5) - lanczos_lgamma(n) + n * (1.0 - g2).ln()
         - (n + 0.5) * one_minus_b2.ln();
     let t2 = beta.signum() * beta.abs() * (log_t2_mag.exp()) / (2.0 * PI64.sqrt());
 

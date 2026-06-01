@@ -56,7 +56,11 @@ fn unwrap<'py>(
     // GUNW A_016 (55→97%) without touching the rest.
     let (tile_size, tile_overlap) = if tile_size == 0 && multilook <= 1 {
         let (mm, nn) = ig.dim();
-        if mm > 512 || nn > 512 { (512, 64) } else { (0, 0) }
+        if mm > 512 || nn > 512 {
+            (512, 64)
+        } else {
+            (0, 0)
+        }
     } else {
         (tile_size, tile_overlap)
     };
@@ -68,7 +72,15 @@ fn unwrap<'py>(
 
     let unw = py.detach(|| {
         if use_tiling {
-            whirlwind_core::tile::unwrap_tiled_robust(ig, co, nlooks, m, tile_size, tile_overlap, multilook)
+            whirlwind_core::tile::unwrap_tiled_robust(
+                ig,
+                co,
+                nlooks,
+                m,
+                tile_size,
+                tile_overlap,
+                multilook,
+            )
         } else {
             // Whole-image path (frame fits one 512 tile): use the corner-safe
             // reuse solver, not the linear cost. The linear coherence cost has a
@@ -102,11 +114,7 @@ fn compute_residues<'py>(
 /// Returns an ``(m, n)`` float32 unwrapped-phase array suitable for use
 /// as ground truth in unwrapping benchmarks.
 #[pyfunction]
-fn diagonal_ramp<'py>(
-    py: Python<'py>,
-    m: usize,
-    n: usize,
-) -> Bound<'py, PyArray2<f32>> {
+fn diagonal_ramp<'py>(py: Python<'py>, m: usize, n: usize) -> Bound<'py, PyArray2<f32>> {
     whirlwind_core::simulate::diagonal_ramp((m, n)).into_pyarray(py)
 }
 
@@ -115,10 +123,7 @@ fn diagonal_ramp<'py>(
 /// Convenience for tests / synthetic generation: returns
 /// ``angle(exp(1j * unw))`` element-wise as float32, same shape as input.
 #[pyfunction]
-fn wrap_phase<'py>(
-    py: Python<'py>,
-    unw: PyReadonlyArray2<'py, f32>,
-) -> Bound<'py, PyArray2<f32>> {
+fn wrap_phase<'py>(py: Python<'py>, unw: PyReadonlyArray2<'py, f32>) -> Bound<'py, PyArray2<f32>> {
     let arr = unw.as_array().to_owned();
     whirlwind_core::simulate::wrap_phase(&arr).into_pyarray(py)
 }
@@ -212,7 +217,9 @@ fn closure_correct<'py>(
     let ef = edges_from.as_array();
     let et = edges_to.as_array();
     if ef.len() != et.len() {
-        return Err(PyValueError::new_err("edges_from and edges_to must be same length"));
+        return Err(PyValueError::new_err(
+            "edges_from and edges_to must be same length",
+        ));
     }
     let n_edges = ef.len();
     let edges: Vec<whirlwind_core::closure::Edge> = ef
@@ -233,9 +240,7 @@ fn closure_correct<'py>(
     let priority_owned: Option<Vec<f32>> = tree_priority.as_ref().map(|p| p.as_array().to_vec());
     let priority_slice = priority_owned.as_deref();
 
-    let out = py.detach(|| {
-        whirlwind_core::closure::correct(stack, &graph, priority_slice)
-    });
+    let out = py.detach(|| whirlwind_core::closure::correct(stack, &graph, priority_slice));
 
     let dict = PyDict::new(py);
     dict.set_item("corrected", out.corrected.into_pyarray(py))?;
@@ -278,7 +283,9 @@ fn quality_map<'py>(
     let ef = edges_from.as_array();
     let et = edges_to.as_array();
     if ef.len() != et.len() {
-        return Err(PyValueError::new_err("edges_from and edges_to must be same length"));
+        return Err(PyValueError::new_err(
+            "edges_from and edges_to must be same length",
+        ));
     }
     let n_edges = ef.len();
     let edges: Vec<whirlwind_core::closure::Edge> = ef
@@ -402,7 +409,15 @@ fn unwrap_pyramid<'py>(
         ))
     })?;
     let unw = py.detach(|| {
-        whirlwind_core::pyramid::unwrap_pyramid(ig, co, nlooks, m, base_factor, base_solver, tile_size)
+        whirlwind_core::pyramid::unwrap_pyramid(
+            ig,
+            co,
+            nlooks,
+            m,
+            base_factor,
+            base_solver,
+            tile_size,
+        )
     });
     let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(unw.into_pyarray(py))
@@ -475,7 +490,9 @@ fn quality_triangles<'py>(
     let ef = edges_from.as_array();
     let et = edges_to.as_array();
     if ef.len() != et.len() {
-        return Err(PyValueError::new_err("edges_from and edges_to must be same length"));
+        return Err(PyValueError::new_err(
+            "edges_from and edges_to must be same length",
+        ));
     }
     let edges: Vec<whirlwind_core::closure::Edge> = ef
         .iter()
@@ -486,12 +503,12 @@ fn quality_triangles<'py>(
     let stack = unw_stack.as_array();
     if stack.shape()[0] != ef.len() {
         return Err(PyValueError::new_err(format!(
-            "stack shape[0]={} != n_edges {}", stack.shape()[0], ef.len()
+            "stack shape[0]={} != n_edges {}",
+            stack.shape()[0],
+            ef.len()
         )));
     }
-    let out = py.detach(|| {
-        whirlwind_core::closure::quality_from_triangles(stack, &graph)
-    });
+    let out = py.detach(|| whirlwind_core::closure::quality_from_triangles(stack, &graph));
     Ok(out.into_pyarray(py))
 }
 
@@ -536,7 +553,9 @@ fn closure_refine_mcf<'py>(
     let ef = edges_from.as_array();
     let et = edges_to.as_array();
     if ef.len() != et.len() {
-        return Err(PyValueError::new_err("edges_from and edges_to must be same length"));
+        return Err(PyValueError::new_err(
+            "edges_from and edges_to must be same length",
+        ));
     }
     let edges: Vec<whirlwind_core::closure::Edge> = ef
         .iter()
@@ -557,14 +576,16 @@ fn closure_refine_mcf<'py>(
     let prio_owned: Option<Vec<f32>> = tree_priority.as_ref().map(|p| p.as_array().to_vec());
     let prio_slice = prio_owned.as_deref();
 
-    let out = py.detach(|| {
-        whirlwind_core::closure::refine_mcf(stack, &graph, crlb, prio_slice, max_iter)
-    });
+    let out = py
+        .detach(|| whirlwind_core::closure::refine_mcf(stack, &graph, crlb, prio_slice, max_iter));
 
     let dict = PyDict::new(py);
     dict.set_item("corrected", out.corrected.into_pyarray(py))?;
     dict.set_item("corrections", out.corrections.into_pyarray(py))?;
-    dict.set_item("residual_violations", out.residual_violations.into_pyarray(py))?;
+    dict.set_item(
+        "residual_violations",
+        out.residual_violations.into_pyarray(py),
+    )?;
     dict.set_item("iterations", out.iterations.into_pyarray(py))?;
     Ok(dict)
 }
@@ -780,9 +801,7 @@ fn unwrap_sparse<'py>(
     }
     let wp = wrapped_phase.as_array().to_vec();
     let v = variance.as_array().to_vec();
-    let out = py.detach(|| {
-        whirlwind_core::sparse::unwrap_sparse(&pts, &wp, &v, max_edge_length)
-    });
+    let out = py.detach(|| whirlwind_core::sparse::unwrap_sparse(&pts, &wp, &v, max_edge_length));
     let out = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(numpy::PyArray1::from_vec(py, out))
 }

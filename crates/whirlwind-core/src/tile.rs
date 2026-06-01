@@ -15,14 +15,14 @@
 //! and the median may snap to the wrong 2π multiple. Acceptable per spec —
 //! those pixels aren't trustworthy in either tiled or non-tiled output.
 
+use crate::UnwrapError;
 use crate::cost;
 use crate::grid::RectangularGridGraph;
 use crate::integrate;
 use crate::network::Network;
 use crate::primal_dual;
 use crate::residue;
-use crate::UnwrapError;
-use ndarray::{s, Array2, ArrayView2};
+use ndarray::{Array2, ArrayView2, s};
 use num_complex::Complex32;
 use rayon::prelude::*;
 use std::collections::VecDeque;
@@ -161,7 +161,10 @@ pub fn unwrap_crlb_tiled(
     if tile_size >= m && tile_size >= n {
         return crate::unwrap_crlb(igram, variance, mask);
     }
-    assert!(overlap >= 2, "overlap must be ≥ 2 for median-based stitching");
+    assert!(
+        overlap >= 2,
+        "overlap must be ≥ 2 for median-based stitching"
+    );
 
     let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
     let n_tiles = grid.tiles.len();
@@ -172,9 +175,7 @@ pub fn unwrap_crlb_tiled(
         .par_iter()
         .map(|t| unwrap_one_tile(igram, variance, mask, t))
         .collect();
-    let tile_unws: Vec<Array2<f32>> = tile_unws
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
+    let tile_unws: Vec<Array2<f32>> = tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
 
     // 2) BFS over tiles, accumulating per-tile integer-2π offsets relative
     //    to the seed tile (index 0).
@@ -263,15 +264,23 @@ pub fn unwrap_tiled(
         let cts = 128.min(cm).min(cn);
         let cov = (cts / 4).max(2);
         let coarse = unwrap_tiled(
-            cig.view(), ccorr.view(), nlooks * (multilook * multilook) as f32,
-            Some(cmask.view()), cts, cov, 1,
+            cig.view(),
+            ccorr.view(),
+            nlooks * (multilook * multilook) as f32,
+            Some(cmask.view()),
+            cts,
+            cov,
+            1,
         )?;
         return Ok(upsample_blockrep(&coarse, multilook, m, n));
     }
     if tile_size >= m && tile_size >= n {
         return crate::unwrap(igram, corr, nlooks, mask);
     }
-    assert!(overlap >= 2, "overlap must be ≥ 2 for median-based stitching");
+    assert!(
+        overlap >= 2,
+        "overlap must be ≥ 2 for median-based stitching"
+    );
 
     let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
     let _n_tiles = grid.tiles.len();
@@ -282,8 +291,7 @@ pub fn unwrap_tiled(
         .par_iter()
         .map(|t| unwrap_one_tile_coh(igram, corr, nlooks, mask, t))
         .collect();
-    let tile_unws: Vec<Array2<f32>> =
-        tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
+    let tile_unws: Vec<Array2<f32>> = tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
 
     // 2) Reconcile per-tile integer-2π offsets by a GLOBAL min-cost-flow
     //    secondary network (SNAPHU's `AssembleTiles` idea at tile scale).
@@ -304,7 +312,11 @@ pub fn unwrap_tiled(
             if gc + 1 < cols {
                 let nb = grid.index_of(gr, gc + 1);
                 let (k, w) = stitching_offset_coh(
-                    &grid.tiles[idx], &tile_unws[idx], &grid.tiles[nb], &tile_unws[nb], corr,
+                    &grid.tiles[idx],
+                    &tile_unws[idx],
+                    &grid.tiles[nb],
+                    &tile_unws[nb],
+                    corr,
                 );
                 // stitch returns k with off_nb = off_idx − k ⇒ gh = off_nb − off_idx = −k
                 gh[gr * (cols - 1) + gc] = -k;
@@ -313,7 +325,11 @@ pub fn unwrap_tiled(
             if gr + 1 < rows {
                 let nb = grid.index_of(gr + 1, gc);
                 let (k, w) = stitching_offset_coh(
-                    &grid.tiles[idx], &tile_unws[idx], &grid.tiles[nb], &tile_unws[nb], corr,
+                    &grid.tiles[idx],
+                    &tile_unws[idx],
+                    &grid.tiles[nb],
+                    &tile_unws[nb],
+                    corr,
                 );
                 gv[gr * cols + gc] = -k;
                 wv[gr * cols + gc] = w;
@@ -453,9 +469,8 @@ fn coherent_cut_rate(
     coh_thr: f32,
 ) -> f64 {
     let (m, n) = unw.dim();
-    let valid = |i: usize, j: usize| {
-        mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite()
-    };
+    let valid =
+        |i: usize, j: usize| mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite();
     let mut sum = 0.0_f64;
     let mut nvalid = 0_usize;
     for i in 0..m {
@@ -584,15 +599,20 @@ fn label_components(m: &Array2<bool>) -> (Array2<i32>, Vec<usize>) {
             stack.push((i, j));
             while let Some((y, x)) = stack.pop() {
                 sz += 1;
-                let mut push = |yy: usize, xx: usize, lab: &mut Array2<i32>, st: &mut Vec<(usize, usize)>| {
-                    if yy < h && xx < w && m[(yy, xx)] && lab[(yy, xx)] == 0 {
-                        lab[(yy, xx)] = next;
-                        st.push((yy, xx));
-                    }
-                };
-                if y > 0 { push(y - 1, x, &mut lab, &mut stack); }
+                let push =
+                    |yy: usize, xx: usize, lab: &mut Array2<i32>, st: &mut Vec<(usize, usize)>| {
+                        if yy < h && xx < w && m[(yy, xx)] && lab[(yy, xx)] == 0 {
+                            lab[(yy, xx)] = next;
+                            st.push((yy, xx));
+                        }
+                    };
+                if y > 0 {
+                    push(y - 1, x, &mut lab, &mut stack);
+                }
                 push(y + 1, x, &mut lab, &mut stack);
-                if x > 0 { push(y, x - 1, &mut lab, &mut stack); }
+                if x > 0 {
+                    push(y, x - 1, &mut lab, &mut stack);
+                }
                 push(y, x + 1, &mut lab, &mut stack);
             }
             sizes.push(sz);
@@ -614,7 +634,8 @@ fn high_coh_cut_mask(
     dilate: usize,
 ) -> Array2<bool> {
     let (m, n) = unw.dim();
-    let valid = |i: usize, j: usize| mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite();
+    let valid =
+        |i: usize, j: usize| mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite();
     let mut cut = Array2::<bool>::from_elem((m, n), false);
     for i in 0..m {
         for j in 0..n {
@@ -642,10 +663,18 @@ fn high_coh_cut_mask(
         for i in 0..m {
             for j in 0..n {
                 if prev[(i, j)] {
-                    if i > 0 { cut[(i - 1, j)] = true; }
-                    if i + 1 < m { cut[(i + 1, j)] = true; }
-                    if j > 0 { cut[(i, j - 1)] = true; }
-                    if j + 1 < n { cut[(i, j + 1)] = true; }
+                    if i > 0 {
+                        cut[(i - 1, j)] = true;
+                    }
+                    if i + 1 < m {
+                        cut[(i + 1, j)] = true;
+                    }
+                    if j > 0 {
+                        cut[(i, j - 1)] = true;
+                    }
+                    if j + 1 < n {
+                        cut[(i, j + 1)] = true;
+                    }
                 }
             }
         }
@@ -698,8 +727,10 @@ fn seam_repair(
             let l = lab[(i, j)];
             if l > 0 {
                 let b = &mut bb[(l - 1) as usize];
-                b.0 = b.0.min(i); b.1 = b.1.max(i);
-                b.2 = b.2.min(j); b.3 = b.3.max(j);
+                b.0 = b.0.min(i);
+                b.1 = b.1.max(i);
+                b.2 = b.2.min(j);
+                b.3 = b.3.max(j);
             }
         }
     }
@@ -718,10 +749,11 @@ fn seam_repair(
         let win_ig = igram.slice(s![r0..r1, c0..c1]);
         let win_co = corr.slice(s![r0..r1, c0..c1]);
         let win_mk = mask.map(|mk| mk.slice(s![r0..r1, c0..c1]).to_owned());
-        let fresh = match crate::unwrap_reuse(win_ig, win_co, nlooks, win_mk.as_ref().map(|a| a.view())) {
-            Ok(f) => f,
-            Err(_) => continue,
-        };
+        let fresh =
+            match crate::unwrap_reuse(win_ig, win_co, nlooks, win_mk.as_ref().map(|a| a.view())) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
         let (wh, ww_) = (r1 - r0, c1 - c0);
         // align fresh to current by modal integer offset over valid window pixels
         let mut offs: Vec<i64> = Vec::new();
@@ -739,7 +771,8 @@ fn seam_repair(
         for i in 0..wh {
             for j in 0..ww_ {
                 let (gi, gj) = (r0 + i, c0 + j);
-                if valid_mask[(gi, gj)] && fresh[(i, j)].is_finite() && corr[(gi, gj)] > COH_CUT_THR {
+                if valid_mask[(gi, gj)] && fresh[(i, j)].is_finite() && corr[(gi, gj)] > COH_CUT_THR
+                {
                     let k = ((unw[(gi, gj)] - (fresh[(i, j)] - off)) / TAU).round() as i64;
                     if k != 0 {
                         dis[(i, j)] = true;
@@ -815,7 +848,13 @@ struct Mcf {
 
 impl Mcf {
     fn new(n: usize) -> Self {
-        Mcf { head: vec![-1; n], to: Vec::new(), next: Vec::new(), cap: Vec::new(), cost: Vec::new() }
+        Mcf {
+            head: vec![-1; n],
+            to: Vec::new(),
+            next: Vec::new(),
+            cap: Vec::new(),
+            cost: Vec::new(),
+        }
     }
 
     fn add_arc(&mut self, u: usize, v: usize, cap: i64, cost: i64) -> usize {
@@ -850,8 +889,7 @@ impl Mcf {
     fn solve(&mut self, supply: &[i64]) {
         let n = self.head.len();
         let mut sup = supply.to_vec();
-        loop {
-            let Some(src) = (0..n).find(|&i| sup[i] > 0) else { break };
+        while let Some(src) = (0..n).find(|&i| sup[i] > 0) {
             let mut dist = vec![i64::MAX; n];
             let mut pe = vec![-1_i32; n];
             let mut inq = vec![false; n];
@@ -865,9 +903,7 @@ impl Mcf {
                 while e != -1 {
                     let ei = e as usize;
                     let v = self.to[ei];
-                    if self.cap[ei] > 0
-                        && dist[u] != i64::MAX
-                        && dist[u] + self.cost[ei] < dist[v]
+                    if self.cap[ei] > 0 && dist[u] != i64::MAX && dist[u] + self.cost[ei] < dist[v]
                     {
                         dist[v] = dist[u] + self.cost[ei];
                         pe[v] = ei as i32;
@@ -1062,7 +1098,8 @@ pub(crate) fn multilook_complex(
             for di in 0..lk {
                 for dj in 0..lk {
                     let (i, j) = (ci * lk + di, cj * lk + dj);
-                    let ok = mask.map(|mk| mk[(i, j)]).unwrap_or(true) && igram[(i, j)].norm() > 0.0;
+                    let ok =
+                        mask.map(|mk| mk[(i, j)]).unwrap_or(true) && igram[(i, j)].norm() > 0.0;
                     if ok {
                         zs += igram[(i, j)];
                         cs += corr[(i, j)];
@@ -1111,7 +1148,13 @@ fn compute_coarse_anchor(
     }
     let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, lk);
     // One whole-image solve on the tiny coarse image; effective looks ×lk².
-    let cunw = crate::unwrap(cig.view(), ccorr.view(), nlooks * (lk * lk) as f32, Some(cmask.view())).ok()?;
+    let cunw = crate::unwrap(
+        cig.view(),
+        ccorr.view(),
+        nlooks * (lk * lk) as f32,
+        Some(cmask.view()),
+    )
+    .ok()?;
     // Block-replicate to full res (we only consume round((anchor−unw)/2π)).
     Some(upsample_blockrep(&cunw, lk, m, n))
 }
@@ -1130,10 +1173,9 @@ fn coarse_refine(
         return;
     }
     let tau = TAU as f64;
-    let valid =
-        |unw: &Array2<f32>, i: usize, j: usize| {
-            mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite()
-        };
+    let valid = |unw: &Array2<f32>, i: usize, j: usize| {
+        mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite()
+    };
 
     // 1) Coarsen: block-mean unw / coh over valid pixels; require ≥ f valid.
     let mut cunw = vec![0_f64; mh * mw];
@@ -1223,11 +1265,7 @@ fn coarse_refine(
             }
             let k = ((canchor[idx] - cunw[idx]) / tau).round() as i64;
             let r = uf_find(&mut parent, idx);
-            *votes
-                .entry(r)
-                .or_default()
-                .entry(k)
-                .or_insert(0.0) += ccoh[idx].max(1e-6);
+            *votes.entry(r).or_default().entry(k).or_insert(0.0) += ccoh[idx].max(1e-6);
         }
         for (r, vmap) in &votes {
             let best = vmap
@@ -1249,7 +1287,9 @@ fn coarse_refine(
                 *sizes.entry(uf_find(&mut parent, idx)).or_insert(0) += 1;
             }
         }
-        let Some((&anchor_region, _)) = sizes.iter().max_by_key(|kv| *kv.1) else { return };
+        let Some((&anchor_region, _)) = sizes.iter().max_by_key(|kv| *kv.1) else {
+            return;
+        };
 
         let mut adj: HashMap<usize, Vec<(usize, i64, f64)>> = HashMap::new();
         for ci in 0..mh {
@@ -1259,15 +1299,16 @@ fn coarse_refine(
                     continue;
                 }
                 let ra = uf_find(&mut parent, idx);
-                let mut consider = |idx2: usize, adj: &mut HashMap<usize, Vec<(usize, i64, f64)>>| {
-                    let j = cyc(idx, idx2);
-                    if j != 0 {
-                        let rb = uf_find(&mut parent, idx2);
-                        let w = ccoh[idx].min(ccoh[idx2]).powi(2);
-                        adj.entry(ra).or_default().push((rb, j, w));
-                        adj.entry(rb).or_default().push((ra, -j, w));
-                    }
-                };
+                let mut consider =
+                    |idx2: usize, adj: &mut HashMap<usize, Vec<(usize, i64, f64)>>| {
+                        let j = cyc(idx, idx2);
+                        if j != 0 {
+                            let rb = uf_find(&mut parent, idx2);
+                            let w = ccoh[idx].min(ccoh[idx2]).powi(2);
+                            adj.entry(ra).or_default().push((rb, j, w));
+                            adj.entry(rb).or_default().push((ra, -j, w));
+                        }
+                    };
                 if cj + 1 < mw && cvalid[idx + 1] {
                     consider(idx + 1, &mut adj);
                 }
@@ -1277,13 +1318,19 @@ fn coarse_refine(
             }
         }
 
-        let regions: Vec<usize> = adj.keys().copied().filter(|&r| r != anchor_region).collect();
+        let regions: Vec<usize> = adj
+            .keys()
+            .copied()
+            .filter(|&r| r != anchor_region)
+            .collect();
         for _ in 0..200 {
             let mut changed = false;
             for &r in &regions {
                 let mut votes: HashMap<i64, f64> = HashMap::new();
                 for &(nb, j, w) in &adj[&r] {
-                    *votes.entry(off.get(&nb).copied().unwrap_or(0) + j).or_insert(0.0) += w;
+                    *votes
+                        .entry(off.get(&nb).copied().unwrap_or(0) + j)
+                        .or_insert(0.0) += w;
                 }
                 let best = votes
                     .iter()
@@ -1357,7 +1404,9 @@ fn heal_thin_slivers(
 ) {
     let (m, n) = unw.dim();
     let ok = |unw: &Array2<f32>, i: usize, j: usize| {
-        mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite() && corr[(i, j)] > min_coh
+        mask.map(|mk| mk[(i, j)]).unwrap_or(true)
+            && unw[(i, j)].is_finite()
+            && corr[(i, j)] > min_coh
     };
     // Pixels within this of the run base are treated as the same integer level.
     let same_level = std::f32::consts::PI;
@@ -1495,7 +1544,8 @@ fn unwrap_one_tile_coh(
     let mut net = match tile_solver() {
         TileSolver::Convex => {
             let (offsets, weights) = cost::compute_snaphu_smooth_costs(ig, co, nlooks, mk);
-            let mut net = Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mk);
+            let mut net =
+                Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mk);
             net.preload_convex_min(&graph);
             net
         }
@@ -1585,7 +1635,9 @@ fn unwrap_one_tile(
 ) -> Result<Array2<f32>, UnwrapError> {
     let ig = igram.slice(s![tile.r0..tile.r1, tile.c0..tile.c1]);
     let va = variance.slice(s![tile.r0..tile.r1, tile.c0..tile.c1]);
-    let mk = mask.as_ref().map(|m| m.slice(s![tile.r0..tile.r1, tile.c0..tile.c1]));
+    let mk = mask
+        .as_ref()
+        .map(|m| m.slice(s![tile.r0..tile.r1, tile.c0..tile.c1]));
 
     let (tm, tn) = ig.dim();
     let wrapped_phase = ig.mapv(|z| z.arg());
@@ -1621,8 +1673,7 @@ fn stitching_offset(
         return 0;
     }
     // Collect (value, weight) for overlap pixels with finite difference.
-    let mut samples: Vec<(f32, f32)> =
-        Vec::with_capacity((r1 - r0) * (c1 - c0));
+    let mut samples: Vec<(f32, f32)> = Vec::with_capacity((r1 - r0) * (c1 - c0));
     for gi in r0..r1 {
         for gj in c0..c1 {
             let a = unw_a[(gi - tile_a.r0, gj - tile_a.c0)];
@@ -1633,7 +1684,11 @@ fn stitching_offset(
             let diff_2pi = (b - a) / TAU;
             // Weight ∝ 1 / variance (CRLB). Skip nodata.
             let v = variance[(gi, gj)];
-            let w = if v.is_finite() && v > 0.0 { 1.0 / v } else { 1e-3 };
+            let w = if v.is_finite() && v > 0.0 {
+                1.0 / v
+            } else {
+                1e-3
+            };
             samples.push((diff_2pi, w));
         }
     }
@@ -1664,7 +1719,10 @@ mod tests {
     fn decompose_single_tile_when_image_fits() {
         let tiles = decompose(100, 100, 128, 16);
         assert_eq!(tiles.len(), 1);
-        assert_eq!((tiles[0].r0, tiles[0].r1, tiles[0].c0, tiles[0].c1), (0, 100, 0, 100));
+        assert_eq!(
+            (tiles[0].r0, tiles[0].r1, tiles[0].c0, tiles[0].c1),
+            (0, 100, 0, 100)
+        );
     }
 
     #[test]
@@ -1696,8 +1754,18 @@ mod tests {
         // give K = +3 (so subtracting 3·2π from tile_b aligns it with tile_a).
         use ndarray::Array2;
         let m = 8;
-        let tile_a = Tile { r0: 0, r1: m, c0: 0, c1: 16 };
-        let tile_b = Tile { r0: 0, r1: m, c0: 8, c1: 24 };
+        let tile_a = Tile {
+            r0: 0,
+            r1: m,
+            c0: 0,
+            c1: 16,
+        };
+        let tile_b = Tile {
+            r0: 0,
+            r1: m,
+            c0: 8,
+            c1: 24,
+        };
         let unw_a = Array2::<f32>::zeros((m, 16));
         let unw_b = Array2::<f32>::from_elem((m, 16), 3.0 * TAU);
         let var = Array2::<f32>::from_elem((m, 24), 0.1);
@@ -1726,7 +1794,9 @@ mod tests {
     fn reconcile_mcf_recovers_consistent_offsets() {
         // Consistent seams (zero curl) → MCF pushes no flow → exact recovery.
         let (rows, cols) = (4usize, 5usize);
-        let truth: Vec<i64> = (0..rows * cols).map(|t| (2 * (t / cols) + 3 * (t % cols)) as i64).collect();
+        let truth: Vec<i64> = (0..rows * cols)
+            .map(|t| (2 * (t / cols) + 3 * (t % cols)) as i64)
+            .collect();
         let (gh, gv) = seams_from_truth(rows, cols, &truth);
         let wh = vec![100_i64; gh.len()];
         let wv = vec![100_i64; gv.len()];
@@ -1744,17 +1814,20 @@ mod tests {
         // ones), recovering the planted ramp — the property a region-flip
         // heuristic cannot guarantee.
         let (rows, cols) = (4usize, 5usize);
-        let truth: Vec<i64> = (0..rows * cols).map(|t| (2 * (t / cols) + 3 * (t % cols)) as i64).collect();
+        let truth: Vec<i64> = (0..rows * cols)
+            .map(|t| (2 * (t / cols) + 3 * (t % cols)) as i64)
+            .collect();
         let (mut gh, mut gv) = seams_from_truth(rows, cols, &truth);
         let mut wh = vec![100_i64; gh.len()];
         let mut wv = vec![100_i64; gv.len()];
         // Corrupt gv at (gr=1, gc=2) by +7, low confidence.
-        gv[1 * cols + 2] += 7;
-        wv[1 * cols + 2] = 1;
+        gv[cols + 2] += 7; // gv index = gr*cols+gc, (gr=1, gc=2)
+        wv[cols + 2] = 1;
         // Corrupt gh at (gr=0, gc=1) by −4, low confidence (row 0 is on the
         // integration path, so a wrong sign would show up directly).
-        gh[0 * (cols - 1) + 1] -= 4;
-        wh[0 * (cols - 1) + 1] = 1;
+        // gh index = gr*(cols-1)+gc = 1 at (gr=0, gc=1).
+        gh[1] -= 4;
+        wh[1] = 1;
         let off = reconcile_offsets_mcf(rows, cols, &gh, &wh, &gv, &wv);
         for t in 0..rows * cols {
             assert_eq!(
@@ -1790,7 +1863,10 @@ mod tests {
                 maxres = maxres.max(r);
             }
         }
-        assert!(maxres < 1e-3, "coarse_refine left a block offset: max residual {maxres} rad");
+        assert!(
+            maxres < 1e-3,
+            "coarse_refine left a block offset: max residual {maxres} rad"
+        );
     }
 
     #[test]
@@ -1808,7 +1884,8 @@ mod tests {
         let mut mask = Array2::<bool>::from_elem((m, n), true);
         for i in 0..m {
             for j in 0..n {
-                let in_ring = (8..56).contains(&i) && (8..56).contains(&j)
+                let in_ring = (8..56).contains(&i)
+                    && (8..56).contains(&j)
                     && !((16..48).contains(&i) && (16..48).contains(&j));
                 if in_ring {
                     mask[(i, j)] = false;
@@ -1820,11 +1897,21 @@ mod tests {
         }
         // Low coherence on the island, high on the mainland.
         let coh = Array2::from_shape_fn((m, n), |(i, j)| {
-            if (16..48).contains(&i) && (16..48).contains(&j) { 0.3 } else { 0.9 }
+            if (16..48).contains(&i) && (16..48).contains(&j) {
+                0.3
+            } else {
+                0.9
+            }
         });
         // A correct anchor (= truth) — the global coarse solve's role.
         let anchor = truth.clone();
-        coarse_refine(&mut unw, coh.view(), Some(mask.view()), 8, Some(anchor.view()));
+        coarse_refine(
+            &mut unw,
+            coh.view(),
+            Some(mask.view()),
+            8,
+            Some(anchor.view()),
+        );
         let kglob = ((unw[(20, 20)] - truth[(20, 20)]) / TAU).round();
         let mut maxres = 0.0_f32;
         for i in 16..48 {
@@ -1833,7 +1920,10 @@ mod tests {
                 maxres = maxres.max(r);
             }
         }
-        assert!(maxres < 1e-3, "anchor failed to fix isolated island: max residual {maxres} rad");
+        assert!(
+            maxres < 1e-3,
+            "anchor failed to fix isolated island: max residual {maxres} rad"
+        );
     }
 
     #[test]
@@ -1888,7 +1978,10 @@ mod tests {
                 maxdelta = maxdelta.max((unw[(i, j)] - before[(i, j)]).abs());
             }
         }
-        assert!(maxdelta < 1e-6, "cleanup wrongly touched a real 2π step: max delta {maxdelta}");
+        assert!(
+            maxdelta < 1e-6,
+            "cleanup wrongly touched a real 2π step: max delta {maxdelta}"
+        );
     }
 
     #[test]
@@ -1908,7 +2001,11 @@ mod tests {
         let tiled = unwrap_tiled(igram.view(), corr.view(), 10.0, None, 32, 8, 1).unwrap();
 
         let align = |u: &Array2<f32>| -> Array2<f32> {
-            let off = u.iter().zip(truth.iter()).map(|(&u, &t)| u - t).sum::<f32>()
+            let off = u
+                .iter()
+                .zip(truth.iter())
+                .map(|(&u, &t)| u - t)
+                .sum::<f32>()
                 / (u.len() as f32);
             let k = (off / TAU).round();
             u.mapv(|v| v - TAU * k)
@@ -1933,9 +2030,8 @@ mod tests {
         // tiled unwrap should also produce a smooth field.
         let m = 64;
         let n = 64;
-        let truth: Array2<f32> = Array2::from_shape_fn((m, n), |(i, j)| {
-            0.05 * i as f32 + 0.03 * j as f32
-        });
+        let truth: Array2<f32> =
+            Array2::from_shape_fn((m, n), |(i, j)| 0.05 * i as f32 + 0.03 * j as f32);
         let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
         let var = Array2::<f32>::from_elem((m, n), 0.1);
 
@@ -1945,7 +2041,11 @@ mod tests {
         // Both should be smooth. Compare to truth after aligning the
         // global integer-cycle offset.
         let align = |u: &Array2<f32>| -> Array2<f32> {
-            let off = u.iter().zip(truth.iter()).map(|(&u, &t)| u - t).sum::<f32>()
+            let off = u
+                .iter()
+                .zip(truth.iter())
+                .map(|(&u, &t)| u - t)
+                .sum::<f32>()
                 / (u.len() as f32);
             let k = (off / TAU).round();
             u.mapv(|v| v - TAU * k)
@@ -1974,7 +2074,10 @@ mod tests {
         let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
         let corr = Array2::<f32>::from_elem((m, n), 0.95);
         let clean = coherent_cut_rate(igram.view(), &truth, corr.view(), None, COH_CUT_THR);
-        assert!(clean < 1e-9, "clean ramp must have ~0 coherent-cut rate, got {clean}");
+        assert!(
+            clean < 1e-9,
+            "clean ramp must have ~0 coherent-cut rate, got {clean}"
+        );
 
         // Inject a spurious +1 cycle "island" across coherent terrain (a branch-cut
         // loop) — the coherent-cut rate must jump well above the gate floor.
@@ -2007,6 +2110,9 @@ mod tests {
             .zip(robust.iter())
             .map(|(&a, &b)| (a - b).abs())
             .fold(0.0_f32, f32::max);
-        assert!(max_diff < 1e-6, "robust must equal plain tiled on a clean scene (no gate), diff {max_diff}");
+        assert!(
+            max_diff < 1e-6,
+            "robust must equal plain tiled on a clean scene (no gate), diff {max_diff}"
+        );
     }
 }

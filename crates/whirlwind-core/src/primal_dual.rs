@@ -79,31 +79,45 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     let mut iter = 0;
     let mut last_excess_total = i64::MAX;
     loop {
-        let excess_total: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
-        let deficit_total: i64 = net.excess.iter().filter(|&&e| e < 0).map(|&e| -e as i64).sum();
+        let excess_total: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e > 0)
+            .map(|&e| e as i64)
+            .sum();
+        let deficit_total: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e < 0)
+            .map(|&e| -e as i64)
+            .sum();
         if dbg {
-            eprintln!(
-                "[pd] iter={iter} excess={excess_total} deficit={deficit_total}"
-            );
+            eprintln!("[pd] iter={iter} excess={excess_total} deficit={deficit_total}");
         }
         if excess_total == 0 || deficit_total == 0 {
             // Either fully balanced, or no remaining deficit to flow toward.
             return;
         }
         if excess_total >= last_excess_total {
-            if dbg { eprintln!("[pd] no progress, falling to SSP"); }
+            if dbg {
+                eprintln!("[pd] no progress, falling to SSP");
+            }
             // No progress this iter — give up to avoid spinning.
             break;
         }
         last_excess_total = excess_total;
 
-        if dbg { eprintln!("[pd] iter={iter} running dijkstra"); }
+        if dbg {
+            eprintln!("[pd] iter={iter} running dijkstra");
+        }
         let t0 = std::time::Instant::now();
         let sp = dijkstra_multi_source(g, net);
         let dt = t0.elapsed().as_secs_f64();
         record_dijkstra(dt * 1000.0);
         record_iter();
-        if dbg { eprintln!("[pd] iter={iter} dijkstra took {:.3}s", dt); }
+        if dbg {
+            eprintln!("[pd] iter={iter} dijkstra took {:.3}s", dt);
+        }
 
         // Augment: each deficit node gets +1 from the *actual* source at the
         // end of its predecessor chain. We don't trust sp.source[] for the
@@ -146,7 +160,8 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
                     if dbg && arcs.len() < 30 {
                         eprintln!(
                             "[pd] CYCLE in pred-chain from sink={sink}, revisits cur={cur} after {} hops, dist={}",
-                            arcs.len(), sp.dist[cur]
+                            arcs.len(),
+                            sp.dist[cur]
                         );
                     }
                     arcs.clear();
@@ -177,7 +192,9 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
             augmented += 1;
         }
         record_augment(t_aug.elapsed().as_secs_f64() * 1000.0);
-        if dbg { eprintln!("[pd] iter={iter} augmented {augmented}"); }
+        if dbg {
+            eprintln!("[pd] iter={iter} augmented {augmented}");
+        }
 
         let t_pot = std::time::Instant::now();
         // Update potentials: π[v] -= dist[v] for nodes finalized by Dijkstra.
@@ -209,7 +226,9 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
 
         iter += 1;
         if iter >= max_iter {
-            if dbg { eprintln!("[pd] hit max_iter, falling to SSP"); }
+            if dbg {
+                eprintln!("[pd] hit max_iter, falling to SSP");
+            }
             break;
         }
     }

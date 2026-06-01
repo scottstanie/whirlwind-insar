@@ -15,8 +15,8 @@ pub mod lee_pdf;
 pub mod lut;
 
 use crate::grid::RectangularGridGraph;
-use ndarray::{Array2, ArrayView2, Axis};
 use ndarray::parallel::prelude::*;
+use ndarray::{Array2, ArrayView2, Axis};
 use num_complex::Complex32;
 use rayon::prelude::*;
 use std::f32::consts::TAU;
@@ -29,9 +29,7 @@ pub const COST_SCALE: f32 = 100.0;
 
 /// Compute 7x7 box-filtered phase gradients (vertical & horizontal).
 /// Mode = nearest (edge values replicate).
-pub fn smooth_phase_gradients(
-    igram: ArrayView2<Complex32>,
-) -> (Array2<f32>, Array2<f32>) {
+pub fn smooth_phase_gradients(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2<f32>) {
     smooth_phase_gradients_with_mask(igram, None)
 }
 
@@ -40,9 +38,7 @@ pub fn smooth_phase_gradients(
 /// Returns `(phase_dy, phase_dx)` with shapes `(m-1, n)` and `(m, n-1)`
 /// respectively — the same shapes as [`smooth_phase_gradients`]. Each
 /// entry is `arg(igram[h] * conj(igram[t]))` for the corresponding arc.
-pub fn phase_gradients_raw(
-    igram: ArrayView2<Complex32>,
-) -> (Array2<f32>, Array2<f32>) {
+pub fn phase_gradients_raw(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2<f32>) {
     let (m, n) = igram.dim();
     let mut phase_dy = Array2::<f32>::zeros((m - 1, n));
     phase_dy
@@ -77,7 +73,13 @@ fn wrap_to_pi(x: f32) -> f32 {
     let y = (x + PI).rem_euclid(TAU) - PI;
     // rem_euclid can return exactly TAU on negative-zero inputs in some
     // builds; bring back to (-π, π].
-    if y > PI { y - TAU } else if y <= -PI { y + TAU } else { y }
+    if y > PI {
+        y - TAU
+    } else if y <= -PI {
+        y + TAU
+    } else {
+        y
+    }
 }
 
 /// Same as [`smooth_phase_gradients`] but mask-aware: at pixels whose
@@ -136,7 +138,11 @@ pub fn smooth_phase_gradients_with_mask(
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n {
-                row[j] = if mask[(i, j)] && mask[(i + 1, j)] { 1.0 } else { 0.0 };
+                row[j] = if mask[(i, j)] && mask[(i + 1, j)] {
+                    1.0
+                } else {
+                    0.0
+                };
             }
         });
     let mut valid_dx = Array2::<f32>::zeros((m, n - 1));
@@ -146,17 +152,29 @@ pub fn smooth_phase_gradients_with_mask(
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n - 1 {
-                row[j] = if mask[(i, j)] && mask[(i, j + 1)] { 1.0 } else { 0.0 };
+                row[j] = if mask[(i, j)] && mask[(i, j + 1)] {
+                    1.0
+                } else {
+                    0.0
+                };
             }
         });
     // Zero phase gradient where the edge is invalid so it contributes 0
     // to the sum (rather than leaking the wrapped-phase angle of 0+0j).
-    ndarray::Zip::from(&mut phase_dy).and(&valid_dy).for_each(|p, &v| {
-        if v == 0.0 { *p = 0.0; }
-    });
-    ndarray::Zip::from(&mut phase_dx).and(&valid_dx).for_each(|p, &v| {
-        if v == 0.0 { *p = 0.0; }
-    });
+    ndarray::Zip::from(&mut phase_dy)
+        .and(&valid_dy)
+        .for_each(|p, &v| {
+            if v == 0.0 {
+                *p = 0.0;
+            }
+        });
+    ndarray::Zip::from(&mut phase_dx)
+        .and(&valid_dx)
+        .for_each(|p, &v| {
+            if v == 0.0 {
+                *p = 0.0;
+            }
+        });
 
     let sum_dy = box_filter_2d(phase_dy.view(), 7);
     let cnt_dy = box_filter_2d(valid_dy.view(), 7);
@@ -456,10 +474,7 @@ pub fn compute_carballo_costs(
                     phase_dy_s_v[(i, j)]
                 };
                 let gamma = cor_dy_v[(i, j)];
-                let masked = mask_dy_ref
-                    .as_ref()
-                    .map(|mm| !mm[(i, j)])
-                    .unwrap_or(false);
+                let masked = mask_dy_ref.as_ref().map(|mm| !mm[(i, j)]).unwrap_or(false);
                 let (c_rt, c_lt) = if masked {
                     (0.0, 0.0)
                 } else {
@@ -497,10 +512,7 @@ pub fn compute_carballo_costs(
                     phase_dx_s_v[(i, j)]
                 };
                 let gamma = cor_dx_v[(i, j)];
-                let masked = mask_dx_ref
-                    .as_ref()
-                    .map(|mm| !mm[(i, j)])
-                    .unwrap_or(false);
+                let masked = mask_dx_ref.as_ref().map(|mm| !mm[(i, j)]).unwrap_or(false);
                 let (c_dn, c_up) = if masked {
                     (0.0, 0.0)
                 } else {
@@ -821,10 +833,7 @@ pub fn compute_crlb_costs(
             for j in 0..n_phase {
                 let alpha = phase_dy_s_v[(i, j)];
                 let w = inv_var_dy_v[(i, j)];
-                let masked = mask_dy_ref
-                    .as_ref()
-                    .map(|mm| !mm[(i, j)])
-                    .unwrap_or(false);
+                let masked = mask_dy_ref.as_ref().map(|mm| !mm[(i, j)]).unwrap_or(false);
                 let (c_rt, c_lt) = if masked {
                     (0.0, 0.0)
                 } else {
@@ -844,10 +853,7 @@ pub fn compute_crlb_costs(
             for j in 0..n_phase - 1 {
                 let alpha = phase_dx_s_v[(i, j)];
                 let w = inv_var_dx_v[(i, j)];
-                let masked = mask_dx_ref
-                    .as_ref()
-                    .map(|mm| !mm[(i, j)])
-                    .unwrap_or(false);
+                let masked = mask_dx_ref.as_ref().map(|mm| !mm[(i, j)]).unwrap_or(false);
                 let (c_dn, c_up) = if masked {
                     (0.0, 0.0)
                 } else {
@@ -1036,9 +1042,8 @@ pub fn compute_snaphu_smooth_costs(
     // for the suspect #2 polarity check in paper/convex_cost_design.md.
     let flip = convex_offset_flip();
     let sign: f32 = if flip { -1.0 } else { 1.0 };
-    let alpha_to_offset = |alpha: f32| -> i32 {
-        ((sign * alpha / (2.0 * PI)) * (NSHORTCYCLE as f32)).round() as i32
-    };
+    let alpha_to_offset =
+        |alpha: f32| -> i32 { ((sign * alpha / (2.0 * PI)) * (NSHORTCYCLE as f32)).round() as i32 };
     // Per-arc weight = inverse Lee 1994 wrapped-phase variance, scaled by
     // COST_SCALE so the convex parabolic cost lives in i32 range. We build
     // a γ → σ² LUT once per nlooks (`lut::get_or_build_variance`) from a
@@ -1075,30 +1080,29 @@ pub fn compute_snaphu_smooth_costs(
         .zip(right_w_body.par_chunks_mut(stride_h))
         .zip(left_w_body.par_chunks_mut(stride_h))
         .enumerate()
-        .for_each(|(i, (((right_off_row, left_off_row), right_w_row), left_w_row))| {
-            if i >= m_phase - 1 {
-                return;
-            }
-            for j in 0..n_phase {
-                let masked = mask_dy_ref
-                    .as_ref()
-                    .map(|mm| !mm[(i, j)])
-                    .unwrap_or(false);
-                if masked {
-                    right_off_row[j] = 0;
-                    left_off_row[j] = 0;
-                    right_w_row[j] = 0;
-                    left_w_row[j] = 0;
-                } else {
-                    let alpha = phase_dy_s_v[(i, j)];
-                    let w = gamma_to_weight(cor_dy_v[(i, j)]);
-                    right_off_row[j] = alpha_to_offset(-alpha);
-                    left_off_row[j] = alpha_to_offset(alpha);
-                    right_w_row[j] = w;
-                    left_w_row[j] = w;
+        .for_each(
+            |(i, (((right_off_row, left_off_row), right_w_row), left_w_row))| {
+                if i >= m_phase - 1 {
+                    return;
                 }
-            }
-        });
+                for j in 0..n_phase {
+                    let masked = mask_dy_ref.as_ref().map(|mm| !mm[(i, j)]).unwrap_or(false);
+                    if masked {
+                        right_off_row[j] = 0;
+                        left_off_row[j] = 0;
+                        right_w_row[j] = 0;
+                        left_w_row[j] = 0;
+                    } else {
+                        let alpha = phase_dy_s_v[(i, j)];
+                        let w = gamma_to_weight(cor_dy_v[(i, j)]);
+                        right_off_row[j] = alpha_to_offset(-alpha);
+                        left_off_row[j] = alpha_to_offset(alpha);
+                        right_w_row[j] = w;
+                        left_w_row[j] = w;
+                    }
+                }
+            },
+        );
 
     // DOWN / UP slabs from horizontal pixel edges. DOWN uses +α, UP uses -α.
     let stride_v = g.n;
@@ -1108,28 +1112,27 @@ pub fn compute_snaphu_smooth_costs(
         .zip(down_w.par_chunks_mut(stride_v))
         .zip(up_w.par_chunks_mut(stride_v))
         .enumerate()
-        .for_each(|(i, (((down_off_row, up_off_row), down_w_row), up_w_row))| {
-            for j in 0..n_phase - 1 {
-                let masked = mask_dx_ref
-                    .as_ref()
-                    .map(|mm| !mm[(i, j)])
-                    .unwrap_or(false);
-                let col = j + 1;
-                if masked {
-                    down_off_row[col] = 0;
-                    up_off_row[col] = 0;
-                    down_w_row[col] = 0;
-                    up_w_row[col] = 0;
-                } else {
-                    let alpha = phase_dx_s_v[(i, j)];
-                    let w = gamma_to_weight(cor_dx_v[(i, j)]);
-                    down_off_row[col] = alpha_to_offset(alpha);
-                    up_off_row[col] = alpha_to_offset(-alpha);
-                    down_w_row[col] = w;
-                    up_w_row[col] = w;
+        .for_each(
+            |(i, (((down_off_row, up_off_row), down_w_row), up_w_row))| {
+                for j in 0..n_phase - 1 {
+                    let masked = mask_dx_ref.as_ref().map(|mm| !mm[(i, j)]).unwrap_or(false);
+                    let col = j + 1;
+                    if masked {
+                        down_off_row[col] = 0;
+                        up_off_row[col] = 0;
+                        down_w_row[col] = 0;
+                        up_w_row[col] = 0;
+                    } else {
+                        let alpha = phase_dx_s_v[(i, j)];
+                        let w = gamma_to_weight(cor_dx_v[(i, j)]);
+                        down_off_row[col] = alpha_to_offset(alpha);
+                        up_off_row[col] = alpha_to_offset(-alpha);
+                        down_w_row[col] = w;
+                        up_w_row[col] = w;
+                    }
                 }
-            }
-        });
+            },
+        );
 
     (offsets, weights)
 }
@@ -1144,8 +1147,7 @@ fn build_inv_var_dy(variance: ArrayView2<f32>) -> Array2<f32> {
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase {
-                let s = per_pixel_var(variance[(i, j)])
-                    + per_pixel_var(variance[(i + 1, j)]);
+                let s = per_pixel_var(variance[(i, j)]) + per_pixel_var(variance[(i + 1, j)]);
                 row[j] = 1.0 / s;
             }
         });
@@ -1161,8 +1163,7 @@ fn build_inv_var_dx(variance: ArrayView2<f32>) -> Array2<f32> {
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase - 1 {
-                let s = per_pixel_var(variance[(i, j)])
-                    + per_pixel_var(variance[(i, j + 1)]);
+                let s = per_pixel_var(variance[(i, j)]) + per_pixel_var(variance[(i, j + 1)]);
                 row[j] = 1.0 / s;
             }
         });
@@ -1208,7 +1209,10 @@ mod coh_bias_tests {
         // L→∞ ⇒ correction is the identity at every γ̂.
         for &g in &[0.3_f32, 0.5, 0.7, 0.9] {
             let corrected = correct_coh_bias(g, 10_000.0);
-            assert!((corrected - g).abs() < 1e-3, "L=large, γ={g}, got {corrected}");
+            assert!(
+                (corrected - g).abs() < 1e-3,
+                "L=large, γ={g}, got {corrected}"
+            );
         }
     }
 
@@ -1329,7 +1333,10 @@ mod convex_tests {
         assert!(!interior_w.is_empty(), "expected some non-zero weights");
         let w_min = *interior_w.iter().min().unwrap();
         let w_max = *interior_w.iter().max().unwrap();
-        assert_eq!(w_min, w_max, "uniform coherence should give uniform weights");
+        assert_eq!(
+            w_min, w_max,
+            "uniform coherence should give uniform weights"
+        );
     }
 
     /// SNAPHU's offset is the DEVIATION of the raw wrapped gradient from its
@@ -1364,7 +1371,10 @@ mod convex_tests {
         });
         let (off_wall, _) = compute_snaphu_smooth_costs(wall.view(), corr.view(), 10.0, None);
         let nz_wall = off_wall.iter().filter(|&&o| o != 0).count();
-        assert!(nz_wall > 0, "localized wall should produce nonzero deviation offsets");
+        assert!(
+            nz_wall > 0,
+            "localized wall should produce nonzero deviation offsets"
+        );
         assert!(
             nz_wall > nz_ramp,
             "wall ({nz_wall}) should have more nonzero offsets than a uniform ramp ({nz_ramp})"
@@ -1386,16 +1396,21 @@ mod convex_tests {
         mask[(0, 1)] = false;
         mask[(1, 0)] = false;
         mask[(1, 1)] = false;
-        let (offsets, weights) = compute_snaphu_smooth_costs(
-            igram.view(), corr.view(), 4.0, Some(mask.view()),
-        );
+        let (offsets, weights) =
+            compute_snaphu_smooth_costs(igram.view(), corr.view(), 4.0, Some(mask.view()));
         // Some arcs must end up with zero weight (the ones spanning the masked corner).
         let n_zero = weights.iter().filter(|&&w| w == 0).count();
-        assert!(n_zero > 0, "expected some zero-weight arcs near the masked corner");
+        assert!(
+            n_zero > 0,
+            "expected some zero-weight arcs near the masked corner"
+        );
         // Wherever weight = 0, offset must also be 0 (free arc, no preference).
         for (o, &w) in offsets.iter().zip(weights.iter()) {
             if w == 0 {
-                assert_eq!(*o, 0, "zero-weight arc must have zero offset, got offset={o}");
+                assert_eq!(
+                    *o, 0,
+                    "zero-weight arc must have zero offset, got offset={o}"
+                );
             }
         }
     }

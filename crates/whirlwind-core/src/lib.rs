@@ -15,7 +15,7 @@
     clippy::type_complexity,
     clippy::needless_range_loop,
     clippy::doc_overindented_list_items,
-    clippy::neg_cmp_op_on_partial_ord,
+    clippy::neg_cmp_op_on_partial_ord
 )]
 
 pub mod closure;
@@ -171,7 +171,11 @@ pub fn unwrap_grounded(
     let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_with_mask_and_ground(
-        &graph, residues.view(), &costs, mask, Some(ground_cost),
+        &graph,
+        residues.view(),
+        &costs,
+        mask,
+        Some(ground_cost),
     );
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mask.is_some() {
@@ -215,9 +219,8 @@ pub fn unwrap_convex(
     let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
     let (offsets, weights) = cost::compute_snaphu_smooth_costs(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_convex_with_mask(
-        &graph, residues.view(), &offsets, &weights, mask,
-    );
+    let mut net =
+        network::Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mask);
     // Pre-load each arc to its parabola minimum k* = round(offset/100) so all
     // residual marginals are ≥0 and the SSP solve is sound (see
     // Network::preload_convex_min). Without this the solve silently corrupts in
@@ -371,7 +374,11 @@ pub fn unwrap_crlb_grounded(
     let costs = cost::compute_crlb_costs(igram, variance, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_with_mask_and_ground(
-        &graph, residues.view(), &costs, mask, Some(ground_cost),
+        &graph,
+        residues.view(),
+        &costs,
+        mask,
+        Some(ground_cost),
     );
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mask.is_some() {

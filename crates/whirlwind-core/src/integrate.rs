@@ -372,8 +372,14 @@ mod tests {
             mask[(i, mid)] = false;
         }
         let residues = residue::compute_with_mask(wrapped.view(), Some(mask.view()));
-        let costs = cost::compute_carballo_costs(igram.view(), Array2::<f32>::from_elem((m, n), 0.95).view(), 4.0, Some(mask.view()));
-        let mut net = network::Network::new_with_mask(&g, residues.view(), &costs, Some(mask.view()));
+        let costs = cost::compute_carballo_costs(
+            igram.view(),
+            Array2::<f32>::from_elem((m, n), 0.95).view(),
+            4.0,
+            Some(mask.view()),
+        );
+        let mut net =
+            network::Network::new_with_mask(&g, residues.view(), &costs, Some(mask.view()));
         crate::primal_dual::run(&g, &mut net, 50);
 
         let unw = integrate_with_mask(wrapped.view(), &g, &net, Some(mask.view()));
