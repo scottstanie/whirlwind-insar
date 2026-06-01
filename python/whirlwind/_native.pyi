@@ -26,21 +26,31 @@ def unwrap(
 
     ``tile_size=0`` (default) AUTO-TILES large frames at 512 (overlap 64);
     frames that fit in one 512 tile are solved whole. 512 is the empirically
-    best universal size (whole-image runs away to ~80% on NISAR; tile512 =
-    99.84%). Bigger tiles are NOT uniformly better — across a NISAR-GUNW sweep,
-    tile2048 fixes a rare fragmented (decorrelation-split) frame (57→97%) but
-    regresses the majority (others 98→81-86%, NISAR 99.84→99.40%); the optimal
-    size is scene-dependent, so pass ``tile_size`` (with
-    ``2<=tile_overlap<tile_size``) explicitly to trade clean-scene quality for
-    robustness on a known-fragmented frame.
+    best universal size (whole-image runs away to ~80% on NISAR, and bigger
+    tiles REGRESS clean scenes under both costs — e.g. D_074 98→81% at tile1024).
+    Pass ``tile_size`` (with ``2<=tile_overlap<tile_size``) to override.
+
     The per-tile (and whole-image) base solver defaults to corner-safe REUSE
     (PHASS flow-reuse): the plain linear coherence cost mis-routes the corners of
     smooth STEEP signals (capacity-1 boundary-stacking — fails a clean 6π ramp by
     ~12 rad; reuse/convex are exact). Reuse also improves real scenes (NISAR
     mainland 99.84→99.96%). Override with ``WHIRLWIND_TILE_SOLVER=linear|convex``.
+
     The tiled path = per-tile MCF + global coarse anchor + multi-scale cascade +
     bounded sliver cleanup, reaching SNAPHU quality without Goldstein, memory-
-    bounded. ``multilook=L`` (L>1) coherently down-looks ×L first (noisy /
+    bounded. On top of that, a GATED MULTI-SHIFT re-solve handles tile-seam /
+    wrong-winding artifacts on fragmented (decorrelation-split) scenes: a correct
+    unwrap never tears coherent terrain, so if the result has a high rate of
+    branch cuts through high-coherence pixels, the frame is re-unwrapped on tile
+    grids shifted by fractions of the tile step (a seam in one grid is interior in
+    another) and the result with the FEWEST coherent cuts is returned. A final
+    seam-repair pass re-unwraps a seam-free window around any residual
+    high-coherence cut block (e.g. a coherent corner of a water-dominated tile)
+    and snaps it, gated on a strict coherent-cut reduction. No-op (1× cost) on
+    clean scenes; ~4× on the rare frame that needs it. Fixes the fragmented
+    NISAR-GUNW frame A_016 (55→97%) without changing any clean frame.
+
+    ``multilook=L`` (L>1) coherently down-looks ×L first (noisy /
     moderate-coherence scenes, e.g. Sentinel-1) then tiles+anchors the coarse.
     """
 
