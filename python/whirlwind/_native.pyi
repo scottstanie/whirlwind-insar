@@ -43,9 +43,12 @@ def unwrap(
     unwrap never tears coherent terrain, so if the result has a high rate of
     branch cuts through high-coherence pixels, the frame is re-unwrapped on tile
     grids shifted by fractions of the tile step (a seam in one grid is interior in
-    another) and the result with the FEWEST coherent cuts is returned. No-op
-    (1× cost) on clean scenes; ~4× on the rare frame that needs it. Fixes the
-    fragmented NISAR-GUNW frame A_016 (55→97%) without changing any clean frame.
+    another) and the result with the FEWEST coherent cuts is returned. A final
+    seam-repair pass re-unwraps a seam-free window around any residual
+    high-coherence cut block (e.g. a coherent corner of a water-dominated tile)
+    and snaps it, gated on a strict coherent-cut reduction. No-op (1× cost) on
+    clean scenes; ~4× on the rare frame that needs it. Fixes the fragmented
+    NISAR-GUNW frame A_016 (55→97%) without changing any clean frame.
 
     ``multilook=L`` (L>1) coherently down-looks ×L first (noisy /
     moderate-coherence scenes, e.g. Sentinel-1) then tiles+anchors the coarse.

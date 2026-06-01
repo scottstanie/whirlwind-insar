@@ -525,42 +525,280 @@ pub fn unwrap_tiled_robust(
         return Ok(base);
     }
     let rate0 = coherent_cut_rate(igram, &base, corr, mask, COH_CUT_THR);
-    if rate0 <= COH_CUT_FLOOR {
-        return Ok(base);
-    }
-    let step = tile_size - overlap;
     let mut best = base;
-    let mut best_rate = rate0;
-    for &s in &[step / 2, step / 4, (3 * step) / 4] {
-        if s == 0 {
+    if rate0 > COH_CUT_FLOOR {
+        let step = tile_size - overlap;
+        let mut best_rate = rate0;
+        for &s in &[step / 2, step / 4, (3 * step) / 4] {
+            if s == 0 {
+                continue;
+            }
+            let mut pig = Array2::<Complex32>::zeros((m + s, n + s));
+            pig.slice_mut(s![s.., s..]).assign(&igram);
+            let mut pco = Array2::<f32>::zeros((m + s, n + s));
+            pco.slice_mut(s![s.., s..]).assign(&corr);
+            let pmask = mask.map(|mk| {
+                let mut p = Array2::<bool>::from_elem((m + s, n + s), false);
+                p.slice_mut(s![s.., s..]).assign(&mk);
+                p
+            });
+            let cand_padded = unwrap_tiled(
+                pig.view(),
+                pco.view(),
+                nlooks,
+                pmask.as_ref().map(|a| a.view()),
+                tile_size,
+                overlap,
+                1,
+            )?;
+            let cand = cand_padded.slice(s![s.., s..]).to_owned();
+            let r = coherent_cut_rate(igram, &cand, corr, mask, COH_CUT_THR);
+            if r < best_rate {
+                best_rate = r;
+                best = cand;
+            }
+        }
+    }
+    // Final cleanup: repair residual high-coherence cut BLOCKS the global shift
+    // selection left behind (e.g. a coherent corner of a water-dominated tile
+    // stuck at the wrong cycle). No-op on clean scenes.
+    seam_repair(igram, corr, nlooks, mask, &mut best);
+    Ok(best)
+}
+
+/// 4-connected component labels of a bool mask. Returns `(labels, sizes)` with
+/// label 0 = background and `sizes[label-1]` the pixel count of that component.
+fn label_components(m: &Array2<bool>) -> (Array2<i32>, Vec<usize>) {
+    let (h, w) = m.dim();
+    let mut lab = Array2::<i32>::from_elem((h, w), 0);
+    let mut sizes = Vec::new();
+    let mut next = 1_i32;
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for i in 0..h {
+        for j in 0..w {
+            if !m[(i, j)] || lab[(i, j)] != 0 {
+                continue;
+            }
+            let mut sz = 0_usize;
+            lab[(i, j)] = next;
+            stack.push((i, j));
+            while let Some((y, x)) = stack.pop() {
+                sz += 1;
+                let mut push = |yy: usize, xx: usize, lab: &mut Array2<i32>, st: &mut Vec<(usize, usize)>| {
+                    if yy < h && xx < w && m[(yy, xx)] && lab[(yy, xx)] == 0 {
+                        lab[(yy, xx)] = next;
+                        st.push((yy, xx));
+                    }
+                };
+                if y > 0 { push(y - 1, x, &mut lab, &mut stack); }
+                push(y + 1, x, &mut lab, &mut stack);
+                if x > 0 { push(y, x - 1, &mut lab, &mut stack); }
+                push(y, x + 1, &mut lab, &mut stack);
+            }
+            sizes.push(sz);
+            next += 1;
+        }
+    }
+    (lab, sizes)
+}
+
+/// Pixels incident to a HIGH-coherence branch cut (flow≠0 on an arc with min
+/// endpoint coherence > `coh_thr`), dilated by `dilate` px so nearby cut pixels
+/// merge into one cluster. `φ = arg(igram)`.
+fn high_coh_cut_mask(
+    igram: ArrayView2<Complex32>,
+    unw: &Array2<f32>,
+    corr: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    coh_thr: f32,
+    dilate: usize,
+) -> Array2<bool> {
+    let (m, n) = unw.dim();
+    let valid = |i: usize, j: usize| mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite();
+    let mut cut = Array2::<bool>::from_elem((m, n), false);
+    for i in 0..m {
+        for j in 0..n {
+            if !valid(i, j) {
+                continue;
+            }
+            if j + 1 < n && valid(i, j + 1) && corr[(i, j)].min(corr[(i, j + 1)]) > coh_thr {
+                let d = wrap_to_pi(igram[(i, j + 1)].arg() - igram[(i, j)].arg());
+                if ((unw[(i, j + 1)] - unw[(i, j)] - d) / TAU).round() != 0.0 {
+                    cut[(i, j)] = true;
+                    cut[(i, j + 1)] = true;
+                }
+            }
+            if i + 1 < m && valid(i + 1, j) && corr[(i, j)].min(corr[(i + 1, j)]) > coh_thr {
+                let d = wrap_to_pi(igram[(i + 1, j)].arg() - igram[(i, j)].arg());
+                if ((unw[(i + 1, j)] - unw[(i, j)] - d) / TAU).round() != 0.0 {
+                    cut[(i, j)] = true;
+                    cut[(i + 1, j)] = true;
+                }
+            }
+        }
+    }
+    for _ in 0..dilate {
+        let prev = cut.clone();
+        for i in 0..m {
+            for j in 0..n {
+                if prev[(i, j)] {
+                    if i > 0 { cut[(i - 1, j)] = true; }
+                    if i + 1 < m { cut[(i + 1, j)] = true; }
+                    if j > 0 { cut[(i, j - 1)] = true; }
+                    if j + 1 < n { cut[(i, j + 1)] = true; }
+                }
+            }
+        }
+    }
+    cut
+}
+
+fn modal_i64(vals: &[i64]) -> i64 {
+    if vals.is_empty() {
+        return 0;
+    }
+    let mut counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+    for &v in vals {
+        *counts.entry(v).or_insert(0) += 1;
+    }
+    *counts.iter().max_by_key(|kv| *kv.1).unwrap().0
+}
+
+/// Repair residual high-coherence cut BLOCKS: a coherent block left at the wrong
+/// integer cycle (e.g. a land corner of a water-dominated tile the seam reconcile
+/// mis-leveled). For each large cluster of high-coherence cuts, re-unwrap a window
+/// around it SEAM-FREE (`unwrap_reuse`), align it to the current field, and snap
+/// only the LARGEST connected single-integer disagreement — and only if that
+/// strictly reduces the window's high-coherence-cut count (monotonic; can't
+/// regress). Leaves genuinely-ambiguous low-coherence islands alone (their cuts
+/// are low-coherence, not clusters). No-op on clean scenes.
+fn seam_repair(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    unw: &mut Array2<f32>,
+) {
+    const MIN_CLUSTER: usize = 500; // high-coh-cut pixels for a cluster to be considered
+    const MIN_BLOCK: usize = 4000; // connected single-integer disagreement to snap
+    const MARGIN: usize = 220; // window margin around a cluster (~tile_step/2)
+    const MAX_WIN: usize = 1400; // skip windows larger than this (memory bound)
+    let (m, n) = unw.dim();
+    let valid_mask = Array2::<bool>::from_shape_fn((m, n), |(i, j)| {
+        mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite()
+    });
+
+    let cut = high_coh_cut_mask(igram, unw, corr, mask, COH_CUT_THR, 3);
+    let (lab, sizes) = label_components(&cut);
+    // bounding box of each cluster
+    let nclust = sizes.len();
+    let mut bb = vec![(usize::MAX, 0usize, usize::MAX, 0usize); nclust]; // (r0,r1,c0,c1)
+    for i in 0..m {
+        for j in 0..n {
+            let l = lab[(i, j)];
+            if l > 0 {
+                let b = &mut bb[(l - 1) as usize];
+                b.0 = b.0.min(i); b.1 = b.1.max(i);
+                b.2 = b.2.min(j); b.3 = b.3.max(j);
+            }
+        }
+    }
+    for (ci, &sz) in sizes.iter().enumerate() {
+        if sz < MIN_CLUSTER {
             continue;
         }
-        let mut pig = Array2::<Complex32>::zeros((m + s, n + s));
-        pig.slice_mut(s![s.., s..]).assign(&igram);
-        let mut pco = Array2::<f32>::zeros((m + s, n + s));
-        pco.slice_mut(s![s.., s..]).assign(&corr);
-        let pmask = mask.map(|mk| {
-            let mut p = Array2::<bool>::from_elem((m + s, n + s), false);
-            p.slice_mut(s![s.., s..]).assign(&mk);
-            p
-        });
-        let cand_padded = unwrap_tiled(
-            pig.view(),
-            pco.view(),
-            nlooks,
-            pmask.as_ref().map(|a| a.view()),
-            tile_size,
-            overlap,
-            1,
-        )?;
-        let cand = cand_padded.slice(s![s.., s..]).to_owned();
-        let r = coherent_cut_rate(igram, &cand, corr, mask, COH_CUT_THR);
-        if r < best_rate {
-            best_rate = r;
-            best = cand;
+        let (r0c, r1c, c0c, c1c) = bb[ci];
+        let r0 = r0c.saturating_sub(MARGIN);
+        let r1 = (r1c + MARGIN + 1).min(m);
+        let c0 = c0c.saturating_sub(MARGIN);
+        let c1 = (c1c + MARGIN + 1).min(n);
+        if (r1 - r0) > MAX_WIN || (c1 - c0) > MAX_WIN {
+            continue;
+        }
+        let win_ig = igram.slice(s![r0..r1, c0..c1]);
+        let win_co = corr.slice(s![r0..r1, c0..c1]);
+        let win_mk = mask.map(|mk| mk.slice(s![r0..r1, c0..c1]).to_owned());
+        let fresh = match crate::unwrap_reuse(win_ig, win_co, nlooks, win_mk.as_ref().map(|a| a.view())) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let (wh, ww_) = (r1 - r0, c1 - c0);
+        // align fresh to current by modal integer offset over valid window pixels
+        let mut offs: Vec<i64> = Vec::new();
+        for i in 0..wh {
+            for j in 0..ww_ {
+                if valid_mask[(r0 + i, c0 + j)] && fresh[(i, j)].is_finite() {
+                    offs.push(((fresh[(i, j)] - unw[(r0 + i, c0 + j)]) / TAU).round() as i64);
+                }
+            }
+        }
+        let off = modal_i64(&offs) as f32 * TAU;
+        // disagreement mask in high-coherence pixels
+        let mut dis = Array2::<bool>::from_elem((wh, ww_), false);
+        let mut koff = Array2::<i64>::from_elem((wh, ww_), 0);
+        for i in 0..wh {
+            for j in 0..ww_ {
+                let (gi, gj) = (r0 + i, c0 + j);
+                if valid_mask[(gi, gj)] && fresh[(i, j)].is_finite() && corr[(gi, gj)] > COH_CUT_THR {
+                    let k = ((unw[(gi, gj)] - (fresh[(i, j)] - off)) / TAU).round() as i64;
+                    if k != 0 {
+                        dis[(i, j)] = true;
+                        koff[(i, j)] = k;
+                    }
+                }
+            }
+        }
+        // largest connected disagreement component
+        let (dlab, dsz) = label_components(&dis);
+        if dsz.is_empty() {
+            continue;
+        }
+        let (dmax, &dmaxsz) = dsz.iter().enumerate().max_by_key(|kv| *kv.1).unwrap();
+        if dmaxsz < MIN_BLOCK {
+            continue;
+        }
+        let dlabel = (dmax + 1) as i32;
+        // dominant single integer over that component (>= 90%)
+        let mut kvals: Vec<i64> = Vec::new();
+        for i in 0..wh {
+            for j in 0..ww_ {
+                if dlab[(i, j)] == dlabel {
+                    kvals.push(koff[(i, j)]);
+                }
+            }
+        }
+        let km = modal_i64(&kvals);
+        let dom = kvals.iter().filter(|&&v| v == km).count() as f64 / kvals.len() as f64;
+        if dom < 0.9 {
+            continue;
+        }
+        // candidate: snap the block to fresh; accept only if it reduces the
+        // window's high-coherence-cut count.
+        let mut cand = Array2::<f32>::from_elem((wh, ww_), f32::NAN);
+        for i in 0..wh {
+            for j in 0..ww_ {
+                let (gi, gj) = (r0 + i, c0 + j);
+                cand[(i, j)] = if dlab[(i, j)] == dlabel {
+                    fresh[(i, j)] - off
+                } else {
+                    unw[(gi, gj)]
+                };
+            }
+        }
+        let cur_win = unw.slice(s![r0..r1, c0..c1]).to_owned();
+        let win_mk_view = win_mk.as_ref().map(|a| a.view());
+        let before = coherent_cut_rate(win_ig, &cur_win, win_co, win_mk_view, COH_CUT_THR);
+        let after = coherent_cut_rate(win_ig, &cand, win_co, win_mk_view, COH_CUT_THR);
+        if after < before {
+            for i in 0..wh {
+                for j in 0..ww_ {
+                    if dlab[(i, j)] == dlabel {
+                        unw[(r0 + i, c0 + j)] = fresh[(i, j)] - off;
+                    }
+                }
+            }
         }
     }
-    Ok(best)
 }
 
 /// A tiny successive-shortest-path min-cost-flow. Uses SPFA (Bellman-Ford
