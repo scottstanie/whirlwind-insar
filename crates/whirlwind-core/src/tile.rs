@@ -1068,11 +1068,34 @@ fn heal_thin_slivers(
     }
 }
 
-/// `WHIRLWIND_TILE_CONVEX=1` → use the convex (SNAPHU-style) per-tile cost.
-fn tile_convex_enabled() -> bool {
+/// Per-tile base solver. The linear Carballo cost has a corner / capacity-1
+/// boundary-stacking bug on smooth STEEP signals (paper/pyramid_aliasing.md:
+/// ~88% on a clean 0.7π bowl vs 100% for reuse/convex). `reuse` (PHASS
+/// flow-reuse) and `convex` (SNAPHU quadratic) are corner-safe.
+#[derive(Clone, Copy, PartialEq)]
+enum TileSolver {
+    Linear,
+    Reuse,
+    Convex,
+}
+
+/// `WHIRLWIND_TILE_SOLVER=linear|reuse|convex` (default set in code below).
+/// Legacy `WHIRLWIND_TILE_CONVEX=1` still selects convex.
+fn tile_solver() -> TileSolver {
     use std::sync::OnceLock;
-    static F: OnceLock<bool> = OnceLock::new();
-    *F.get_or_init(|| std::env::var("WHIRLWIND_TILE_CONVEX").is_ok())
+    static F: OnceLock<TileSolver> = OnceLock::new();
+    *F.get_or_init(|| match std::env::var("WHIRLWIND_TILE_SOLVER").as_deref() {
+        Ok("reuse") => TileSolver::Reuse,
+        Ok("convex") => TileSolver::Convex,
+        Ok("linear") => TileSolver::Linear,
+        _ if std::env::var("WHIRLWIND_TILE_CONVEX").is_ok() => TileSolver::Convex,
+        // DEFAULT: reuse (PHASS flow-reuse). Validated 2026-05-31 across a clean
+        // steep ramp (linear FAILs 12.6 rad / reuse PASSes 0.0 — the corner bug),
+        // NISAR (linear 99.84% → reuse 99.96%), and a 5-frame NISAR-GUNW sweep
+        // (reuse within ~0.4% of linear, better on 3/5). Corner-safe and a net
+        // win; ~slower than linear but speed is not the constraint vs SNAPHU.
+        _ => TileSolver::Reuse,
+    })
 }
 
 fn unwrap_one_tile_coh(
@@ -1091,21 +1114,23 @@ fn unwrap_one_tile_coh(
     let wrapped_phase = ig.mapv(|z| z.arg());
     let residues = residue::compute_with_mask(wrapped_phase.view(), mk);
     let graph = RectangularGridGraph::new(tm + 1, tn + 1);
-    // `WHIRLWIND_TILE_CONVEX=1` swaps the linear Carballo per-tile cost for the
-    // SNAPHU-style convex (quadratic) cost with the deviation offset, solved
-    // soundly via preload_convex_min. The deviation offset carries only
-    // wrap-line topology; the absolute (ramp) level comes from the
-    // anchor/cascade post-pass, so this is only meaningful inside the tiled
-    // pipeline. A/B experiment for whether convex curvature beats the linear
-    // cost's integration runaway on noisy scenes (Atlanta).
-    let mut net = if tile_convex_enabled() {
-        let (offsets, weights) = cost::compute_snaphu_smooth_costs(ig, co, nlooks, mk);
-        let mut net = Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mk);
-        net.preload_convex_min(&graph);
-        net
-    } else {
-        let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
-        Network::new_with_mask(&graph, residues.view(), &costs, mk)
+    // Per-tile base solver (WHIRLWIND_TILE_SOLVER). reuse/convex are corner-safe
+    // where the linear Carballo cost stacks flow at steep-signal boundaries.
+    let mut net = match tile_solver() {
+        TileSolver::Convex => {
+            let (offsets, weights) = cost::compute_snaphu_smooth_costs(ig, co, nlooks, mk);
+            let mut net = Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mk);
+            net.preload_convex_min(&graph);
+            net
+        }
+        TileSolver::Reuse => {
+            let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
+            Network::new_reuse_with_mask(&graph, residues.view(), &costs, mk)
+        }
+        TileSolver::Linear => {
+            let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
+            Network::new_with_mask(&graph, residues.view(), &costs, mk)
+        }
     };
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mk.is_some() {
