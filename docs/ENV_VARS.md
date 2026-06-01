@@ -7,7 +7,8 @@ research/diagnostic knobs and should not be needed by normal users.
 
 | Var | Default | Effect |
 |---|---|---|
-| `WHIRLWIND_DEBUG` | unset | If set, primal-dual prints per-iteration state (Dijkstra source count, excess, augmented flow) to stderr. Useful when an unwrap looks wrong. |
+| `WHIRLWIND_DEBUG` | unset | If set, primal-dual prints per-iteration state (Dijkstra source count, excess, augmented flow) to stderr. Verbose. Useful when an unwrap looks wrong. |
+| `WHIRLWIND_TIMING` | unset | If set, the tiled `unwrap`/`unwrap_crlb` path prints a per-stage wall-clock breakdown to stderr (per-tile solve, seam reconcile, feather composite, anchor+cascade, heal, multi-shift gate + whether it fired, conncomp build). Cheap, one line per stage — unlike `WHIRLWIND_DEBUG` it does not flood per-iteration. Use it to profile runtime. **Build `--release`** — debug builds are ~35× slower (a debug full-frame NISAR unwrap is ~18 min vs ~30 s release). |
 | `WW_MAX_ITER` | `50` | Primal-dual max iterations before SSP fall-back. The library default (50) is what `unwrap()` / `unwrap_crlb()` use; this var is read by `examples/bench_scale.rs` only. |
 
 ## Research / internal
