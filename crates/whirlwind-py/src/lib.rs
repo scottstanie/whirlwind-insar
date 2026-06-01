@@ -72,17 +72,25 @@ fn simulate_ifg<'py>(
     (igram.into_pyarray(py), cor.into_pyarray(py))
 }
 
-/// Unwrap an interferogram using CRLB-derived per-pixel variance.
+/// CRLB-weighted unwrap returning ``(unwrapped_phase, conn_components)`` — the
+/// phase-linked (Dolphin/EVD/EMI) twin of :func:`unwrap`.
 ///
-/// * `igram` — complex64, shape (m, n)
-/// * `variance` — float32 σ²_IG = σ²_a + σ²_b in rad², shape (m, n)
-/// * `mask` — optional bool, shape (m, n)
-/// * `tile_size` — if > 0 and < min(m, n), tile the image into
-///   `tile_size × tile_size` sub-images with `tile_overlap` overlap,
-///   unwrap each in parallel, and stitch with CRLB-weighted overlap-median
-///   2π reconciliation. Bounds per-IG MCF memory to tile-size scale.
+/// Phase uses the robust tiled CRLB pipeline (auto-tile frames > 512 px + a
+/// gated multi-shift winding fix; the gate uses a pseudo-coherence derived from
+/// the variance). Components are grown globally from the CRLB cost grid,
+/// independent of the solve. NOTE: the global anchor + multi-scale cascade of
+/// the coherence path are not yet ported to the CRLB tiler (issue #35).
+///
+/// * ``igram`` — complex64, shape (m, n).
+/// * ``variance`` — float32 σ²_IG = σ²_a + σ²_b in rad², shape (m, n).
+/// * ``mask`` — optional bool, shape (m, n).
+/// * ``tile_size`` — 0 (default) auto-tiles frames > 512 px; ``≥ 4`` forces it.
+/// * ``cost_threshold`` / ``min_size_px`` / ``max_ncomps`` — conncomp params.
 #[pyfunction]
-#[pyo3(signature = (igram, variance, mask = None, tile_size = 0, tile_overlap = 0))]
+#[pyo3(signature = (
+    igram, variance, mask = None, tile_size = 0, tile_overlap = 0,
+    cost_threshold = 50, min_size_px = 100, max_ncomps = 1024,
+))]
 fn unwrap_crlb<'py>(
     py: Python<'py>,
     igram: PyReadonlyArray2<'py, Complex32>,
@@ -90,20 +98,31 @@ fn unwrap_crlb<'py>(
     mask: Option<PyReadonlyArray2<'py, bool>>,
     tile_size: usize,
     tile_overlap: usize,
-) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    cost_threshold: i32,
+    min_size_px: usize,
+    max_ncomps: u32,
+) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
     let ig = igram.as_array();
     let v = variance.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
-    let use_tiling = tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size;
-    let unw = py.detach(|| {
-        if use_tiling {
-            whirlwind_core::tile::unwrap_crlb_tiled(ig, v, m, tile_size, tile_overlap)
-        } else {
-            whirlwind_core::unwrap_crlb(ig, v, m)
-        }
+    let params = whirlwind_core::ConnCompParams {
+        cost_threshold,
+        min_size_px,
+        min_size_frac: 0.0001,
+        max_ncomps,
+    };
+    let out = py.detach(|| {
+        whirlwind_core::unwrap_crlb_robust_with_components(
+            ig,
+            v,
+            m,
+            tile_size,
+            tile_overlap,
+            params,
+        )
     });
-    let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
-    Ok(unw.into_pyarray(py))
+    let (unw, comps) = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
 }
 
 /// Closure-correct a stack of unwrapped interferograms.
@@ -572,54 +591,6 @@ fn unwrap_native<'py>(
     Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
 }
 
-/// CRLB-cost unwrap returning ``(unwrapped_phase, conn_components)``.
-///
-/// CRLB-path twin of :func:`unwrap_with_conncomp` for phase-linked IGs
-/// (Dolphin/EVD/EMI). Uses per-pixel CRLB variance σ²_IG = σ²_a + σ²_b
-/// (typically ``crlb_<date_a>.tif + crlb_<date_b>.tif``) as the noise
-/// weight instead of sample coherence.
-///
-/// Cut rule and parameter semantics match :func:`unwrap_with_conncomp`.
-/// Note that the cost units differ from the Carballo path: CRLB-derived
-/// costs are scaled differently, so ``cost_threshold`` is not directly
-/// comparable to the Carballo path's threshold. For typical Dolphin
-/// outputs the default ``50`` is still a reasonable "exclude clearly
-/// decorrelated" cutoff.
-///
-/// * ``igram`` — complex64, shape ``(m, n)``.
-/// * ``variance`` — float32 σ²_IG in rad², shape ``(m, n)``.
-/// * ``mask`` — optional bool, shape ``(m, n)``.
-/// * ``cost_threshold``, ``min_size_frac``, ``max_ncomps`` — see
-///   :func:`unwrap_with_conncomp`.
-#[pyfunction]
-#[pyo3(signature = (
-    igram, variance, mask = None,
-    cost_threshold = 50, min_size_px = 100, min_size_frac = 0.0001, max_ncomps = 1024,
-))]
-fn unwrap_crlb_with_conncomp<'py>(
-    py: Python<'py>,
-    igram: PyReadonlyArray2<'py, Complex32>,
-    variance: PyReadonlyArray2<'py, f32>,
-    mask: Option<PyReadonlyArray2<'py, bool>>,
-    cost_threshold: i32,
-    min_size_px: usize,
-    min_size_frac: f32,
-    max_ncomps: u32,
-) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
-    let ig = igram.as_array();
-    let v = variance.as_array();
-    let m = mask.as_ref().map(|m| m.as_array());
-    let params = whirlwind_core::ConnCompParams {
-        cost_threshold,
-        min_size_px,
-        min_size_frac,
-        max_ncomps,
-    };
-    let out = py.detach(|| whirlwind_core::unwrap_crlb_with_components(ig, v, m, params));
-    let (unw, comps) = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
-    Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
-}
-
 /// Goldstein adaptive phase filter (Goldstein & Werner 1998).
 ///
 /// Block-parallel Rust port of the Python helper. See
@@ -746,7 +717,6 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_reuse, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_pyramid, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_native, m)?)?;
-    m.add_function(wrap_pyfunction!(unwrap_crlb_with_conncomp, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;
     m.add_function(wrap_pyfunction!(diagonal_ramp, m)?)?;

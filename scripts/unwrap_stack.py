@@ -295,7 +295,7 @@ def run(
         if e.mask_path is not None:
             mask = _read_bool(e.mask_path, win)
         t = time.perf_counter()
-        unw = ww.unwrap_crlb(
+        unw, _cc = ww.unwrap_crlb(
             igram, variance, mask,
             tile_size=tile_size, tile_overlap=tile_overlap,
         )

@@ -19,7 +19,6 @@ from ._native import (
     simulate_ifg,
     unwrap_crlb,
     unwrap_crlb_grounded,
-    unwrap_crlb_with_conncomp,
     unwrap_convex,
     unwrap_grounded,
     unwrap_pyramid,
@@ -39,12 +38,11 @@ def unwrap_crlb_stack(
     mask: "NDArray[np.bool_] | None" = None,
     cost_threshold: int = 50,
     min_size_px: int = 100,
-    min_size_frac: float = 0.0001,
     max_ncomps: int = 1024,
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
     """Per-IG CRLB unwrap + conncomp over a 3D stack.
 
-    Loops over the leading axis calling :func:`unwrap_crlb_with_conncomp`
+    Loops over the leading axis calling :func:`unwrap_crlb`
     per IG. Each per-IG MCF solve is independent, so this is just a
     convenient Python wrapper — there is no shared state between IGs. For
     parallel execution use ``multiprocessing`` or ``concurrent.futures``.
@@ -59,8 +57,8 @@ def unwrap_crlb_stack(
     mask : bool, optional
         Either ``(m, n)`` (one mask for the whole stack) or
         ``(E, m, n)`` (per-IG mask). ``False`` ⇒ excluded pixel.
-    cost_threshold, min_size_frac, max_ncomps
-        Forwarded to :func:`unwrap_crlb_with_conncomp`. See that function
+    cost_threshold, min_size_px, max_ncomps
+        Forwarded to :func:`unwrap_crlb`. See that function
         for the meaning of each.
 
     Returns
@@ -101,13 +99,12 @@ def unwrap_crlb_stack(
         ig = np.ascontiguousarray(igram_cube[e], dtype=np.complex64)
         var = np.ascontiguousarray(variance_cube[e], dtype=np.float32)
         m_e = per_ig_mask[e] if per_ig_mask is not None else mask
-        unw_out[e], cc_out[e] = unwrap_crlb_with_conncomp(
+        unw_out[e], cc_out[e] = unwrap_crlb(
             ig,
             var,
             mask=m_e,
             cost_threshold=cost_threshold,
             min_size_px=min_size_px,
-            min_size_frac=min_size_frac,
             max_ncomps=max_ncomps,
         )
     return unw_out, cc_out
@@ -228,7 +225,6 @@ __all__ = [
     "unwrap_crlb",
     "unwrap_crlb_grounded",
     "unwrap_crlb_stack",
-    "unwrap_crlb_with_conncomp",
     "unwrap_convex",
     "unwrap_grounded",
     "unwrap_pyramid",
