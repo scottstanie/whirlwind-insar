@@ -285,6 +285,7 @@ pub fn unwrap_crlb_tiled(
     mask: Option<ArrayView2<bool>>,
     tile_size: usize,
     overlap: usize,
+    confidence: Option<ArrayView2<f32>>,
 ) -> Result<Array2<f32>, UnwrapError> {
     let (m, n) = igram.dim();
     if (m, n) != variance.dim() {
@@ -323,14 +324,19 @@ pub fn unwrap_crlb_tiled(
         );
     }
 
-    // 2-5) Shared assembly with a variance-derived pseudo-coherence confidence
-    //      map — replaces the old BFS-median stitch with reconcile + feather +
-    //      global anchor + multi-scale cascade + heal, matching the coherence
-    //      path's robustness (#35).
-    let pcoh = pseudo_coh_from_variance(variance);
+    // 2-5) Shared assembly. Confidence map for the anchor/cascade region-vote +
+    //      seam stitch: the caller's coherence (e.g. dolphin `.cor`) when given,
+    //      else a variance-derived pseudo-coherence. The per-tile solve stays
+    //      CRLB-cost regardless. (#35 / #58: the pseudo-coherence is low-dynamic-
+    //      range and a weak region-vote signal; a real coherence raster pins
+    //      tile-block offsets far better.)
+    let conf_owned: Array2<f32> = match confidence {
+        Some(c) => c.to_owned(),
+        None => pseudo_coh_from_variance(variance),
+    };
     Ok(assemble_and_refine(
         igram,
-        pcoh.view(),
+        conf_owned.view(),
         mask,
         &grid,
         &tile_unws,
@@ -597,32 +603,35 @@ fn pseudo_coh_from_variance(variance: ArrayView2<f32>) -> Array2<f32> {
     })
 }
 
-/// CRLB twin of [`unwrap_tiled_robust`]: gated multi-shift re-solve for the
-/// CRLB-cost path.
+/// CRLB twin of [`unwrap_tiled_robust`]: per-tile CRLB solve + the shared
+/// anchor/cascade ([`unwrap_crlb_tiled`]) with a gated multi-shift re-solve.
 ///
-/// The coherent-cut gate uses a pseudo-coherence derived from the CRLB phase
-/// variance ([`pseudo_coh_from_variance`]) in place of sample coherence, so a
-/// wrong global WINDING on a fragmented phase-linked frame is caught the same
-/// way as on the coherence path (PR #30). NOTE: the MCF offset-reconcile,
-/// global anchor, multi-scale cascade, and seam-repair of the coherence
-/// [`unwrap_tiled`] pipeline are NOT yet ported to the CRLB tiler (which still
-/// BFS-median-stitches) — see issue #35; this adds the multi-shift winding fix
-/// on top of [`unwrap_crlb_tiled`].
+/// The multi-shift gate AND the anchor/cascade region-vote use a CONFIDENCE map:
+/// the caller's coherence (e.g. dolphin `.cor`) when provided, else a
+/// pseudo-coherence derived from the CRLB variance ([`pseudo_coh_from_variance`]).
+/// The pseudo-coherence is low-dynamic-range, so passing a real coherence raster
+/// markedly improves tile-block-offset pinning (#58). The per-tile solve is
+/// CRLB-cost regardless.
 pub fn unwrap_crlb_tiled_robust(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
     mask: Option<ArrayView2<bool>>,
     tile_size: usize,
     overlap: usize,
+    confidence: Option<ArrayView2<f32>>,
 ) -> Result<Array2<f32>, UnwrapError> {
-    let base = unwrap_crlb_tiled(igram, variance, mask, tile_size, overlap)?;
+    let conf_owned: Array2<f32> = match confidence {
+        Some(c) => c.to_owned(),
+        None => pseudo_coh_from_variance(variance),
+    };
+    let conf = conf_owned.view();
+    let base = unwrap_crlb_tiled(igram, variance, mask, tile_size, overlap, Some(conf))?;
     let (m, n) = igram.dim();
     // A single-tile solve has no seams to shift.
     if tile_size >= m && tile_size >= n {
         return Ok(base);
     }
-    let pcoh = pseudo_coh_from_variance(variance);
-    let rate0 = coherent_cut_rate(igram, &base, pcoh.view(), mask, COH_CUT_THR);
+    let rate0 = coherent_cut_rate(igram, &base, conf, mask, COH_CUT_THR);
     let mut best = base;
     if rate0 > COH_CUT_FLOOR {
         let step = tile_size - overlap;
@@ -640,15 +649,21 @@ pub fn unwrap_crlb_tiled_robust(
                 p.slice_mut(s![s.., s..]).assign(&mk);
                 p
             });
+            let pconf = confidence.map(|c| {
+                let mut p = Array2::<f32>::zeros((m + s, n + s));
+                p.slice_mut(s![s.., s..]).assign(&c);
+                p
+            });
             let cand_padded = unwrap_crlb_tiled(
                 pig.view(),
                 pvar.view(),
                 pmask.as_ref().map(|a| a.view()),
                 tile_size,
                 overlap,
+                pconf.as_ref().map(|a| a.view()),
             )?;
             let cand = cand_padded.slice(s![s.., s..]).to_owned();
-            let r = coherent_cut_rate(igram, &cand, pcoh.view(), mask, COH_CUT_THR);
+            let r = coherent_cut_rate(igram, &cand, conf, mask, COH_CUT_THR);
             if r < best_rate {
                 best_rate = r;
                 best = cand;
@@ -2063,7 +2078,7 @@ mod tests {
         let var = Array2::<f32>::from_elem((m, n), 0.1);
 
         let non_tiled = unwrap_crlb(igram.view(), var.view(), None).unwrap();
-        let tiled = unwrap_crlb_tiled(igram.view(), var.view(), None, 24, 8).unwrap();
+        let tiled = unwrap_crlb_tiled(igram.view(), var.view(), None, 24, 8, None).unwrap();
 
         // Both should be smooth. Compare to truth after aligning the
         // global integer-cycle offset.
@@ -2153,8 +2168,8 @@ mod tests {
             Array2::from_shape_fn((m, n), |(i, j)| 0.04 * i as f32 + 0.03 * j as f32);
         let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
         let var = Array2::<f32>::from_elem((m, n), 0.05);
-        let plain = unwrap_crlb_tiled(igram.view(), var.view(), None, 32, 8).unwrap();
-        let robust = unwrap_crlb_tiled_robust(igram.view(), var.view(), None, 32, 8).unwrap();
+        let plain = unwrap_crlb_tiled(igram.view(), var.view(), None, 32, 8, None).unwrap();
+        let robust = unwrap_crlb_tiled_robust(igram.view(), var.view(), None, 32, 8, None).unwrap();
         let max_diff = plain
             .iter()
             .zip(robust.iter())

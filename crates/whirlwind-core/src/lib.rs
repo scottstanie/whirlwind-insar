@@ -532,6 +532,7 @@ pub fn unwrap_crlb_robust_with_components(
     mask: Option<ArrayView2<bool>>,
     tile_size: usize,
     tile_overlap: usize,
+    confidence: Option<ArrayView2<f32>>,
     params: ConnCompParams,
 ) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
     let (m, n) = igram.dim();
@@ -546,7 +547,7 @@ pub fn unwrap_crlb_robust_with_components(
     };
     let use_tiling = ts >= 4 && to >= 2 && to < ts;
     let phase = if use_tiling {
-        tile::unwrap_crlb_tiled_robust(igram, variance, mask, ts, to)?
+        tile::unwrap_crlb_tiled_robust(igram, variance, mask, ts, to, confidence)?
     } else {
         unwrap_crlb_reuse(igram, variance, mask)?
     };
