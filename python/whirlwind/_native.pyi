@@ -90,17 +90,24 @@ def unwrap_with_conncomp(
     nlooks: float,
     mask: NDArray[np.bool_] | None = ...,
     cost_threshold: int = ...,
+    min_size_px: int = ...,
     min_size_frac: float = ...,
     max_ncomps: int = ...,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """Carballo unwrap + SNAPHU-style connected components from one MCF solve.
 
     Returns ``(unwrapped_phase, components)``. ``components`` is uint32 with
-    0 = background (cut off, masked, or smaller than ``min_size_frac``);
+    0 = background (cut off, masked, or smaller than ``min_size_px`` pixels);
     valid components are renumbered 1..=K by descending size, capped at
     ``max_ncomps``. A pixel edge is a cut when an underlying MCF arc is
     mask-forbidden, carries flow (branch cut), or has raw cost
-    ≤ ``cost_threshold``.
+    ≤ ``cost_threshold``. ``min_size_px`` (default 100, ≈0.8 km at 80 m) is the
+    ABSOLUTE size floor — the binding speckle control, scene-size-invariant;
+    ``min_size_frac`` (default 1e-4) is a vestigial cap that only raises it on
+    huge frames. ``max_ncomps`` (default 1024) is a generous anti-pathology
+    guard — the floor, not the count, is the real control, so small coherent
+    islands survive as their own self-consistent components (re-reference into
+    them as needed) rather than being dropped for being disconnected.
     """
 
 
@@ -109,6 +116,7 @@ def unwrap_crlb_with_conncomp(
     variance: NDArray[np.float32],
     mask: NDArray[np.bool_] | None = ...,
     cost_threshold: int = ...,
+    min_size_px: int = ...,
     min_size_frac: float = ...,
     max_ncomps: int = ...,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:

@@ -36,9 +36,22 @@ pub struct ConnCompParams {
     /// Cut a pixel edge when min raw forward cost across the two underlying
     /// arcs is ≤ this. Higher → fewer/larger components.
     pub cost_threshold: i32,
-    /// Drop components covering less than this fraction of valid pixels.
+    /// Drop components smaller than this many pixels. This ABSOLUTE floor is the
+    /// binding control: at 80 m it is 0.8 km/side, at 30 m 0.3 km — scene-size-
+    /// and pixel-spacing-invariant (matches SNAPHU's `minregionsize`). A small
+    /// coherent island stays a usable, self-consistent component the caller can
+    /// re-reference into; only sub-floor speckle is dropped.
+    pub min_size_px: usize,
+    /// Vestigial fractional floor, kept only as an anti-pathology cap on huge
+    /// frames (it can only RAISE `min_size_px`, never lower it). At the default
+    /// 1e-4 it stays negligible (<100 px below ~1M valid). Do NOT raise toward
+    /// 0.01 — on a NISAR frame 1% is a ~25 km minimum feature, which orphans
+    /// every island a user might want to reference into.
     pub min_size_frac: f32,
-    /// Keep at most this many components (largest by size). 0 → keep all.
+    /// Keep at most this many components (largest by size). 0 → keep all. The
+    /// `min_size_px` floor is the real speckle control; this is only a guard
+    /// against a pathological scene emitting tens of thousands of labels, set
+    /// generously so it never clips a genuine feature the floor admits.
     pub max_ncomps: u32,
 }
 
@@ -46,8 +59,9 @@ impl Default for ConnCompParams {
     fn default() -> Self {
         Self {
             cost_threshold: 50,
-            min_size_frac: 0.01,
-            max_ncomps: 64,
+            min_size_px: 100,
+            min_size_frac: 0.0001,
+            max_ncomps: 1024,
         }
     }
 }
@@ -65,8 +79,8 @@ fn edge_is_cut(net: &Network, fwd1: usize, fwd2: usize, thresh: i32) -> bool {
 }
 
 /// Grow components on the pixel grid using a solved MCF network. Returns a
-/// `(m_phase, n_phase)` `u32` label array; 0 = unassigned (cut off or below
-/// `min_size_frac`).
+/// `(m_phase, n_phase)` `u32` label array; 0 = unassigned (cut off or smaller
+/// than `min_size_px`).
 pub fn grow_components(
     g: &RectangularGridGraph,
     net: &Network,
@@ -85,8 +99,10 @@ pub fn grow_components(
         .flat_map(|i| (0..n_phase).map(move |j| (i, j)))
         .filter(|&(i, j)| valid(i, j))
         .count();
-    let min_size =
-        ((params.min_size_frac as f64 * n_valid as f64).ceil() as usize).max(1);
+    // Absolute floor governs; the fraction only ever RAISES it (a generous cap
+    // on huge frames), so a coherent island down to `min_size_px` is kept.
+    let frac_floor = (params.min_size_frac as f64 * n_valid as f64).ceil() as usize;
+    let min_size = params.min_size_px.max(frac_floor).max(1);
 
     let mut labels = Array2::<u32>::zeros((m_phase, n_phase));
     let mut next_label: u32 = 0;
@@ -221,10 +237,15 @@ mod tests {
         let igram: Array2<Complex32> = truth.mapv(|p| Complex32::from_polar(1.0, p));
         let corr = Array2::<f32>::from_elem((m, n), 0.9);
         let mut mask = Array2::<bool>::from_elem((m, n), true);
-        // Isolated 2x2 island.
+        // Two isolated islands separated from the main body by a masked moat:
+        // a tiny 2x2 (4 px, below the 100-px floor) and a 12x12 (144 px, above).
+        // A one-pixel masked ring around each isolates it.
         for i in 0..m {
             for j in 0..n {
-                if !(i < 2 && j < 2) && (i < 4 || j < 4) {
+                let small = i < 2 && j < 2;
+                let big = (4..16).contains(&i) && (4..16).contains(&j);
+                let moat = (i < 3 && j < 3) || ((3..17).contains(&i) && (3..17).contains(&j));
+                if moat && !small && !big {
                     mask[(i, j)] = false;
                 }
             }
@@ -239,13 +260,21 @@ mod tests {
         let mut net =
             Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));
         primal_dual::run(&graph, &mut net, 50);
-        let params = ConnCompParams { min_size_frac: 0.01, ..Default::default() };
-        let labels = grow_components(&graph, &net, Some(mask_view), &params);
-        // The 2x2 island is 4 pixels; 1% of valid pixels in (64*64 - masked)
-        // is well above 4, so the island gets zeroed.
+        // Default policy: absolute 100-px floor governs (frac is a negligible cap).
+        let labels = grow_components(&graph, &net, Some(mask_view), &ConnCompParams::default());
+        // The 2x2 island (4 px < 100) is dropped...
         assert_eq!(labels[(0, 0)], 0);
-        assert_eq!(labels[(1, 1)], 0);
-        // Main region should still be labeled.
-        assert!(labels[(32, 32)] > 0);
+        // ...the 12x12 island (144 px >= 100) SURVIVES as its own component
+        // (the whole point: a small coherent island is NOT dropped for being
+        // disconnected — the caller can re-reference into it)...
+        assert!(labels[(9, 9)] > 0);
+        // ...and the main body is labeled.
+        assert!(labels[(40, 40)] > 0);
+
+        // The old 1% fraction would have orphaned the 12x12 island: assert the
+        // absolute floor is what keeps it (raising min_size_px past 144 drops it).
+        let strict = ConnCompParams { min_size_px: 300, ..Default::default() };
+        let labels_strict = grow_components(&graph, &net, Some(mask_view), &strict);
+        assert_eq!(labels_strict[(9, 9)], 0);
     }
 }

@@ -39,8 +39,9 @@ def unwrap_crlb_stack(
     variance_cube: "NDArray[np.float32]",
     mask: "NDArray[np.bool_] | None" = None,
     cost_threshold: int = 50,
-    min_size_frac: float = 0.01,
-    max_ncomps: int = 64,
+    min_size_px: int = 100,
+    min_size_frac: float = 0.0001,
+    max_ncomps: int = 1024,
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
     """Per-IG CRLB unwrap + conncomp over a 3D stack.
 
@@ -106,6 +107,7 @@ def unwrap_crlb_stack(
             var,
             mask=m_e,
             cost_threshold=cost_threshold,
+            min_size_px=min_size_px,
             min_size_frac=min_size_frac,
             max_ncomps=max_ncomps,
         )
@@ -118,8 +120,9 @@ def unwrap_with_conncomp(
     nlooks: float,
     mask: "NDArray[np.bool_] | None" = None,
     cost_threshold: int = 50,
-    min_size_frac: float = 0.01,
-    max_ncomps: int = 64,
+    min_size_px: int = 100,
+    min_size_frac: float = 0.0001,
+    max_ncomps: int = 1024,
     goldstein_alpha: float = 0.7,
     goldstein_psize: int = 64,
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
@@ -158,7 +161,7 @@ def unwrap_with_conncomp(
         return _unwrap_with_conncomp_native(
             igram, corr, nlooks,
             mask=mask, cost_threshold=cost_threshold,
-            min_size_frac=min_size_frac, max_ncomps=max_ncomps,
+            min_size_px=min_size_px, min_size_frac=min_size_frac, max_ncomps=max_ncomps,
         )
 
     ig_filt = goldstein(igram, alpha=goldstein_alpha, psize=goldstein_psize)

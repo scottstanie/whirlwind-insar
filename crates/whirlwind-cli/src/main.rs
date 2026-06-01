@@ -251,6 +251,9 @@ fn cmd_unwrap(
     let (unw_filt, cc_raster) = if conncomp.is_some() {
         let params = whirlwind_core::ConnCompParams {
             cost_threshold,
+            // Absolute floor (≈0.8 km at 80 m) is the real speckle control;
+            // `--min-component-frac` only raises it on very large frames.
+            min_size_px: 100,
             min_size_frac: min_component_frac,
             // u16 raster supports up to 65535 components; cap below that to
             // keep the conncomp routine from over-fragmenting.
