@@ -234,3 +234,22 @@ class TestPyramid:
         corr = np.ones((16, 16), dtype=np.float32)
         with pytest.raises(ValueError):
             ww.unwrap_pyramid(ig, corr, nlooks=1.0, solver="bogus")
+
+
+class TestCrlb:
+    def test_unwrap_crlb_returns_conncomp(self):
+        """unwrap_crlb returns (phase, conncomp) (#35) AND its default path is
+        corner-safe: a steep clean ramp that the plain capacity-1 CRLB solver
+        mis-routes is recovered exactly (the default now routes through reuse)."""
+        m, n = 96, 96
+        truth = np.fromfunction(
+            lambda i, j: 0.3 * (i + j), (m, n)
+        ).astype(np.float32)  # ~9π across, steep enough to expose corner stacking
+        igram = np.exp(1j * truth).astype(np.complex64)
+        var = np.full((m, n), 0.05, dtype=np.float32)  # low variance = high confidence
+
+        unw, cc = ww.unwrap_crlb(igram, var)
+        assert unw.shape == igram.shape and unw.dtype == np.float32
+        assert cc.shape == igram.shape and cc.dtype == np.uint32
+        assert cc.max() >= 1
+        assert _k_correct(unw, truth) > 0.99, "corner-safe CRLB default must recover steep ramp"

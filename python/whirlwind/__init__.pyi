@@ -23,7 +23,6 @@ from ._native import (
     unwrap_convex as unwrap_convex,
     unwrap_crlb as unwrap_crlb,
     unwrap_crlb_grounded as unwrap_crlb_grounded,
-    unwrap_crlb_with_conncomp as unwrap_crlb_with_conncomp,
     unwrap_grounded as unwrap_grounded,
     unwrap_pyramid as unwrap_pyramid,
     unwrap_reuse as unwrap_reuse,
@@ -59,7 +58,6 @@ def unwrap_crlb_stack(
     mask: NDArray[np.bool_] | None = ...,
     cost_threshold: int = ...,
     min_size_px: int = ...,
-    min_size_frac: float = ...,
     max_ncomps: int = ...,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """Per-IG CRLB unwrap + connected components over a 3D stack."""

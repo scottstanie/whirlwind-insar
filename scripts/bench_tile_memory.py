@@ -54,9 +54,9 @@ def main() -> None:
     print(f"[bench] running {mode} unwrap on {ig.shape}")
     t0 = time.perf_counter()
     if mode == "non-tiled":
-        unw = ww.unwrap_crlb(ig, var, None)
+        unw, _cc = ww.unwrap_crlb(ig, var, None)
     else:
-        unw = ww.unwrap_crlb(ig, var, None, tile_size=512, tile_overlap=128)
+        unw, _cc = ww.unwrap_crlb(ig, var, None, tile_size=512, tile_overlap=128)
     print(f"[bench] {mode}: {time.perf_counter() - t0:.2f}s  "
           f"range [{unw.min():.2f}, {unw.max():.2f}]")
 

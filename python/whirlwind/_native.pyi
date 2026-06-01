@@ -105,13 +105,18 @@ def unwrap_crlb(
     mask: NDArray[np.bool_] | None = ...,
     tile_size: int = ...,
     tile_overlap: int = ...,
-) -> NDArray[np.float32]:
-    """2D phase unwrap with the CRLB-weighted Gaussian cost (for phase-linked IGs).
+    cost_threshold: int = ...,
+    min_size_px: int = ...,
+    max_ncomps: int = ...,
+) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
+    """CRLB-weighted unwrap (phase-linked IGs) → ``(phase, conn_components)``.
 
-    If ``tile_size > 0`` and the image is larger than one tile, the image is
-    split into overlapping tiles, each tile is unwrapped independently, and
-    they are stitched together by CRLB-weighted overlap-median 2π
-    reconciliation. Bounds per-IG MCF memory use to tile-size scale.
+    The phase-linked twin of :func:`whirlwind.unwrap`. Phase uses the robust
+    tiled CRLB pipeline (``tile_size=0`` auto-tiles frames > 512 px + a gated
+    multi-shift winding fix, gated on a pseudo-coherence derived from the
+    variance); components are grown globally from the CRLB cost grid. The global
+    anchor + multi-scale cascade of the coherence path are not yet ported to the
+    CRLB tiler (issue #35).
     """
 
 def unwrap_crlb_grounded(
@@ -126,20 +131,6 @@ def unwrap_crlb_grounded(
     boundary-only wrap-lines (e.g. smooth ramps; tile-boundary residues).
     ``ground_cost = 0`` makes ground free; positive cost biases MCF toward
     internal pairing for the bulk of residues on noisy data.
-    """
-
-
-def unwrap_crlb_with_conncomp(
-    igram: NDArray[np.complex64],
-    variance: NDArray[np.float32],
-    mask: NDArray[np.bool_] | None = ...,
-    cost_threshold: int = ...,
-    min_size_px: int = ...,
-    min_size_frac: float = ...,
-    max_ncomps: int = ...,
-) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
-    """CRLB unwrap + SNAPHU-style connected components. See
-    :func:`unwrap_with_conncomp` for component semantics.
     """
 
 

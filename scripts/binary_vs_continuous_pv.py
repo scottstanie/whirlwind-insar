@@ -130,7 +130,7 @@ def run_variant(
             ig_mask = _read_bool(e.mask_path, win)
         if variant_mask is not None:
             ig_mask = variant_mask if ig_mask is None else (ig_mask & variant_mask)
-        unw = ww.unwrap_crlb(igram, variance, ig_mask)
+        unw, _cc = ww.unwrap_crlb(igram, variance, ig_mask)
         return idx, unw
 
     with ThreadPoolExecutor(max_workers=n_threads) as ex:

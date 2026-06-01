@@ -384,6 +384,12 @@ pub fn unwrap_reuse(
 /// * `variance` — per-pixel phase variance σ²_IG = σ²_a + σ²_b in rad²,
 ///   typically `crlb_<date_a>.tif + crlb_<date_b>.tif`. NoData = 0 is fine.
 /// * `mask` — optional valid-pixel mask.
+///
+/// NOTE: uses a unit-capacity network, so it has the capacity-1
+/// boundary-stacking limit — it mis-routes the corners of smooth STEEP signals
+/// (e.g. a clean steep ramp). The DEFAULT CRLB path does NOT use this; it routes
+/// through the corner-safe [`unwrap_crlb_reuse`]. Kept as a building block and
+/// for the boundary-stacking regression — not recommended directly.
 pub fn unwrap_crlb(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
@@ -401,6 +407,40 @@ pub fn unwrap_crlb(
     let costs = cost::compute_crlb_costs(igram, variance, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
+    primal_dual::run(&graph, &mut net, 50);
+    let unw = if mask.is_some() {
+        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
+    } else {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    };
+    Ok(unw)
+}
+
+/// Corner-safe CRLB unwrap (CRLB cost + PHASS flow-reuse network) — the default
+/// whole-image CRLB path, the CRLB twin of [`unwrap_reuse`].
+///
+/// [`unwrap_crlb`] uses a unit-capacity network that mis-routes the corners of
+/// smooth steep signals (the capacity-1 boundary-stacking limit). The reuse
+/// network lets arcs carry multiple units of flow at zero marginal cost after
+/// the first push, which fixes that. The public `unwrap_crlb` binding and the
+/// CRLB tiler route through this.
+pub fn unwrap_crlb_reuse(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != variance.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_crlb_costs(igram, variance, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new_reuse_with_mask(&graph, residues.view(), &costs, mask);
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mask.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
@@ -437,6 +477,67 @@ pub fn unwrap_crlb_with_components(
     };
     let comps = conncomp::grow_components(&graph, &net, mask, &params);
     Ok((unw, comps))
+}
+
+/// CRLB-cost connected components from the global cost grid **without running
+/// the MCF solve** — the CRLB twin of [`components_only`]. Labels are
+/// solve-independent (see that function); memory is one global cost grid,
+/// `O(pixels)`.
+pub fn crlb_components_only(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    params: ConnCompParams,
+) -> Result<Array2<u32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != variance.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_crlb_costs(igram, variance, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
+    Ok(conncomp::grow_components(&graph, &net, mask, &params))
+}
+
+/// Robust CRLB-cost unwrap returning `(phase, conn_components)` — the engine
+/// behind the public `unwrap_crlb`.
+///
+/// Phase uses [`tile::unwrap_crlb_tiled_robust`] (auto-tile + gated multi-shift
+/// winding fix); components are grown globally and solve-free
+/// ([`crlb_components_only`]). `tile_size == 0` auto-tiles frames larger than
+/// 512 px. (Anchor + cascade parity with the coherence path is pending — see
+/// issue #35.)
+pub fn unwrap_crlb_robust_with_components(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    tile_overlap: usize,
+    params: ConnCompParams,
+) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
+    let (m, n) = igram.dim();
+    let (ts, to) = if tile_size == 0 {
+        if m > 512 || n > 512 {
+            (512, 64)
+        } else {
+            (0, 0)
+        }
+    } else {
+        (tile_size, tile_overlap)
+    };
+    let use_tiling = ts >= 4 && to >= 2 && to < ts;
+    let phase = if use_tiling {
+        tile::unwrap_crlb_tiled_robust(igram, variance, mask, ts, to)?
+    } else {
+        unwrap_crlb_reuse(igram, variance, mask)?
+    };
+    let comps = crlb_components_only(igram, variance, mask, params)?;
+    Ok((phase, comps))
 }
 
 /// Top-level CRLB-weighted phase unwrap with a virtual ground node.

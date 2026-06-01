@@ -157,9 +157,10 @@ pub fn unwrap_crlb_tiled(
     if m < 2 || n < 2 {
         return Err(UnwrapError::TooSmall((m, n)));
     }
-    // If the image fits in one tile, fall back to the single-tile path.
+    // If the image fits in one tile, fall back to the single-tile path
+    // (corner-safe reuse, not the plain capacity-1 solver).
     if tile_size >= m && tile_size >= n {
-        return crate::unwrap_crlb(igram, variance, mask);
+        return crate::unwrap_crlb_reuse(igram, variance, mask);
     }
     assert!(
         overlap >= 2,
@@ -578,6 +579,81 @@ pub fn unwrap_tiled_robust(
     // selection left behind (e.g. a coherent corner of a water-dominated tile
     // stuck at the wrong cycle). No-op on clean scenes.
     seam_repair(igram, corr, nlooks, mask, &mut best);
+    Ok(best)
+}
+
+/// Pseudo-coherence in `[0, 1]` from CRLB phase variance σ² (rad²), via the
+/// single-look interferometric Cramér–Rao bound inverted: γ ≈ 1/√(1 + 2σ²).
+/// Used ONLY as the confidence weight for the coherent-cut gate below — never
+/// as a cost. Non-finite / negative variance → 0 (no confidence).
+fn pseudo_coh_from_variance(variance: ArrayView2<f32>) -> Array2<f32> {
+    variance.mapv(|v| {
+        if v.is_finite() && v >= 0.0 {
+            1.0 / (1.0 + 2.0 * v).sqrt()
+        } else {
+            0.0
+        }
+    })
+}
+
+/// CRLB twin of [`unwrap_tiled_robust`]: gated multi-shift re-solve for the
+/// CRLB-cost path.
+///
+/// The coherent-cut gate uses a pseudo-coherence derived from the CRLB phase
+/// variance ([`pseudo_coh_from_variance`]) in place of sample coherence, so a
+/// wrong global WINDING on a fragmented phase-linked frame is caught the same
+/// way as on the coherence path (PR #30). NOTE: the MCF offset-reconcile,
+/// global anchor, multi-scale cascade, and seam-repair of the coherence
+/// [`unwrap_tiled`] pipeline are NOT yet ported to the CRLB tiler (which still
+/// BFS-median-stitches) — see issue #35; this adds the multi-shift winding fix
+/// on top of [`unwrap_crlb_tiled`].
+pub fn unwrap_crlb_tiled_robust(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    overlap: usize,
+) -> Result<Array2<f32>, UnwrapError> {
+    let base = unwrap_crlb_tiled(igram, variance, mask, tile_size, overlap)?;
+    let (m, n) = igram.dim();
+    // A single-tile solve has no seams to shift.
+    if tile_size >= m && tile_size >= n {
+        return Ok(base);
+    }
+    let pcoh = pseudo_coh_from_variance(variance);
+    let rate0 = coherent_cut_rate(igram, &base, pcoh.view(), mask, COH_CUT_THR);
+    let mut best = base;
+    if rate0 > COH_CUT_FLOOR {
+        let step = tile_size - overlap;
+        let mut best_rate = rate0;
+        for &s in &[step / 2, step / 4, (3 * step) / 4] {
+            if s == 0 {
+                continue;
+            }
+            let mut pig = Array2::<Complex32>::zeros((m + s, n + s));
+            pig.slice_mut(s![s.., s..]).assign(&igram);
+            let mut pvar = Array2::<f32>::zeros((m + s, n + s));
+            pvar.slice_mut(s![s.., s..]).assign(&variance);
+            let pmask = mask.map(|mk| {
+                let mut p = Array2::<bool>::from_elem((m + s, n + s), false);
+                p.slice_mut(s![s.., s..]).assign(&mk);
+                p
+            });
+            let cand_padded = unwrap_crlb_tiled(
+                pig.view(),
+                pvar.view(),
+                pmask.as_ref().map(|a| a.view()),
+                tile_size,
+                overlap,
+            )?;
+            let cand = cand_padded.slice(s![s.., s..]).to_owned();
+            let r = coherent_cut_rate(igram, &cand, pcoh.view(), mask, COH_CUT_THR);
+            if r < best_rate {
+                best_rate = r;
+                best = cand;
+            }
+        }
+    }
     Ok(best)
 }
 
@@ -1644,7 +1720,9 @@ fn unwrap_one_tile(
     let residues = residue::compute_with_mask(wrapped_phase.view(), mk);
     let costs = cost::compute_crlb_costs(ig, va, mk);
     let graph = RectangularGridGraph::new(tm + 1, tn + 1);
-    let mut net = Network::new_with_mask(&graph, residues.view(), &costs, mk);
+    // Corner-safe reuse network (same fix as the coherence tiler / unwrap_reuse):
+    // the plain unit-capacity net mis-routes steep-ramp corners.
+    let mut net = Network::new_reuse_with_mask(&graph, residues.view(), &costs, mk);
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mk.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mk)
@@ -2113,6 +2191,59 @@ mod tests {
         assert!(
             max_diff < 1e-6,
             "robust must equal plain tiled on a clean scene (no gate), diff {max_diff}"
+        );
+    }
+
+    #[test]
+    fn unwrap_crlb_tiled_robust_is_noop_on_clean_scene() {
+        use ndarray::Array2;
+        // CRLB twin: on a clean tiled scene the pseudo-coherence gate must NOT
+        // fire, so robust == plain CRLB tiled.
+        let (m, n) = (96, 96);
+        let truth: Array2<f32> =
+            Array2::from_shape_fn((m, n), |(i, j)| 0.04 * i as f32 + 0.03 * j as f32);
+        let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let var = Array2::<f32>::from_elem((m, n), 0.05);
+        let plain = unwrap_crlb_tiled(igram.view(), var.view(), None, 32, 8).unwrap();
+        let robust = unwrap_crlb_tiled_robust(igram.view(), var.view(), None, 32, 8).unwrap();
+        let max_diff = plain
+            .iter()
+            .zip(robust.iter())
+            .map(|(&a, &b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max_diff < 1e-6,
+            "CRLB robust must equal plain tiled on a clean scene (no gate), diff {max_diff}"
+        );
+    }
+
+    #[test]
+    fn unwrap_crlb_reuse_fixes_steep_ramp_corners() {
+        use ndarray::Array2;
+        // Clean ~6π steep ramp: the plain unit-capacity CRLB solver mis-routes
+        // the corners (capacity-1 stacking); the corner-safe reuse variant —
+        // now the default CRLB path — recovers it exactly.
+        let (m, n) = (64, 64);
+        let truth: Array2<f32> =
+            Array2::from_shape_fn((m, n), |(i, j)| 0.3 * (i as f32 + j as f32));
+        let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let var = Array2::<f32>::from_elem((m, n), 0.05);
+        let k_correct = |u: &Array2<f32>| -> f64 {
+            let mut d: Vec<f32> = u.iter().zip(truth.iter()).map(|(&a, &b)| a - b).collect();
+            d.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let k0 = (d[d.len() / 2] / TAU).round();
+            let n_ok = u
+                .iter()
+                .zip(truth.iter())
+                .filter(|&(&a, &b)| (((a - b) / TAU).round() - k0).abs() < 0.5)
+                .count();
+            n_ok as f64 / u.len() as f64
+        };
+        let reuse = crate::unwrap_crlb_reuse(igram.view(), var.view(), None).unwrap();
+        assert!(
+            k_correct(&reuse) > 0.99,
+            "corner-safe CRLB reuse must recover the steep clean ramp, got {}",
+            k_correct(&reuse)
         );
     }
 }
