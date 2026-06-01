@@ -596,7 +596,7 @@ fn closure_refine_mcf<'py>(
 #[pyfunction]
 #[pyo3(signature = (
     igram, corr, nlooks, mask = None,
-    cost_threshold = 50, min_size_frac = 0.01, max_ncomps = 64,
+    cost_threshold = 50, min_size_px = 100, min_size_frac = 0.0001, max_ncomps = 1024,
 ))]
 fn unwrap_with_conncomp<'py>(
     py: Python<'py>,
@@ -605,6 +605,7 @@ fn unwrap_with_conncomp<'py>(
     nlooks: f32,
     mask: Option<PyReadonlyArray2<'py, bool>>,
     cost_threshold: i32,
+    min_size_px: usize,
     min_size_frac: f32,
     max_ncomps: u32,
 ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
@@ -613,6 +614,7 @@ fn unwrap_with_conncomp<'py>(
     let m = mask.as_ref().map(|m| m.as_array());
     let params = whirlwind_core::ConnCompParams {
         cost_threshold,
+        min_size_px,
         min_size_frac,
         max_ncomps,
     };
@@ -643,7 +645,7 @@ fn unwrap_with_conncomp<'py>(
 #[pyfunction]
 #[pyo3(signature = (
     igram, variance, mask = None,
-    cost_threshold = 50, min_size_frac = 0.01, max_ncomps = 64,
+    cost_threshold = 50, min_size_px = 100, min_size_frac = 0.0001, max_ncomps = 1024,
 ))]
 fn unwrap_crlb_with_conncomp<'py>(
     py: Python<'py>,
@@ -651,6 +653,7 @@ fn unwrap_crlb_with_conncomp<'py>(
     variance: PyReadonlyArray2<'py, f32>,
     mask: Option<PyReadonlyArray2<'py, bool>>,
     cost_threshold: i32,
+    min_size_px: usize,
     min_size_frac: f32,
     max_ncomps: u32,
 ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
@@ -659,6 +662,7 @@ fn unwrap_crlb_with_conncomp<'py>(
     let m = mask.as_ref().map(|m| m.as_array());
     let params = whirlwind_core::ConnCompParams {
         cost_threshold,
+        min_size_px,
         min_size_frac,
         max_ncomps,
     };
