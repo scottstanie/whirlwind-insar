@@ -286,6 +286,9 @@ pub fn unwrap_tiled(
     let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
     let _n_tiles = grid.tiles.len();
 
+    let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
+    let mut t = std::time::Instant::now();
+
     // 1) Unwrap each tile in parallel.
     let tile_unws: Vec<Result<Array2<f32>, UnwrapError>> = grid
         .tiles
@@ -293,6 +296,14 @@ pub fn unwrap_tiled(
         .map(|t| unwrap_one_tile_coh(igram, corr, nlooks, mask, t))
         .collect();
     let tile_unws: Vec<Array2<f32>> = tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
+    if dbg {
+        eprintln!(
+            "[ww]     tiled: per-tile solve {:.2}s ({} tiles)",
+            t.elapsed().as_secs_f64(),
+            grid.tiles.len()
+        );
+        t = std::time::Instant::now();
+    }
 
     // 2) Reconcile per-tile integer-2π offsets by a GLOBAL min-cost-flow
     //    secondary network (SNAPHU's `AssembleTiles` idea at tile scale).
@@ -338,6 +349,13 @@ pub fn unwrap_tiled(
         }
     }
     let offsets_2pi = reconcile_offsets_mcf(rows, cols, &gh, &wh, &gv, &wv);
+    if dbg {
+        eprintln!(
+            "[ww]     tiled: seam reconcile {:.2}s",
+            t.elapsed().as_secs_f64()
+        );
+        t = std::time::Instant::now();
+    }
 
     // 3) FEATHERED composite. A hard "first-tile-wins" switch leaves a faint
     //    1-px seam line wherever two tiles' (offset-aligned) values differ by a
@@ -401,6 +419,13 @@ pub fn unwrap_tiled(
             }
         }
     }
+    if dbg {
+        eprintln!(
+            "[ww]     tiled: feather composite {:.2}s",
+            t.elapsed().as_secs_f64()
+        );
+        t = std::time::Instant::now();
+    }
 
     // 4) Coarse region-refinement: remove residual whole-region 2π-offset
     //    artifacts (rectangular blocks bounded by high-coherence 2π rings)
@@ -428,6 +453,13 @@ pub fn unwrap_tiled(
             coarse_refine(&mut out, corr, mask, f, av);
         }
     }
+    if dbg {
+        eprintln!(
+            "[ww]     tiled: anchor+cascade {:.2}s",
+            t.elapsed().as_secs_f64()
+        );
+        t = std::time::Instant::now();
+    }
 
     // 5) Heal residual thin MCF "sliver" artifacts: a ≤4-px vertical/horizontal
     //    run the per-tile residue-pairing left a constant integer #cycles off
@@ -438,6 +470,12 @@ pub fn unwrap_tiled(
     //    disables it.
     if std::env::var("WHIRLWIND_NO_HEAL").is_err() {
         heal_thin_slivers(&mut out, corr, mask, 0.2, 4, 6);
+    }
+    if dbg {
+        eprintln!(
+            "[ww]     tiled: heal_slivers {:.2}s",
+            t.elapsed().as_secs_f64()
+        );
     }
     Ok(out)
 }
@@ -533,7 +571,15 @@ pub fn unwrap_tiled_robust(
     overlap: usize,
     multilook: usize,
 ) -> Result<Array2<f32>, UnwrapError> {
+    let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
+    let t = std::time::Instant::now();
     let base = unwrap_tiled(igram, corr, nlooks, mask, tile_size, overlap, multilook)?;
+    if dbg {
+        eprintln!(
+            "[ww]   unwrap_tiled (base): {:.2}s",
+            t.elapsed().as_secs_f64()
+        );
+    }
     let (m, n) = igram.dim();
     // Only the standard tiled path has shiftable seams (multilook coarsens first;
     // a single-tile solve has no seams).
@@ -541,6 +587,18 @@ pub fn unwrap_tiled_robust(
         return Ok(base);
     }
     let rate0 = coherent_cut_rate(igram, &base, corr, mask, COH_CUT_THR);
+    if dbg {
+        eprintln!(
+            "[ww]   coherent_cut_rate(base)={:.2e} floor={:.1e} -> multi-shift {}",
+            rate0,
+            COH_CUT_FLOOR,
+            if rate0 > COH_CUT_FLOOR {
+                "FIRES (3 re-solves)"
+            } else {
+                "skipped"
+            }
+        );
+    }
     let mut best = base;
     if rate0 > COH_CUT_FLOOR {
         let step = tile_size - overlap;
@@ -578,7 +636,11 @@ pub fn unwrap_tiled_robust(
     // Final cleanup: repair residual high-coherence cut BLOCKS the global shift
     // selection left behind (e.g. a coherent corner of a water-dominated tile
     // stuck at the wrong cycle). No-op on clean scenes.
+    let t = std::time::Instant::now();
     seam_repair(igram, corr, nlooks, mask, &mut best);
+    if dbg {
+        eprintln!("[ww]   seam_repair: {:.2}s", t.elapsed().as_secs_f64());
+    }
     Ok(best)
 }
 

@@ -218,6 +218,8 @@ pub fn unwrap_coherence_with_components(
     multilook: usize,
     params: ConnCompParams,
 ) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
+    let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
+    let t = std::time::Instant::now();
     let phase = unwrap_coherence(
         igram,
         corr,
@@ -227,7 +229,20 @@ pub fn unwrap_coherence_with_components(
         tile_overlap,
         multilook,
     )?;
+    if dbg {
+        eprintln!(
+            "[ww] phase (unwrap_coherence): {:.2}s",
+            t.elapsed().as_secs_f64()
+        );
+    }
+    let t = std::time::Instant::now();
     let comps = components_only(igram, corr, nlooks, mask, params)?;
+    if dbg {
+        eprintln!(
+            "[ww] conncomp (components_only, global no-solve): {:.2}s",
+            t.elapsed().as_secs_f64()
+        );
+    }
     Ok((phase, comps))
 }
 

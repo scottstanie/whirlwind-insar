@@ -18,10 +18,14 @@ FFT pre-filter on. Goldstein stays available opt-in (`goldstein_alpha > 0`) for
 noisier / lower-coherence scenes where it historically helps more; that regime
 is not characterized by this single-scene A/B and is left for future evaluation.
 
-**Runtime caveat (independent of Goldstein):** both runs took ~18 min on the
-47 Mpx frame — over the < 5 min target. Goldstein is not the cause (α=0 and 0.7
-are within ~4%). Tracked in **#52** — most likely the gated multi-shift re-solve
-firing (≈4× the base tiled unwrap).
+**Runtime note:** the ~18 min in the table above was a **debug build** artifact
+(the A/B ran the `maturin develop` debug extension). Profiled in **release**
+(`scripts/profile_nisar_runtime.py`, `WHIRLWIND_TIMING=1`) the same 47 Mpx frame
+unwraps in **~31 s** — comfortably under the < 5 min target. Breakdown: per-tile
+MCF solve ~27 s (86%), heal ~1.7 s, the global conncomp build only ~1.2 s, the
+multi-shift gate correctly **did not fire** (coherent-cut rate 7.6e-6 ≪ 1.5e-3).
+So K-match here is build-independent and the runtime is fine; just build
+`--release` for real-data runs. See #52.
 
 Plot: `<WD>/Documents/Learning/goldstein_ab/goldstein_ab_nisar.png`
 (SNAPHU K-field + per-variant dK-vs-SNAPHU).
