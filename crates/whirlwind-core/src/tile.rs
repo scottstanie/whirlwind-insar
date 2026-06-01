@@ -599,7 +599,7 @@ fn label_components(m: &Array2<bool>) -> (Array2<i32>, Vec<usize>) {
             stack.push((i, j));
             while let Some((y, x)) = stack.pop() {
                 sz += 1;
-                let mut push =
+                let push =
                     |yy: usize, xx: usize, lab: &mut Array2<i32>, st: &mut Vec<(usize, usize)>| {
                         if yy < h && xx < w && m[(yy, xx)] && lab[(yy, xx)] == 0 {
                             lab[(yy, xx)] = next;
@@ -889,10 +889,7 @@ impl Mcf {
     fn solve(&mut self, supply: &[i64]) {
         let n = self.head.len();
         let mut sup = supply.to_vec();
-        loop {
-            let Some(src) = (0..n).find(|&i| sup[i] > 0) else {
-                break;
-            };
+        while let Some(src) = (0..n).find(|&i| sup[i] > 0) {
             let mut dist = vec![i64::MAX; n];
             let mut pe = vec![-1_i32; n];
             let mut inq = vec![false; n];
@@ -1824,12 +1821,13 @@ mod tests {
         let mut wh = vec![100_i64; gh.len()];
         let mut wv = vec![100_i64; gv.len()];
         // Corrupt gv at (gr=1, gc=2) by +7, low confidence.
-        gv[1 * cols + 2] += 7;
-        wv[1 * cols + 2] = 1;
+        gv[cols + 2] += 7; // gv index = gr*cols+gc, (gr=1, gc=2)
+        wv[cols + 2] = 1;
         // Corrupt gh at (gr=0, gc=1) by −4, low confidence (row 0 is on the
         // integration path, so a wrong sign would show up directly).
-        gh[0 * (cols - 1) + 1] -= 4;
-        wh[0 * (cols - 1) + 1] = 1;
+        // gh index = gr*(cols-1)+gc = 1 at (gr=0, gc=1).
+        gh[1] -= 4;
+        wh[1] = 1;
         let off = reconcile_offsets_mcf(rows, cols, &gh, &wh, &gv, &wv);
         for t in 0..rows * cols {
             assert_eq!(

@@ -824,7 +824,7 @@ mod convex_marginal_tests {
         // Set the first arc with offset=0, weight=1; second with offset=50, weight=1;
         // third with offset=-50, weight=1.
         let mut offsets = vec![0_i32; nf];
-        let mut weights = vec![1_i32; nf];
+        let weights = vec![1_i32; nf];
         offsets[1] = 50;
         offsets[2] = -50;
         let net = make_net_convex(offsets, weights);
@@ -857,7 +857,7 @@ mod convex_marginal_tests {
         // Reverse arc id = fwd + nf.
         assert_eq!(net.marginal_cost(0), 0, "fwd push toward +50 offset = 0");
         assert_eq!(
-            net.marginal_cost(0 + nf),
+            net.marginal_cost(nf),
             20_000,
             "rev push away from +50 offset = 20000"
         );
