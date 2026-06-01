@@ -56,7 +56,7 @@ def main() -> None:
     mainland = mask & (cc == int(labels[np.argmax(counts)]))
 
     t0 = time.perf_counter()
-    u = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask, tile_size=256, tile_overlap=32)
+    u, _cc = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask, tile_size=256, tile_overlap=32)
     dt = time.perf_counter() - t0
     k = np.round((u - wrapped) / TAU); k[~mask] = np.nan
     m0, m2 = match(k, kref, mainland)

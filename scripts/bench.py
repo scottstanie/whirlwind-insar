@@ -99,7 +99,8 @@ class Row:
 
 
 def call_whirlwind(igram, corr, nlooks, mask):
-    return ww.unwrap(igram, corr, float(nlooks), mask)
+    unw, _cc = ww.unwrap(igram, corr, float(nlooks), mask)
+    return unw
 
 
 def call_snaphu(igram, corr, nlooks, mask):

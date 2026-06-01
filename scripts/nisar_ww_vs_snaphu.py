@@ -28,6 +28,7 @@ Stages:
 
 Default ``--stage all`` does everything end-to-end.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -122,8 +123,13 @@ def run_ww(
     import whirlwind as ww
 
     t0 = time.perf_counter()
-    unw, cc = ww.unwrap_with_conncomp(
-        ig, coh, float(nlooks), mask=mask, cost_threshold=cost_threshold
+    unw, cc = ww.unwrap(
+        ig,
+        coh,
+        float(nlooks),
+        mask=mask,
+        cost_threshold=cost_threshold,
+        goldstein_alpha=0.7,
     )
     return unw, cc, time.perf_counter() - t0
 
@@ -163,12 +169,24 @@ def run_snaphu(
 
 
 METHOD_DISPATCH = {
-    "ww": lambda ig, coh, mask, nlooks: run_ww(ig, coh, mask, nlooks, cost_threshold=50),
-    "ww_T10": lambda ig, coh, mask, nlooks: run_ww(ig, coh, mask, nlooks, cost_threshold=10),
-    "ww_T15": lambda ig, coh, mask, nlooks: run_ww(ig, coh, mask, nlooks, cost_threshold=15),
-    "ww_llr": lambda ig, coh, mask, nlooks: run_ww(ig, coh, mask, nlooks, cost_threshold=10),
-    "snaphu_plain": lambda ig, coh, mask, nlooks: run_snaphu(ig, coh, mask, nlooks, (1, 1)),
-    "snaphu_tiled": lambda ig, coh, mask, nlooks: run_snaphu(ig, coh, mask, nlooks, (3, 3)),
+    "ww": lambda ig, coh, mask, nlooks: run_ww(
+        ig, coh, mask, nlooks, cost_threshold=50
+    ),
+    "ww_T10": lambda ig, coh, mask, nlooks: run_ww(
+        ig, coh, mask, nlooks, cost_threshold=10
+    ),
+    "ww_T15": lambda ig, coh, mask, nlooks: run_ww(
+        ig, coh, mask, nlooks, cost_threshold=15
+    ),
+    "ww_llr": lambda ig, coh, mask, nlooks: run_ww(
+        ig, coh, mask, nlooks, cost_threshold=10
+    ),
+    "snaphu_plain": lambda ig, coh, mask, nlooks: run_snaphu(
+        ig, coh, mask, nlooks, (1, 1)
+    ),
+    "snaphu_tiled": lambda ig, coh, mask, nlooks: run_snaphu(
+        ig, coh, mask, nlooks, (3, 3)
+    ),
 }
 
 
@@ -177,7 +195,9 @@ def stage_run_one(method: str, out_dir: Path, nlooks: float) -> None:
     ig = np.load(inp / "ig.npy")
     coh = np.load(inp / "coh.npy")
     mask = np.load(inp / "mask.npy")
-    print(f"[{method}] inputs loaded  ig={ig.shape} {ig.dtype}  valid={int(mask.sum())}")
+    print(
+        f"[{method}] inputs loaded  ig={ig.shape} {ig.dtype}  valid={int(mask.sum())}"
+    )
     print(f"[{method}] starting...")
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
@@ -185,7 +205,9 @@ def stage_run_one(method: str, out_dir: Path, nlooks: float) -> None:
 
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     peak_gb = peak_rss_gb()
-    print(f"[{method}] elapsed {elapsed:.1f}s  peak RSS {peak_gb:.2f} GB  (self+children max)")
+    print(
+        f"[{method}] elapsed {elapsed:.1f}s  peak RSS {peak_gb:.2f} GB  (self+children max)"
+    )
 
     out = out_dir / method
     out.mkdir(parents=True, exist_ok=True)
@@ -307,14 +329,18 @@ def stage_plot(out_dir: Path, methods: list[str]) -> None:
         diff_wp = aligned_diff(unws[ww_ref], unws["snaphu_plain"])
         diffs[f"snaphu_plain − {ww_ref}"] = diff_wp
         rms = float(np.sqrt(np.nanmean(diff_wp**2)))
-        axes[1, 1].imshow(diff_wp, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, **im_kw)
+        axes[1, 1].imshow(
+            diff_wp, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, **im_kw
+        )
         axes[1, 1].set_title(f"snaphu_plain − {ww_ref}  (RMS={rms:.3f} rad)")
 
     if ww_ref is not None and "snaphu_tiled" in methods:
         diff_wt = aligned_diff(unws[ww_ref], unws["snaphu_tiled"])
         diffs[f"snaphu_tiled − {ww_ref}"] = diff_wt
         rms = float(np.sqrt(np.nanmean(diff_wt**2)))
-        axes[1, 2].imshow(diff_wt, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, **im_kw)
+        axes[1, 2].imshow(
+            diff_wt, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, **im_kw
+        )
         axes[1, 2].set_title(f"snaphu_tiled − {ww_ref}  (RMS={rms:.3f} rad)")
 
     if "snaphu_plain" in methods and "snaphu_tiled" in methods:
@@ -333,8 +359,13 @@ def stage_plot(out_dir: Path, methods: list[str]) -> None:
     # Diff histograms — show whether method disagreement is structured at
     # integer multiples of 2π (true topology disagreement) or continuous noise.
     if diffs:
-        fig, axes = plt.subplots(1, len(diffs), figsize=(6 * len(diffs), 4),
-                                 constrained_layout=True, squeeze=False)
+        fig, axes = plt.subplots(
+            1,
+            len(diffs),
+            figsize=(6 * len(diffs), 4),
+            constrained_layout=True,
+            squeeze=False,
+        )
         for ax, (name, d) in zip(axes[0], diffs.items()):
             v = d[eval_mask & np.isfinite(d)]
             ax.hist(v, bins=200, range=(-4 * np.pi, 4 * np.pi), log=True)
@@ -342,15 +373,22 @@ def stage_plot(out_dir: Path, methods: list[str]) -> None:
                 ax.axvline(2 * np.pi * k, color="r", lw=0.5, alpha=0.4)
             frac_within = float((np.abs(v) < np.pi / 2).mean())
             rms = float(np.sqrt(np.mean(v**2)))
-            ax.set_title(f"{name}\nRMS={rms:.3f} rad  {100 * frac_within:.1f}% within ±π/2")
+            ax.set_title(
+                f"{name}\nRMS={rms:.3f} rad  {100 * frac_within:.1f}% within ±π/2"
+            )
             ax.set_xlabel("rad")
         fig.savefig(out_path / "diff_histograms.png", dpi=120)
         plt.close(fig)
 
     # Per-method full-resolution unwrap panel (separate figure, high-DPI)
     # so the user can actually read pixel-level structure.
-    fig, axes = plt.subplots(1, len(methods), figsize=(6 * len(methods), 6),
-                             constrained_layout=True, squeeze=False)
+    fig, axes = plt.subplots(
+        1,
+        len(methods),
+        figsize=(6 * len(methods), 6),
+        constrained_layout=True,
+        squeeze=False,
+    )
     for ax, m in zip(axes[0], methods):
         u = np.where(ccs[m] > 0, unws[m], np.nan)
         if eval_mask.any():
@@ -367,7 +405,12 @@ def stage_plot(out_dir: Path, methods: list[str]) -> None:
     plt.close(fig)
 
     # Coverage mask figure
-    fig, axes = plt.subplots(1, len(methods) + 1, figsize=(4 * (len(methods) + 1), 4), constrained_layout=True)
+    fig, axes = plt.subplots(
+        1,
+        len(methods) + 1,
+        figsize=(4 * (len(methods) + 1), 4),
+        constrained_layout=True,
+    )
     axes[0].imshow(input_mask, cmap="Greys_r", **im_kw)
     axes[0].set_title(f"input mask\n{100 * input_mask.mean():.1f}% valid")
     for ax, m in zip(axes[1:], methods):
@@ -417,11 +460,15 @@ def main():
         "--coh",
         type=Path,
         default=Path(
-            "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar/20251224_20260117.int.coh.looked.tif"
+            "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar/20251224_20260117.int.coh.looked.cleaned.tif"
         ),
     )
-    ap.add_argument("--nlooks", type=float, default=100.0,
-                    help="10 range × 10 az boxcar looks ⇒ nlooks=100")
+    ap.add_argument(
+        "--nlooks",
+        type=float,
+        default=100.0,
+        help="10 range × 10 az boxcar looks ⇒ nlooks=100",
+    )
     ap.add_argument(
         "--stage",
         choices=("all", "prep", "run", "run-one", "plot"),

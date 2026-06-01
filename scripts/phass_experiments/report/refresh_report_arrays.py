@@ -46,7 +46,8 @@ def do_nisar():
     wrapped = np.angle(ig).astype(np.float32)
     sk = np.round((sunw - wrapped) / TAU)
     t0 = time.perf_counter()
-    unw = np.asarray(ww.unwrap(ig, coh, 100.0, mask), np.float32)  # TRUE default
+    _unw, _cc = ww.unwrap(ig, coh, 100.0, mask)  # TRUE default
+    unw = np.asarray(_unw, np.float32)
     dt = time.perf_counter() - t0
     kw = np.round((unw - wrapped) / TAU); kw[~mask] = np.nan
     mainland = (scc == 1) & mask
@@ -69,7 +70,8 @@ def do_a016():
     valid = (md != 127) & np.isfinite(prod) & np.isfinite(coh)
     igc = np.ascontiguousarray(np.exp(1j * wrap(prod)), np.complex64)
     t0 = time.perf_counter()
-    unw = np.asarray(ww.unwrap(igc, np.ascontiguousarray(coh, np.float32), 16.0, np.ascontiguousarray(valid, bool)), np.float64)
+    _unw, _cc = ww.unwrap(igc, np.ascontiguousarray(coh, np.float32), 16.0, np.ascontiguousarray(valid, bool))
+    unw = np.asarray(_unw, np.float64)
     dt = time.perf_counter() - t0
     reg = valid & (pcc > 0)
     a = np.rint((unw - prod) / TAU)[reg]; a = a - modal(a)

@@ -52,17 +52,17 @@ print(f"[atlanta/{mode}] shape={phase.shape}  valid={mask.sum():,} ({mask.mean()
 
 t0 = time.perf_counter()
 if mode == "baseline":
-    unw = ww.unwrap(ig, coh, nlooks=nlooks, mask=mask)
+    unw, _cc = ww.unwrap(ig, coh, nlooks=nlooks, mask=mask)
 elif mode == "tiled":
     # Tiled coherence unwrap: bounds memory + keeps flow local (anti-runaway).
-    unw = ww.unwrap(ig, coh, nlooks=nlooks, mask=mask, tile_size=1024, tile_overlap=128)
+    unw, _cc = ww.unwrap(ig, coh, nlooks=nlooks, mask=mask, tile_size=1024, tile_overlap=128)
 elif mode == "reuse":
     unw = ww.unwrap_reuse(ig, coh, nlooks=nlooks, mask=mask)
 elif mode in ("convex", "convex_raw"):
     unw = ww.unwrap_convex(ig, coh, nlooks=nlooks, mask=mask)
 elif mode == "goldstein":
     # Production path: Goldstein-filter the input, unwrap, transfer K back.
-    unw, _cc = ww.unwrap_with_conncomp(
+    unw, _cc = ww.unwrap(
         ig, coh, nlooks=nlooks, mask=mask, goldstein_alpha=0.7,
     )
 else:

@@ -42,7 +42,7 @@ def main() -> None:
     os.environ["WHIRLWIND_REFINE_CASCADE"] = "1"
     os.environ.pop("WHIRLWIND_NO_ANCHOR", None)
     t0 = time.perf_counter()
-    unw = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
+    unw, _cc = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
     dt = time.perf_counter() - t0
     kw = np.round((unw - wrapped) / TAU); kw[~mask] = np.nan
     m_main = match_pct(kw, sk, mainland)

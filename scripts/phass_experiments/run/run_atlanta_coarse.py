@@ -63,7 +63,7 @@ def main() -> None:
     for L in (4, 8, 16):
         t0 = time.perf_counter()
         igc, cohc, mkc = multilook(ig, cohw, mask, L)
-        unc = ww.unwrap(igc, cohc, nlooks=50.0 * L * L, mask=mkc)
+        unc, _cc = ww.unwrap(igc, cohc, nlooks=50.0 * L * L, mask=mkc)
         dt = time.perf_counter() - t0
         # upsample (nearest) and compare on mainland (downsample mainland to coarse for fair compare)
         H, W = unc.shape

@@ -40,9 +40,9 @@ def main() -> None:
     mainland = (scc == 1) & mask
 
     os.environ["WHIRLWIND_NO_HEAL"] = "1"
-    off = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
+    off, _cc = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
     os.environ.pop("WHIRLWIND_NO_HEAL", None)
-    on = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
+    on, _cc = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
 
     def col4032(u, label):
         k = np.round((u - wrapped) / TAU); k[~mask] = np.nan

@@ -75,7 +75,7 @@ def main() -> None:
             gc.collect()
             rss0 = proc.memory_info().rss / 1e6
             t0 = time.perf_counter()
-            unw = ww.unwrap(igc, cohc, NLOOKS, maskc, tile_size=size, tile_overlap=64)
+            unw, _cc = ww.unwrap(igc, cohc, NLOOKS, maskc, tile_size=size, tile_overlap=64)
             dt = time.perf_counter() - t0
             rss1 = proc.memory_info().rss / 1e6
             unw = np.asarray(unw, np.float64)

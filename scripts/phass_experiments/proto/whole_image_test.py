@@ -82,7 +82,7 @@ def main() -> None:
             if cost == "reuse":
                 unw = ww.unwrap_reuse(igc, cohc, NLOOKS, maskc)
             else:
-                unw = ww.unwrap(igc, cohc, NLOOKS, maskc, tile_size=HUGE, tile_overlap=64)
+                unw, _cc = ww.unwrap(igc, cohc, NLOOKS, maskc, tile_size=HUGE, tile_overlap=64)
             dt = time.perf_counter() - t0
             rss1 = proc.memory_info().rss / 1e6
             u = np.asarray(unw, np.float64)

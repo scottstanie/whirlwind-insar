@@ -58,7 +58,7 @@ def main() -> None:
     runs = {}
 
     t0 = time.perf_counter()
-    uw = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask)
+    uw, _cc = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask)
     runs["ww linear whole"] = (time.perf_counter() - t0, ww.unwrap and None)
     kw = np.round((uw - wrapped) / TAU); kw[~mask] = np.nan
     runs["ww linear whole"] = (runs["ww linear whole"][0], match(kw, kref, mainland))

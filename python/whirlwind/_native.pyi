@@ -13,7 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-def unwrap(
+def _unwrap_native(
     igram: NDArray[np.complex64],
     corr: NDArray[np.float32],
     nlooks: float,
@@ -21,38 +21,83 @@ def unwrap(
     tile_size: int = ...,
     tile_overlap: int = ...,
     multilook: int = ...,
-) -> NDArray[np.float32]:
-    """2D phase unwrap with the Carballo/SNAPHU-style coherence cost.
+    cost_threshold: int = ...,
+    min_size_px: int = ...,
+    max_ncomps: int = ...,
+) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
+    """Engine behind :func:`whirlwind.unwrap`: robust tiled coherence-cost
+    unwrap returning ``(phase, conn_components)``.
 
-    ``tile_size=0`` (default) AUTO-TILES large frames at 512 (overlap 64);
+    Prefer the Python :func:`whirlwind.unwrap` wrapper — it adds Goldstein
+    pre-filtering + the K-transfer back onto the original phase. This bare
+    native call does no filtering.
+
+    Phase: ``tile_size=0`` (default) AUTO-TILES large frames at 512 (overlap 64);
     frames that fit in one 512 tile are solved whole. 512 is the empirically
     best universal size (whole-image runs away to ~80% on NISAR, and bigger
-    tiles REGRESS clean scenes under both costs — e.g. D_074 98→81% at tile1024).
-    Pass ``tile_size`` (with ``2<=tile_overlap<tile_size``) to override.
+    tiles REGRESS clean scenes — e.g. D_074 98→81% at tile1024). Pass
+    ``tile_size`` (``2<=tile_overlap<tile_size``) to override. The base solver
+    defaults to corner-safe REUSE (override ``WHIRLWIND_TILE_SOLVER``). The tiled
+    path = per-tile MCF + global coarse anchor + multi-scale cascade + bounded
+    sliver cleanup + a GATED MULTI-SHIFT re-solve and seam-repair for fragmented
+    scenes (no-op on clean ones). Fixes NISAR-GUNW A_016 (55→97%).
+    ``multilook=L`` (L>1) coherently down-looks ×L first then tiles+anchors.
 
-    The per-tile (and whole-image) base solver defaults to corner-safe REUSE
-    (PHASS flow-reuse): the plain linear coherence cost mis-routes the corners of
-    smooth STEEP signals (capacity-1 boundary-stacking — fails a clean 6π ramp by
-    ~12 rad; reuse/convex are exact). Reuse also improves real scenes (NISAR
-    mainland 99.84→99.96%). Override with ``WHIRLWIND_TILE_SOLVER=linear|convex``.
-
-    The tiled path = per-tile MCF + global coarse anchor + multi-scale cascade +
-    bounded sliver cleanup, reaching SNAPHU quality without Goldstein, memory-
-    bounded. On top of that, a GATED MULTI-SHIFT re-solve handles tile-seam /
-    wrong-winding artifacts on fragmented (decorrelation-split) scenes: a correct
-    unwrap never tears coherent terrain, so if the result has a high rate of
-    branch cuts through high-coherence pixels, the frame is re-unwrapped on tile
-    grids shifted by fractions of the tile step (a seam in one grid is interior in
-    another) and the result with the FEWEST coherent cuts is returned. A final
-    seam-repair pass re-unwraps a seam-free window around any residual
-    high-coherence cut block (e.g. a coherent corner of a water-dominated tile)
-    and snaps it, gated on a strict coherent-cut reduction. No-op (1× cost) on
-    clean scenes; ~4× on the rare frame that needs it. Fixes the fragmented
-    NISAR-GUNW frame A_016 (55→97%) without changing any clean frame.
-
-    ``multilook=L`` (L>1) coherently down-looks ×L first (noisy /
-    moderate-coherence scenes, e.g. Sentinel-1) then tiles+anchors the coarse.
+    Components: grown GLOBALLY from the Carballo cost grid, independent of the
+    (tiled) phase solve — a pixel edge is a cut when an underlying arc is
+    mask-forbidden or its raw cost is ≤ ``cost_threshold``. uint32, 0 =
+    background (cut/masked/below ``min_size_px``), renumbered 1..=K by size,
+    capped at ``max_ncomps``. ``min_size_px`` (default 100, ≈0.8 km at 80 m) is
+    the absolute, scene-size-invariant speckle floor.
     """
+
+def unwrap_reuse(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float = ...,
+    mask: NDArray[np.bool_] | None = ...,
+) -> NDArray[np.float32]:
+    """Prototype: PHASS-style flow-reuse solver (the whole-image base solver).
+
+    Same Carballo coherence cost as :func:`whirlwind.unwrap`, but arcs carry
+    multiple units of flow at zero marginal cost after the first push.
+    """
+
+def unwrap_convex(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float = ...,
+    mask: NDArray[np.bool_] | None = ...,
+) -> NDArray[np.float32]:
+    """Prototype: SNAPHU-style convex (quadratic) per-arc cost. Sound but not a
+    general win (see ``paper/convex_cost_design.md``); research use only."""
+
+def unwrap_grounded(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float = ...,
+    mask: NDArray[np.bool_] | None = ...,
+    ground_cost: int = ...,
+) -> NDArray[np.float32]:
+    """Specialized — NOT a general substitute for :func:`whirlwind.unwrap`.
+
+    Coherence-cost unwrap with a virtual ground node; fixes boundary-stacking
+    on clean smooth ramps but corrupts noisy real data. See
+    ``paper/phass_experiments.md``."""
+
+def unwrap_pyramid(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float = ...,
+    mask: NDArray[np.bool_] | None = ...,
+    base_factor: int = ...,
+    solver: str = ...,
+    tile_size: int = ...,
+) -> NDArray[np.float32]:
+    """Pyramidal (coarse-to-fine) unwrap — a non-aliasing alternative to
+    single-shot ``multilook`` for steep dense-fringe scenes. ``base_factor``
+    is the coarsest down-look (power of two); ``solver`` is
+    ``"reuse"|"convex"|"linear"``. See ``paper/pyramid_aliasing.md``."""
 
 def unwrap_crlb(
     igram: NDArray[np.complex64],
@@ -81,33 +126,6 @@ def unwrap_crlb_grounded(
     boundary-only wrap-lines (e.g. smooth ramps; tile-boundary residues).
     ``ground_cost = 0`` makes ground free; positive cost biases MCF toward
     internal pairing for the bulk of residues on noisy data.
-    """
-
-
-def unwrap_with_conncomp(
-    igram: NDArray[np.complex64],
-    corr: NDArray[np.float32],
-    nlooks: float,
-    mask: NDArray[np.bool_] | None = ...,
-    cost_threshold: int = ...,
-    min_size_px: int = ...,
-    min_size_frac: float = ...,
-    max_ncomps: int = ...,
-) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
-    """Carballo unwrap + SNAPHU-style connected components from one MCF solve.
-
-    Returns ``(unwrapped_phase, components)``. ``components`` is uint32 with
-    0 = background (cut off, masked, or smaller than ``min_size_px`` pixels);
-    valid components are renumbered 1..=K by descending size, capped at
-    ``max_ncomps``. A pixel edge is a cut when an underlying MCF arc is
-    mask-forbidden, carries flow (branch cut), or has raw cost
-    ≤ ``cost_threshold``. ``min_size_px`` (default 100, ≈0.8 km at 80 m) is the
-    ABSOLUTE size floor — the binding speckle control, scene-size-invariant;
-    ``min_size_frac`` (default 1e-4) is a vestigial cap that only raises it on
-    huge frames. ``max_ncomps`` (default 1024) is a generous anti-pathology
-    guard — the floor, not the count, is the real control, so small coherent
-    islands survive as their own self-consistent components (re-reference into
-    them as needed) rather than being dropped for being disconnected.
     """
 
 

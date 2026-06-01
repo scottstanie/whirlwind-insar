@@ -75,7 +75,7 @@ nlooks = float(z['meta'][2])
 t0 = time.perf_counter()
 if {lib!r} == 'ww':
     import whirlwind as ww
-    unw = ww.unwrap(igram, corr, nlooks, mask)
+    unw, _cc = ww.unwrap(igram, corr, nlooks, mask)
 elif {lib!r} == 'snaphu':
     import snaphu
     unw, _ = snaphu.unwrap(igram, corr, nlooks=nlooks, cost='smooth', mask=mask)

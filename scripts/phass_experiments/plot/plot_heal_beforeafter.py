@@ -36,9 +36,9 @@ def main() -> None:
     mainland = (scc == 1) & mask
 
     os.environ["WHIRLWIND_NO_HEAL"] = "1"
-    off = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
+    off, _cc = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
     os.environ.pop("WHIRLWIND_NO_HEAL", None)
-    on = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
+    on, _cc = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
 
     def mp(u):
         k = np.round((u - wrapped) / TAU); k[~mask] = np.nan

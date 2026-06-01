@@ -68,7 +68,7 @@ def main():
         sub_coh = np.ascontiguousarray(coh[sl])
         sub_mask = np.ascontiguousarray(mask_full[sl])
         # standalone whole-tile unwrap == unwrap_one_tile_coh
-        u = ww.unwrap(sub_ig, sub_coh, nlooks=NLOOKS, mask=sub_mask)
+        u, _cc = ww.unwrap(sub_ig, sub_coh, nlooks=NLOOKS, mask=sub_mask)
         kt = np.round((u - np.angle(sub_ig)) / TAU)
         kt[~sub_mask] = np.nan
         skt = sk[sl]

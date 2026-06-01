@@ -91,7 +91,8 @@ import whirlwind as ww
 
 
 def unwrap_continuous(igram: np.ndarray, coh: np.ndarray, nlooks: float) -> np.ndarray:
-    return ww.unwrap(igram.astype(np.complex64), coh.astype(np.float32), float(nlooks))
+    unw, _cc = ww.unwrap(igram.astype(np.complex64), coh.astype(np.float32), float(nlooks))
+    return unw
 
 
 def unwrap_binary(
@@ -103,7 +104,8 @@ def unwrap_binary(
 ) -> np.ndarray:
     mask = (coh > threshold).astype(bool)
     coh_uniform = np.where(mask, gamma_uniform, 0.0).astype(np.float32)
-    return ww.unwrap(igram.astype(np.complex64), coh_uniform, float(nlooks), mask)
+    unw, _cc = ww.unwrap(igram.astype(np.complex64), coh_uniform, float(nlooks), mask)
+    return unw
 
 
 # ---------------------------------------------------------------------------

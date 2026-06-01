@@ -81,8 +81,10 @@ enum Cmd {
         /// integer-cycle agreement on the cc=1 mainland; α=0.7 gives
         /// 99.90 % — essentially pixel-perfect agreement — while still
         /// running 27× faster than SNAPHU. α=0.75 is marginally worse
-        /// (99.87 %), so 0.7 is the sweet spot for typical InSAR scenes.
-        #[arg(long, default_value_t = 0.7)]
+        /// (99.87 %), so 0.7 is a good "on" value for typical InSAR scenes.
+        /// Default is 0 (off) while the Goldstein-on-vs-off trade-off is
+        /// under evaluation; pass `--goldstein-alpha 0.7` to enable.
+        #[arg(long, default_value_t = 0.0)]
         goldstein_alpha: f32,
         /// Goldstein FFT patch size (even, ≥ 4). Larger = stronger spatial
         /// smoothing in the filter.
@@ -260,20 +262,28 @@ fn cmd_unwrap(
             // keep the conncomp routine from over-fragmenting.
             max_ncomps: 1024,
         };
-        let (u, c) = whirlwind_core::unwrap_with_components(
+        // Robust tiled phase + global (solve-free) conncomp; tile_size=0
+        // auto-tiles frames > 512 px, multilook=1.
+        let (u, c) = whirlwind_core::unwrap_coherence_with_components(
             igram_for_unwrap.view(),
             co.view(),
             nlooks,
             mk.as_ref().map(|m| m.view()),
+            0,
+            0,
+            1,
             params,
         )?;
         (u, Some(c))
     } else {
-        let u = whirlwind_core::unwrap(
+        let u = whirlwind_core::unwrap_coherence(
             igram_for_unwrap.view(),
             co.view(),
             nlooks,
             mk.as_ref().map(|m| m.view()),
+            0,
+            0,
+            1,
         )?;
         (u, None)
     };

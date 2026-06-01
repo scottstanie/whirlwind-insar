@@ -75,7 +75,7 @@ def main() -> None:
 
     # whirlwind whole-image
     t0 = time.perf_counter()
-    uw = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask)
+    uw, _cc = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask)
     dt = time.perf_counter() - t0
     kw = np.round((uw - wrapped) / TAU); kw[~mask] = np.nan
     results["ww whole"] = (dt, match(kw, kref, mainland), kw)
@@ -83,7 +83,7 @@ def main() -> None:
 
     # whirlwind tiled+anchor+cascade
     t0 = time.perf_counter()
-    ut = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask, tile_size=256, tile_overlap=32)
+    ut, _cc = ww.unwrap(ifg, cor, nlooks=50.0, mask=mask, tile_size=256, tile_overlap=32)
     dt = time.perf_counter() - t0
     kt = np.round((ut - wrapped) / TAU); kt[~mask] = np.nan
     results["ww tiled256"] = (dt, match(kt, kref, mainland), kt)

@@ -131,6 +131,106 @@ pub fn unwrap_with_components(
     Ok((unw, comps))
 }
 
+/// Robust coherence-cost phase unwrap with auto-tiling.
+///
+/// `tile_size == 0` (and `multilook <= 1`) auto-tiles frames larger than
+/// 512 px at 512 / overlap-64 — the empirically best universal size (a
+/// whole-image solve runs away to ~80% on NISAR; bigger tiles regress clean
+/// scenes). Otherwise the explicit tile params are honored. Tiled frames go
+/// through [`tile::unwrap_tiled_robust`] (gated multi-shift + global anchor +
+/// multi-scale cascade + seam-repair); frames that fit one tile use the
+/// corner-safe reuse solver. This is the phase engine behind the public
+/// `unwrap`.
+pub fn unwrap_coherence(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    tile_overlap: usize,
+    multilook: usize,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    let (ts, to) = if tile_size == 0 && multilook <= 1 {
+        if m > 512 || n > 512 {
+            (512, 64)
+        } else {
+            (0, 0)
+        }
+    } else {
+        (tile_size, tile_overlap)
+    };
+    let use_tiling = multilook > 1 || (ts >= 4 && to >= 2 && to < ts);
+    if use_tiling {
+        tile::unwrap_tiled_robust(igram, corr, nlooks, mask, ts, to, multilook)
+    } else {
+        unwrap_reuse(igram, corr, nlooks, mask)
+    }
+}
+
+/// SNAPHU-style connected components grown from the global Carballo cost grid
+/// **without running the MCF solve**.
+///
+/// Component labels depend only on (a) mask-forbidden arcs and (b) raw arc
+/// costs — both fixed at [`network::Network`] construction (see
+/// [`conncomp::grow_components`] / `edge_is_cut`: "MCF flow placement is
+/// deliberately not a cut signal"). They are therefore independent of how — or
+/// whether — the phase was solved, so this composes with the tiled/robust phase
+/// path. Peak memory is one global cost grid (`O(pixels)`); there is no
+/// per-source Dijkstra / solve state.
+pub fn components_only(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    params: ConnCompParams,
+) -> Result<Array2<u32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
+    Ok(conncomp::grow_components(&graph, &net, mask, &params))
+}
+
+/// Robust coherence-cost unwrap returning `(phase, conn_components)` — the
+/// engine behind the public `unwrap`.
+///
+/// Phase comes from the robust tiled pipeline ([`unwrap_coherence`]); components
+/// are grown globally and solve-free ([`components_only`]). This replaces the
+/// old whole-image [`unwrap_with_components`] on the public path: the conncomp
+/// path now inherits the same tiling/robustness as phase, and skips the global
+/// solve entirely (strictly less memory than the old path).
+pub fn unwrap_coherence_with_components(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    tile_overlap: usize,
+    multilook: usize,
+    params: ConnCompParams,
+) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
+    let phase = unwrap_coherence(
+        igram,
+        corr,
+        nlooks,
+        mask,
+        tile_size,
+        tile_overlap,
+        multilook,
+    )?;
+    let comps = components_only(igram, corr, nlooks, mask, params)?;
+    Ok((phase, comps))
+}
+
 /// **Specialized — not a general substitute for [`unwrap`].**
 ///
 /// [`unwrap`] with a virtual ground node, the coherence-cost twin of

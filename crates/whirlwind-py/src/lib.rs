@@ -11,88 +11,6 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-/// Unwrap an interferogram with the Carballo/SNAPHU-style coherence cost.
-///
-/// Suitable for boxcar-multilooked IGs where ``corr`` is the sample
-/// coherence γ̂. For phase-linked IGs (Dolphin/EVD/EMI), use
-/// :func:`unwrap_crlb` instead — the CRLB variance is the proper per-pixel
-/// noise weight there.
-///
-/// * ``igram`` — complex64, shape ``(m, n)``.
-/// * ``corr`` — float32 sample coherence in ``[0, 1]``, shape ``(m, n)``.
-/// * ``nlooks`` — effective number of looks (≥ 1) used to estimate ``corr``.
-/// * ``mask`` — optional bool, shape ``(m, n)``. ``False`` pixels are
-///   excluded (their incident arcs are forbidden).
-///
-/// Returns the unwrapped phase as float32 ``(m, n)``.
-///
-/// * ``tile_size`` — if ≥ 4 and < min(m, n), tile the image into
-///   ``tile_size × tile_size`` sub-images with ``tile_overlap`` overlap,
-///   unwrap each in parallel, and stitch with a coherence-weighted
-///   overlap-median 2π reconciliation. Bounds per-IG MCF memory to
-///   tile-size scale and keeps flow local (prevents whole-frame runaway).
-#[pyfunction]
-#[pyo3(signature = (igram, corr, nlooks, mask = None, tile_size = 0, tile_overlap = 0, multilook = 1))]
-fn unwrap<'py>(
-    py: Python<'py>,
-    igram: PyReadonlyArray2<'py, Complex32>,
-    corr: PyReadonlyArray2<'py, f32>,
-    nlooks: f32,
-    mask: Option<PyReadonlyArray2<'py, bool>>,
-    tile_size: usize,
-    tile_overlap: usize,
-    multilook: usize,
-) -> PyResult<Bound<'py, PyArray2<f32>>> {
-    let ig = igram.as_array();
-    let co = corr.as_array();
-    let m = mask.as_ref().map(|m| m.as_array());
-    // AUTO-TILING DEFAULT (tile_size == 0, no multilook): tile large frames at
-    // 512 (the empirically best universal size; whole-image runs away to ~80% on
-    // NISAR and bigger tiles regress clean scenes under both costs, e.g. D_074
-    // 98→81% at tile1024). Seam / wrong-winding artifacts on fragmented scenes are
-    // handled NOT by a tile-size knob but by the gated multi-shift re-solve in
-    // `unwrap_tiled_robust` (re-runs on shifted grids and keeps the result with
-    // the fewest high-coherence branch cuts; no-op on clean scenes). This fixes
-    // GUNW A_016 (55→97%) without touching the rest.
-    let (tile_size, tile_overlap) = if tile_size == 0 && multilook <= 1 {
-        let (mm, nn) = ig.dim();
-        if mm > 512 || nn > 512 {
-            (512, 64)
-        } else {
-            (0, 0)
-        }
-    } else {
-        (tile_size, tile_overlap)
-    };
-    // `multilook > 1` routes through the tiled path's multilook-first branch
-    // (coherent down-look → tiled+anchor+cascade on the coarse → upsample) for
-    // noisy / moderate-coherence scenes, even when no tile_size is given.
-    let use_tiling =
-        multilook > 1 || (tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size);
-
-    let unw = py.detach(|| {
-        if use_tiling {
-            whirlwind_core::tile::unwrap_tiled_robust(
-                ig,
-                co,
-                nlooks,
-                m,
-                tile_size,
-                tile_overlap,
-                multilook,
-            )
-        } else {
-            // Whole-image path (frame fits one 512 tile): use the corner-safe
-            // reuse solver, not the linear cost. The linear coherence cost has a
-            // capacity-1 boundary-stacking bug on smooth STEEP signals (fails a
-            // clean 6π ramp by ~12 rad; reuse = exact) — see TileSolver / #28.
-            whirlwind_core::unwrap_reuse(ig, co, nlooks, m)
-        }
-    });
-    let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
-    Ok(unw.into_pyarray(py))
-}
-
 /// Compute the integer residue grid from a wrapped-phase array.
 ///
 /// For an ``(m, n)`` wrapped-phase image, returns an
@@ -590,44 +508,42 @@ fn closure_refine_mcf<'py>(
     Ok(dict)
 }
 
-/// Carballo-cost unwrap returning ``(unwrapped_phase, conn_components)``.
+/// Engine behind the public Python ``unwrap``: robust tiled coherence-cost
+/// unwrap returning ``(unwrapped_phase, conn_components)``.
 ///
-/// SNAPHU-style components grown from the same MCF solve. A pixel edge is
-/// treated as a *cut* when (a) one of its underlying arcs is forbidden by
-/// the input mask, or (b) the minimum raw forward cost across the two
-/// underlying arcs is ≤ ``cost_threshold``. BFS through non-cut edges
-/// labels components; components covering less than ``min_size_frac`` of
-/// valid pixels are dropped, and the largest ``max_ncomps`` (by size) are
-/// kept and renumbered ``1..=N``. Background / dropped pixels are ``0``.
+/// Phase uses the robust tiled pipeline (auto-tile + gated multi-shift + global
+/// anchor + multi-scale cascade + seam-repair). Components are grown globally
+/// from the Carballo cost grid: a pixel edge is a *cut* when one underlying arc
+/// is mask-forbidden, or the min raw forward cost across the two underlying arcs
+/// is ≤ ``cost_threshold``; BFS through non-cut edges labels components, those
+/// below ``min_size_px`` are dropped, and the largest ``max_ncomps`` (by size)
+/// are kept and renumbered ``1..=N``. Component labels are solve-independent, so
+/// they compose with the tiled phase. Goldstein pre-filtering + the K-transfer
+/// back onto the original phase live in the Python ``unwrap`` wrapper.
 ///
-/// Defaults are SNAPHU-equivalent. ``cost_threshold = 50`` (in integer
-/// Carballo units with ``COST_SCALE = 100``) corresponds roughly to
-/// γ̂ ≈ 0.3 at average local phase smoothness — i.e. "cut clearly
-/// decorrelated noise, keep everything else." Set higher (≈100 ≈ γ̂ ≈ 0.6)
-/// for an aggressive spurt-style mask; set to 0 for connectivity from the
-/// input mask alone (no cost-based cutting).
-///
-/// * ``igram`` — complex64, shape ``(m, n)``.
-/// * ``corr`` — float32 sample coherence in ``[0, 1]``, shape ``(m, n)``.
-/// * ``nlooks`` — effective number of looks (≥ 1).
-/// * ``mask`` — optional bool, shape ``(m, n)``.
-/// * ``cost_threshold`` — see above.
-/// * ``min_size_frac`` — drop components below this fraction of valid pixels.
-/// * ``max_ncomps`` — keep at most this many components.
+/// * ``tile_size`` — 0 (default) auto-tiles frames > 512 px at 512/overlap-64;
+///   ``≥ 4`` forces that tile size; otherwise the whole frame is one tile.
+/// * ``multilook`` — > 1 routes through the coherent-downlook-first path.
+/// * ``cost_threshold`` — Carballo units (``COST_SCALE = 100``); ≈ γ̂ 0.3 at 50.
+/// * ``min_size_px`` — absolute component floor in pixels.
+/// * ``max_ncomps`` — keep at most this many components (largest by size).
 #[pyfunction]
-#[pyo3(signature = (
+#[pyo3(name = "_unwrap_native", signature = (
     igram, corr, nlooks, mask = None,
-    cost_threshold = 50, min_size_px = 100, min_size_frac = 0.0001, max_ncomps = 1024,
+    tile_size = 0, tile_overlap = 0, multilook = 1,
+    cost_threshold = 50, min_size_px = 100, max_ncomps = 1024,
 ))]
-fn unwrap_with_conncomp<'py>(
+fn unwrap_native<'py>(
     py: Python<'py>,
     igram: PyReadonlyArray2<'py, Complex32>,
     corr: PyReadonlyArray2<'py, f32>,
     nlooks: f32,
     mask: Option<PyReadonlyArray2<'py, bool>>,
+    tile_size: usize,
+    tile_overlap: usize,
+    multilook: usize,
     cost_threshold: i32,
     min_size_px: usize,
-    min_size_frac: f32,
     max_ncomps: u32,
 ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
     let ig = igram.as_array();
@@ -636,10 +552,22 @@ fn unwrap_with_conncomp<'py>(
     let params = whirlwind_core::ConnCompParams {
         cost_threshold,
         min_size_px,
-        min_size_frac,
+        // Vestigial fractional cap; the absolute px floor is the real control.
+        min_size_frac: 0.0001,
         max_ncomps,
     };
-    let out = py.detach(|| whirlwind_core::unwrap_with_components(ig, co, nlooks, m, params));
+    let out = py.detach(|| {
+        whirlwind_core::unwrap_coherence_with_components(
+            ig,
+            co,
+            nlooks,
+            m,
+            tile_size,
+            tile_overlap,
+            multilook,
+            params,
+        )
+    });
     let (unw, comps) = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
 }
@@ -811,14 +739,13 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     maybe_init_thread_pool_from_env();
     m.add_function(wrap_pyfunction!(set_num_threads, m)?)?;
     m.add_function(wrap_pyfunction!(num_threads, m)?)?;
-    m.add_function(wrap_pyfunction!(unwrap, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_grounded, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_grounded, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_convex, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_reuse, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_pyramid, m)?)?;
-    m.add_function(wrap_pyfunction!(unwrap_with_conncomp, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_native, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_with_conncomp, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;

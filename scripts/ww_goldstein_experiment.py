@@ -89,8 +89,9 @@ def main():
     ig_filt[~mask] = 0
 
     t0 = time.perf_counter()
-    unw, cc = ww.unwrap_with_conncomp(
-        ig_filt, coh, float(args.nlooks), mask=mask, cost_threshold=args.threshold
+    unw, cc = ww.unwrap(
+        ig_filt, coh, float(args.nlooks), mask=mask, cost_threshold=args.threshold,
+        goldstein_alpha=0.7,
     )
     elapsed = time.perf_counter() - t0
     peak = peak_rss_gb()

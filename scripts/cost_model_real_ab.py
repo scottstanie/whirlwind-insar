@@ -88,7 +88,7 @@ def main():
 
     ww.set_num_threads(1)
     solvers = [
-        ("linear", lambda: ww.unwrap(ig, coh, nlooks=args.nlooks, mask=mask)),
+        ("linear", lambda: ww.unwrap(ig, coh, nlooks=args.nlooks, mask=mask)[0]),
         ("reuse", lambda: ww.unwrap_reuse(ig, coh, nlooks=args.nlooks, mask=mask)),
         ("convex", lambda: ww.unwrap_convex(ig, coh, nlooks=args.nlooks, mask=mask)),
     ]

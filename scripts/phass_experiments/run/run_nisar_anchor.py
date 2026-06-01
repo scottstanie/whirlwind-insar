@@ -73,7 +73,7 @@ def main() -> None:
         else:
             os.environ.pop("WHIRLWIND_NO_ANCHOR", None)
         t0 = time.perf_counter()
-        unw = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
+        unw, _cc = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
         dt = time.perf_counter() - t0
         kw = np.round((unw - wrapped) / TAU)
         kw[~mask] = np.nan

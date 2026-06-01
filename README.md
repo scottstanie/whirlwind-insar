@@ -6,17 +6,22 @@ bindings.
 
 Two entry points, sharing the same minimum-cost-flow core:
 
-- **`whirlwind.unwrap(igram, corr, nlooks, mask=None, tile_size=512, tile_overlap=64, multilook=1)`**
-  — classical 2D unwrap with the Carballo/SNAPHU-style coherence cost. The
-  real-world default is the **tiled** path (per-tile MCF + global coarse
-  anchor + multi-scale cascade): it reaches SNAPHU quality with no Goldstein
-  workaround, stays memory-bounded, and avoids the whole-image runaway. On a
-  NISAR frame it matches SNAPHU 9×9 at **99.79% K-match** (cc=1 mainland,
-  0% multi-cycle) in **3.9 s** vs SNAPHU's 17 min. For noisy / moderate-
-  coherence scenes (e.g. Sentinel-1) pass **`multilook=8`**: a coherent
-  down-look first suppresses the noise the linear cost can't route through —
-  Atlanta S-1 then unwraps at 97.7% (matching SNAPHU's 97.9%) where the
-  fine solve alone gets 26%. (committed e24e0ed / 8aa7a1d)
+- **`whirlwind.unwrap(igram, corr, nlooks, mask=None, *, multilook=1, tile_size=0, tile_overlap=0, goldstein_alpha=0.0) -> (unwrapped, conncomp)`**
+  — classical 2D unwrap with the Carballo/SNAPHU-style coherence cost,
+  returning the unwrapped phase **and** SNAPHU-style connected-component
+  labels from a single solve. The real-world default is the **robust tiled**
+  path (per-tile MCF + global coarse anchor + multi-scale cascade + a gated
+  multi-shift re-solve and seam-repair for fragmented scenes): it reaches
+  SNAPHU quality, stays memory-bounded, and avoids the whole-image runaway.
+  `tile_size=0` (default) auto-tiles frames larger than 512 px; components are
+  grown globally and are independent of the (tiled) phase solve. On a NISAR
+  frame it matches SNAPHU 9×9 at **99.79% K-match** (cc=1 mainland, 0%
+  multi-cycle) in ~4 s vs SNAPHU's 17 min. For noisy / moderate-coherence
+  scenes (e.g. Sentinel-1) pass **`multilook=8`**: a coherent down-look first
+  suppresses the noise the linear cost can't route through — Atlanta S-1 then
+  unwraps at 97.7% (matching SNAPHU's 97.9%) where the fine solve alone gets
+  26%. Goldstein pre-filtering is available via `goldstein_alpha>0` (off by
+  default; the on-vs-off trade-off is under evaluation).
 - **`whirlwind.unwrap_crlb(igram, variance, mask=None, tile_size=…)`** —
   CRLB-weighted unwrap for phase-linked interferograms (Dolphin / EVD /
   EMI). The per-pixel CRLB phase variance the phase-linker emits is a
@@ -120,13 +125,17 @@ cargo run --release -p whirlwind-cli -- unwrap \
 import whirlwind as ww
 
 # igram: complex64 (m, n); corr: float32 (m, n) in [0, 1]; mask optional bool.
-# Tiled is the production default: per-tile MCF + global coarse anchor +
-# multi-scale cascade. Reaches SNAPHU quality, no Goldstein, memory-bounded.
-unw = ww.unwrap(igram, corr, nlooks=10.0, mask=mask,
-                tile_size=512, tile_overlap=64)         # → float32 (m, n)
+# Returns (unwrapped_phase, conncomp). The robust tiled path is the default
+# (per-tile MCF + global anchor + multi-scale cascade + gated multi-shift /
+# seam-repair); tile_size=0 auto-tiles frames > 512 px. Components are grown
+# globally from the same coherence cost. Memory-bounded; no whole-image runaway.
+unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)  # float32, uint32
 
 # Noisy / moderate-coherence scene (e.g. Sentinel-1)? Multilook-first:
-unw = ww.unwrap(igram, corr, nlooks=50.0, mask=mask, multilook=8)
+unw, conncomp = ww.unwrap(igram, corr, nlooks=50.0, mask=mask, multilook=8)
+
+# Goldstein pre-filtering is opt-in (off by default; under evaluation):
+unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask, goldstein_alpha=0.7)
 ```
 
 ### Single interferogram, CRLB cost (phase-linked SLCs)

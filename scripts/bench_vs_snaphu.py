@@ -41,7 +41,8 @@ def _bench(name: str, fn, igram, corr, nlooks, mask: Optional[np.ndarray] = None
 
 
 def _ww_unwrap(igram, corr, nlooks, mask):
-    return ww.unwrap(igram, corr, float(nlooks), mask)
+    unw, _cc = ww.unwrap(igram, corr, float(nlooks), mask)
+    return unw
 
 
 def _snaphu_unwrap(igram, corr, nlooks, mask):

@@ -43,7 +43,7 @@ def _timed(fn, *a):
 
 
 SOLVERS = [
-    ("linear", lambda ig, co: ww.unwrap(ig, co, nlooks=8.0)),
+    ("linear", lambda ig, co: ww.unwrap(ig, co, nlooks=8.0)[0]),
     ("reuse", lambda ig, co: ww.unwrap_reuse(ig, co, nlooks=8.0)),
     ("convex", lambda ig, co: ww.unwrap_convex(ig, co, nlooks=8.0)),
 ]

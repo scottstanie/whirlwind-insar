@@ -50,7 +50,7 @@ def main() -> None:
     mainland = (scc == 1) & mask
 
     t0 = time.perf_counter()
-    unw = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
+    unw, _cc = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
     dt = time.perf_counter() - t0
     kw = np.round((unw - wrapped) / TAU); kw[~mask] = np.nan
     m0, m2 = match(kw, sk, mainland)
@@ -82,7 +82,7 @@ def main() -> None:
     amain = amask & (acc == int(labels[np.argmax(counts)]))
 
     t0 = time.perf_counter()
-    aunw = ww.unwrap(aig, acohw, nlooks=50.0, mask=amask, multilook=8)
+    aunw, _acc = ww.unwrap(aig, acohw, nlooks=50.0, mask=amask, multilook=8)
     adt = time.perf_counter() - t0
     akw = np.round((aunw - awr)/TAU); akw[~amask] = np.nan
     am0, am2 = match(akw, akref, amain)
