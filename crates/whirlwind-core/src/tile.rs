@@ -425,6 +425,144 @@ pub fn unwrap_tiled(
     Ok(out)
 }
 
+/// Coherence above which a branch cut counts as "through coherent terrain".
+const COH_CUT_THR: f32 = 0.7;
+/// Coherent-cut rate (coherence-weighted cuts per valid pixel) above which the
+/// gated multi-shift re-solve fires. Empirically the fragmented GUNW A_016 sits
+/// at ≈6.7e-3 while every clean / noisy-but-fine scene (NISAR, Atlanta, the four
+/// clean GUNW frames) is ≤5.6e-4 — a >3× margin on each side.
+const COH_CUT_FLOOR: f64 = 1.5e-3;
+
+#[inline]
+fn wrap_to_pi(d: f32) -> f32 {
+    d - TAU * (d / TAU).round()
+}
+
+/// Rate of branch cuts that pass through HIGH-coherence pixels, per valid pixel.
+///
+/// A correct unwrap never tears coherent terrain, so a significant rate is the
+/// signature of a tile-seam artifact or a wrong global winding. For each 4-neighbour
+/// arc with min endpoint coherence > `coh_thr`, the integer flow is
+/// `round((Δunw − wrap(Δφ)) / 2π)`; we sum `|flow|·coherence` over those arcs and
+/// divide by the valid-pixel count. `φ = arg(igram)`.
+fn coherent_cut_rate(
+    igram: ArrayView2<Complex32>,
+    unw: &Array2<f32>,
+    corr: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    coh_thr: f32,
+) -> f64 {
+    let (m, n) = unw.dim();
+    let valid = |i: usize, j: usize| {
+        mask.map(|mk| mk[(i, j)]).unwrap_or(true) && unw[(i, j)].is_finite()
+    };
+    let mut sum = 0.0_f64;
+    let mut nvalid = 0_usize;
+    for i in 0..m {
+        for j in 0..n {
+            if !valid(i, j) {
+                continue;
+            }
+            nvalid += 1;
+            if j + 1 < n && valid(i, j + 1) {
+                let c = corr[(i, j)].min(corr[(i, j + 1)]);
+                if c > coh_thr {
+                    let dphi = wrap_to_pi(igram[(i, j + 1)].arg() - igram[(i, j)].arg());
+                    let flow = ((unw[(i, j + 1)] - unw[(i, j)] - dphi) / TAU).round().abs();
+                    if flow > 0.0 {
+                        sum += (flow * c) as f64;
+                    }
+                }
+            }
+            if i + 1 < m && valid(i + 1, j) {
+                let c = corr[(i, j)].min(corr[(i + 1, j)]);
+                if c > coh_thr {
+                    let dphi = wrap_to_pi(igram[(i + 1, j)].arg() - igram[(i, j)].arg());
+                    let flow = ((unw[(i + 1, j)] - unw[(i, j)] - dphi) / TAU).round().abs();
+                    if flow > 0.0 {
+                        sum += (flow * c) as f64;
+                    }
+                }
+            }
+        }
+    }
+    if nvalid == 0 {
+        0.0
+    } else {
+        sum / nvalid as f64
+    }
+}
+
+/// Gated multi-shift tiled unwrap — the default for large frames.
+///
+/// Runs the standard tile grid. A correct unwrap never tears coherent terrain, so
+/// if the result has a high `coherent_cut_rate` (> [`COH_CUT_FLOOR`]) — the
+/// signature of a tile-SEAM artifact or a wrong global WINDING on a fragmented
+/// scene (e.g. NISAR GUNW A_016, a decorrelation-split frame) — it re-runs on tile
+/// grids shifted by fractions of the tile step (a seam in one grid is interior in
+/// another) and returns the result with the FEWEST coherent cuts. The shift is
+/// realised by zero-padding the top-left by `s` (those pixels are masked out), so
+/// no change to the tile decomposition is needed.
+///
+/// No-op (1× cost) on clean scenes (rate ≈ 0); ~4× on the rare fragmented frame
+/// that needs it (speed is not the constraint there). Validated: A_016 55% → 97%
+/// with the high-coherence seam-strip artifact removed, and the four clean GUNW
+/// frames + NISAR + Atlanta unchanged (gate does not fire).
+pub fn unwrap_tiled_robust(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    overlap: usize,
+    multilook: usize,
+) -> Result<Array2<f32>, UnwrapError> {
+    let base = unwrap_tiled(igram, corr, nlooks, mask, tile_size, overlap, multilook)?;
+    let (m, n) = igram.dim();
+    // Only the standard tiled path has shiftable seams (multilook coarsens first;
+    // a single-tile solve has no seams).
+    if multilook > 1 || (tile_size >= m && tile_size >= n) {
+        return Ok(base);
+    }
+    let rate0 = coherent_cut_rate(igram, &base, corr, mask, COH_CUT_THR);
+    if rate0 <= COH_CUT_FLOOR {
+        return Ok(base);
+    }
+    let step = tile_size - overlap;
+    let mut best = base;
+    let mut best_rate = rate0;
+    for &s in &[step / 2, step / 4, (3 * step) / 4] {
+        if s == 0 {
+            continue;
+        }
+        let mut pig = Array2::<Complex32>::zeros((m + s, n + s));
+        pig.slice_mut(s![s.., s..]).assign(&igram);
+        let mut pco = Array2::<f32>::zeros((m + s, n + s));
+        pco.slice_mut(s![s.., s..]).assign(&corr);
+        let pmask = mask.map(|mk| {
+            let mut p = Array2::<bool>::from_elem((m + s, n + s), false);
+            p.slice_mut(s![s.., s..]).assign(&mk);
+            p
+        });
+        let cand_padded = unwrap_tiled(
+            pig.view(),
+            pco.view(),
+            nlooks,
+            pmask.as_ref().map(|a| a.view()),
+            tile_size,
+            overlap,
+            1,
+        )?;
+        let cand = cand_padded.slice(s![s.., s..]).to_owned();
+        let r = coherent_cut_rate(igram, &cand, corr, mask, COH_CUT_THR);
+        if r < best_rate {
+            best_rate = r;
+            best = cand;
+        }
+    }
+    Ok(best)
+}
+
 /// A tiny successive-shortest-path min-cost-flow. Uses SPFA (Bellman-Ford
 /// queue) for the shortest-path step so it tolerates the negative residual-arc
 /// costs without maintaining potentials — fine because the tile graph is
@@ -1586,5 +1724,51 @@ mod tests {
             max_err < 1e-3,
             "tiled and non-tiled should agree on smooth input, max diff {max_err}"
         );
+    }
+
+    #[test]
+    fn coherent_cut_rate_zero_on_clean_high_when_tearing_coherent_terrain() {
+        use ndarray::Array2;
+        // A clean smooth ramp unwrapped correctly has NO coherent cuts.
+        let (m, n) = (64, 64);
+        let truth: Array2<f32> =
+            Array2::from_shape_fn((m, n), |(i, j)| 0.05 * i as f32 + 0.03 * j as f32);
+        let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let corr = Array2::<f32>::from_elem((m, n), 0.95);
+        let clean = coherent_cut_rate(igram.view(), &truth, corr.view(), None, COH_CUT_THR);
+        assert!(clean < 1e-9, "clean ramp must have ~0 coherent-cut rate, got {clean}");
+
+        // Inject a spurious +1 cycle "island" across coherent terrain (a branch-cut
+        // loop) — the coherent-cut rate must jump well above the gate floor.
+        let mut torn = truth.clone();
+        for i in 20..40 {
+            for j in 20..40 {
+                torn[(i, j)] += TAU;
+            }
+        }
+        let torn_rate = coherent_cut_rate(igram.view(), &torn, corr.view(), None, COH_CUT_THR);
+        assert!(
+            torn_rate > COH_CUT_FLOOR,
+            "tearing coherent terrain must exceed the gate floor, got {torn_rate}"
+        );
+    }
+
+    #[test]
+    fn unwrap_tiled_robust_is_noop_on_clean_scene() {
+        use ndarray::Array2;
+        // On a clean tiled scene the gate must NOT fire: robust == plain tiled.
+        let (m, n) = (96, 96);
+        let truth: Array2<f32> =
+            Array2::from_shape_fn((m, n), |(i, j)| 0.04 * i as f32 + 0.03 * j as f32);
+        let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let corr = Array2::<f32>::from_elem((m, n), 0.9);
+        let plain = unwrap_tiled(igram.view(), corr.view(), 10.0, None, 32, 8, 1).unwrap();
+        let robust = unwrap_tiled_robust(igram.view(), corr.view(), 10.0, None, 32, 8, 1).unwrap();
+        let max_diff = plain
+            .iter()
+            .zip(robust.iter())
+            .map(|(&a, &b)| (a - b).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(max_diff < 1e-6, "robust must equal plain tiled on a clean scene (no gate), diff {max_diff}");
     }
 }

@@ -178,11 +178,12 @@ def do_nisar():
     scc = np.load(OUT / "nisar_anchor_scc.npy").astype(np.int32)
     mask = np.load(OUT / "nisar_anchor_mask.npy")
     wrapped = np.load(OUT / "nisar_anchor_wrapped.npy")
-    # Current default path: tiled512+anchor+cascade + bounded sliver cleanup.
-    wwu = np.load(OUT / "nisar_tileconvex_linear_unw.npy")
+    # Current default path: reuse solver + tiled512+anchor+cascade + gated
+    # multi-shift re-solve + bounded sliver cleanup (gate no-fire on this scene).
+    wwu = np.load(OUT / "nisar_default_unw.npy")
     sunw = sk * TAU + wrapped
     plot_scene("nisar", sunw, scc, wwu, wrapped, mask, sk,
-               "NISAR no-Goldstein: whirlwind tiled+anchor+cascade+cleanup (6s) vs SNAPHU 9x9 (17 min)",
+               "NISAR no-Goldstein: whirlwind reuse+tiled+anchor+cascade (~30s) vs SNAPHU 9x9 (17 min)",
                stride=4)
 
 
