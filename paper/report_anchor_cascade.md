@@ -56,12 +56,12 @@ python -m maturin build --release
 pip install --force-reinstall --no-deps target/wheels/whirlwind_insar-0.1.0-cp311-abi3-macosx_11_0_arm64.whl
 
 # NISAR before/after + metrics + arrays
-python scripts/phass_experiments/run_nisar_anchor.py        # anchor vs no-anchor
-python scripts/phass_experiments/run_nisar_cascade.py       # + cascade
-python scripts/phass_experiments/make_report_figures.py nisar
+python scripts/phass_experiments/run/run_nisar_anchor.py        # anchor vs no-anchor
+python scripts/phass_experiments/run/run_nisar_cascade.py       # + cascade
+python scripts/phass_experiments/report/make_report_figures.py nisar
 
 # Atlanta
-python scripts/phass_experiments/run_atlanta_ml8.py         # multilook-8 whole vs tiled
-python scripts/phass_experiments/run_atlanta_sub5.py        # 5x: snaphu vs ww whole/tiled
-python scripts/phass_experiments/make_atlanta_report.py
+python scripts/phass_experiments/run/run_atlanta_ml8.py         # multilook-8 whole vs tiled
+python scripts/phass_experiments/run/run_atlanta_sub5.py        # 5x: snaphu vs ww whole/tiled
+python scripts/phass_experiments/report/make_atlanta_report.py
 ```
