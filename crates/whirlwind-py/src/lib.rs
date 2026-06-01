@@ -75,20 +75,24 @@ fn simulate_ifg<'py>(
 /// CRLB-weighted unwrap returning ``(unwrapped_phase, conn_components)`` — the
 /// phase-linked (Dolphin/EVD/EMI) twin of :func:`unwrap`.
 ///
-/// Phase uses the robust tiled CRLB pipeline (auto-tile frames > 512 px + a
-/// gated multi-shift winding fix; the gate uses a pseudo-coherence derived from
-/// the variance). Components are grown globally from the CRLB cost grid,
-/// independent of the solve. NOTE: the global anchor + multi-scale cascade of
-/// the coherence path are not yet ported to the CRLB tiler (issue #35).
+/// Phase uses the robust tiled CRLB pipeline: per-tile CRLB solve + global
+/// coarse anchor + multi-scale cascade + gated multi-shift winding fix (the
+/// same machinery as :func:`unwrap`, #35). Components are grown globally from
+/// the CRLB cost grid, independent of the solve.
 ///
 /// * ``igram`` — complex64, shape (m, n).
 /// * ``variance`` — float32 σ²_IG = σ²_a + σ²_b in rad², shape (m, n).
 /// * ``mask`` — optional bool, shape (m, n).
+/// * ``coherence`` — optional float32 ``[0, 1]`` confidence map for the
+///   anchor/cascade region-vote + seam stitch (e.g. the dolphin ``.cor``).
+///   Defaults to a variance-derived pseudo-coherence, which is low-dynamic-
+///   range; passing a real coherence raster markedly improves tile-block-offset
+///   pinning (#58). It is NOT used as the cost — the cost stays CRLB variance.
 /// * ``tile_size`` — 0 (default) auto-tiles frames > 512 px; ``≥ 4`` forces it.
 /// * ``cost_threshold`` / ``min_size_px`` / ``max_ncomps`` — conncomp params.
 #[pyfunction]
 #[pyo3(signature = (
-    igram, variance, mask = None, tile_size = 0, tile_overlap = 0,
+    igram, variance, mask = None, coherence = None, tile_size = 0, tile_overlap = 0,
     cost_threshold = 50, min_size_px = 100, max_ncomps = 1024,
 ))]
 fn unwrap_crlb<'py>(
@@ -96,6 +100,7 @@ fn unwrap_crlb<'py>(
     igram: PyReadonlyArray2<'py, Complex32>,
     variance: PyReadonlyArray2<'py, f32>,
     mask: Option<PyReadonlyArray2<'py, bool>>,
+    coherence: Option<PyReadonlyArray2<'py, f32>>,
     tile_size: usize,
     tile_overlap: usize,
     cost_threshold: i32,
@@ -105,6 +110,7 @@ fn unwrap_crlb<'py>(
     let ig = igram.as_array();
     let v = variance.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
+    let c = coherence.as_ref().map(|c| c.as_array());
     let params = whirlwind_core::ConnCompParams {
         cost_threshold,
         min_size_px,
@@ -118,6 +124,7 @@ fn unwrap_crlb<'py>(
             m,
             tile_size,
             tile_overlap,
+            c,
             params,
         )
     });

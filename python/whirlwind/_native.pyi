@@ -89,6 +89,7 @@ def unwrap_crlb(
     igram: NDArray[np.complex64],
     variance: NDArray[np.float32],
     mask: NDArray[np.bool_] | None = ...,
+    coherence: NDArray[np.float32] | None = ...,
     tile_size: int = ...,
     tile_overlap: int = ...,
     cost_threshold: int = ...,

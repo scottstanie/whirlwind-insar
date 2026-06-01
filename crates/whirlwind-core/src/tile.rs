@@ -25,7 +25,6 @@ use crate::residue;
 use ndarray::{Array2, ArrayView2, s};
 use num_complex::Complex32;
 use rayon::prelude::*;
-use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
 /// One tile's bounds in the parent image, in row/col indices.
@@ -112,207 +111,29 @@ impl TileGrid {
     fn index_of(&self, gr: usize, gc: usize) -> usize {
         gr * self.grid_cols + gc
     }
-    fn rc_of(&self, idx: usize) -> (usize, usize) {
-        (idx / self.grid_cols, idx % self.grid_cols)
-    }
-    /// Adjacent tile indices in (right, down) order, or None if at the edge.
-    fn neighbours(&self, idx: usize) -> [Option<usize>; 4] {
-        let (gr, gc) = self.rc_of(idx);
-        let right = if gc + 1 < self.grid_cols {
-            Some(self.index_of(gr, gc + 1))
-        } else {
-            None
-        };
-        let down = if gr + 1 < self.grid_rows {
-            Some(self.index_of(gr + 1, gc))
-        } else {
-            None
-        };
-        let left = if gc > 0 {
-            Some(self.index_of(gr, gc - 1))
-        } else {
-            None
-        };
-        let up = if gr > 0 {
-            Some(self.index_of(gr - 1, gc))
-        } else {
-            None
-        };
-        [right, down, left, up]
-    }
 }
 
-/// Tiled CRLB-weighted 2D unwrap. See module docs.
-pub fn unwrap_crlb_tiled(
+/// Cost-agnostic back-half of the tiled pipeline. Given per-tile unwraps and a
+/// per-pixel CONFIDENCE map `conf` — sample coherence for the Carballo path, a
+/// variance-derived pseudo-coherence for the CRLB path — reconcile per-tile 2π
+/// offsets (global MCF), feather-composite, pin regional cycle levels with a
+/// global coarse anchor + multi-scale cascade, and heal thin slivers. `igram`
+/// is used only to build the coarse anchor. Shared by [`unwrap_tiled`] and
+/// [`unwrap_crlb_tiled`] so both get the same anchor/cascade robustness.
+fn assemble_and_refine(
     igram: ArrayView2<Complex32>,
-    variance: ArrayView2<f32>,
+    conf: ArrayView2<f32>,
     mask: Option<ArrayView2<bool>>,
-    tile_size: usize,
-    overlap: usize,
-) -> Result<Array2<f32>, UnwrapError> {
+    grid: &TileGrid,
+    tile_unws: &[Array2<f32>],
+) -> Array2<f32> {
     let (m, n) = igram.dim();
-    if (m, n) != variance.dim() {
-        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
-    }
-    if m < 2 || n < 2 {
-        return Err(UnwrapError::TooSmall((m, n)));
-    }
-    // If the image fits in one tile, fall back to the single-tile path
-    // (corner-safe reuse, not the plain capacity-1 solver).
-    if tile_size >= m && tile_size >= n {
-        return crate::unwrap_crlb_reuse(igram, variance, mask);
-    }
-    assert!(
-        overlap >= 2,
-        "overlap must be ≥ 2 for median-based stitching"
-    );
-
-    let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
-    let n_tiles = grid.tiles.len();
-
-    // 1) Unwrap each tile in parallel.
-    let tile_unws: Vec<Result<Array2<f32>, UnwrapError>> = grid
-        .tiles
-        .par_iter()
-        .map(|t| unwrap_one_tile(igram, variance, mask, t))
-        .collect();
-    let tile_unws: Vec<Array2<f32>> = tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
-
-    // 2) BFS over tiles, accumulating per-tile integer-2π offsets relative
-    //    to the seed tile (index 0).
-    let mut offsets_2pi: Vec<i64> = vec![0; n_tiles];
-    let mut visited = vec![false; n_tiles];
-    visited[0] = true;
-    let mut q: VecDeque<usize> = VecDeque::new();
-    q.push_back(0);
-    while let Some(idx) = q.pop_front() {
-        for nb in grid.neighbours(idx).into_iter().flatten() {
-            if visited[nb] {
-                continue;
-            }
-            let k = stitching_offset(
-                &grid.tiles[idx],
-                &tile_unws[idx],
-                &grid.tiles[nb],
-                &tile_unws[nb],
-                variance,
-            );
-            // unw[nb] + 2π·offset_nb ≡ unw[idx] + 2π·offset_idx in overlap
-            //   ⇒ offset_nb = offset_idx − k
-            offsets_2pi[nb] = offsets_2pi[idx] - k;
-            visited[nb] = true;
-            q.push_back(nb);
-        }
-    }
-
-    // 3) Composite: write the *core* of each tile (its full extent, minus
-    //    overlap with already-written neighbours) into the output. Each
-    //    pixel ends up coming from exactly one tile — the first one to
-    //    claim it in BFS order. For an inner pixel that's covered by 4
-    //    overlapping tiles, we deterministically pick the top-leftmost.
-    let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
-    for (idx, (tile, unw)) in grid.tiles.iter().zip(tile_unws.iter()).enumerate() {
-        let off = offsets_2pi[idx] as f32 * TAU;
-        for ti in 0..tile.rows() {
-            let gi = tile.r0 + ti;
-            for tj in 0..tile.cols() {
-                let gj = tile.c0 + tj;
-                if out[(gi, gj)].is_nan() {
-                    out[(gi, gj)] = unw[(ti, tj)] + off;
-                }
-            }
-        }
-    }
-
-    Ok(out)
-}
-
-/// Tiled coherence-cost 2D unwrap (Carballo cost), the coherence twin of
-/// [`unwrap_crlb_tiled`]. Split into overlapping tiles, unwrap each tile
-/// independently in parallel, then BFS-stitch by a coherence-weighted
-/// overlap-median 2π reconciliation.
-///
-/// This is the memory- and robustness-motivated path: per-tile MCF keeps
-/// flow local (a misrouted residue can't accumulate cycle errors across the
-/// whole frame the way a single whole-image solve does), and peak memory is
-/// bounded by the tile size rather than the full scene.
-pub fn unwrap_tiled(
-    igram: ArrayView2<Complex32>,
-    corr: ArrayView2<f32>,
-    nlooks: f32,
-    mask: Option<ArrayView2<bool>>,
-    tile_size: usize,
-    overlap: usize,
-    multilook: usize,
-) -> Result<Array2<f32>, UnwrapError> {
-    let (m, n) = igram.dim();
-    if (m, n) != corr.dim() {
-        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
-    }
-    if m < 2 || n < 2 {
-        return Err(UnwrapError::TooSmall((m, n)));
-    }
-    // MULTILOOK-FIRST (for noisy / moderate-coherence scenes, e.g. Sentinel-1).
-    // whirlwind's linear cost mis-routes through noisy phase; coherently
-    // down-looking ×`multilook` suppresses that noise, after which the SAME
-    // tiled+anchor+cascade pipeline reaches SNAPHU quality. We tile the coarse
-    // (a whole-image coarse solve still has residual runaway), then upsample.
-    if multilook > 1 {
-        let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, multilook);
-        let (cm, cn) = cig.dim();
-        // Small coarse tiles bound the runaway (validated: whole-image coarse
-        // ≈83% vs tiled-coarse ≈97.7% on Atlanta). 1 ⇒ no further multilook.
-        let cts = 128.min(cm).min(cn);
-        let cov = (cts / 4).max(2);
-        let coarse = unwrap_tiled(
-            cig.view(),
-            ccorr.view(),
-            nlooks * (multilook * multilook) as f32,
-            Some(cmask.view()),
-            cts,
-            cov,
-            1,
-        )?;
-        return Ok(upsample_blockrep(&coarse, multilook, m, n));
-    }
-    if tile_size >= m && tile_size >= n {
-        return crate::unwrap_reuse(igram, corr, nlooks, mask);
-    }
-    assert!(
-        overlap >= 2,
-        "overlap must be ≥ 2 for median-based stitching"
-    );
-
-    let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
-    let _n_tiles = grid.tiles.len();
-
     let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
     let mut t = std::time::Instant::now();
 
-    // 1) Unwrap each tile in parallel.
-    let tile_unws: Vec<Result<Array2<f32>, UnwrapError>> = grid
-        .tiles
-        .par_iter()
-        .map(|t| unwrap_one_tile_coh(igram, corr, nlooks, mask, t))
-        .collect();
-    let tile_unws: Vec<Array2<f32>> = tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
-    if dbg {
-        eprintln!(
-            "[ww]     tiled: per-tile solve {:.2}s ({} tiles)",
-            t.elapsed().as_secs_f64(),
-            grid.tiles.len()
-        );
-        t = std::time::Instant::now();
-    }
-
-    // 2) Reconcile per-tile integer-2π offsets by a GLOBAL min-cost-flow
-    //    secondary network (SNAPHU's `AssembleTiles` idea at tile scale).
-    //    Measure each adjacent-pair seam gradient, then solve a min-cost
-    //    tension on the tile grid so a coherent low-confidence wrong island
-    //    is flipped when that lowers the total weighted seam cost — which
-    //    per-tile/region heuristics cannot do (they can't break a satisfied
-    //    seam). `gh`/`gv` are the measured offset gradients; `wh`/`wv` their
-    //    coherence-weighted confidences.
+    // 2) Reconcile per-tile integer-2π offsets via a global min-cost-flow on the
+    //    tile grid (SNAPHU's AssembleTiles at tile scale). `gh`/`gv` are measured
+    //    seam offset gradients; `wh`/`wv` their confidence weights.
     let (rows, cols) = (grid.grid_rows, grid.grid_cols);
     let mut gh = vec![0_i64; rows * cols.saturating_sub(1)];
     let mut wh = vec![0_i64; rows * cols.saturating_sub(1)];
@@ -328,9 +149,8 @@ pub fn unwrap_tiled(
                     &tile_unws[idx],
                     &grid.tiles[nb],
                     &tile_unws[nb],
-                    corr,
+                    conf,
                 );
-                // stitch returns k with off_nb = off_idx − k ⇒ gh = off_nb − off_idx = −k
                 gh[gr * (cols - 1) + gc] = -k;
                 wh[gr * (cols - 1) + gc] = w;
             }
@@ -341,7 +161,7 @@ pub fn unwrap_tiled(
                     &tile_unws[idx],
                     &grid.tiles[nb],
                     &tile_unws[nb],
-                    corr,
+                    conf,
                 );
                 gv[gr * cols + gc] = -k;
                 wv[gr * cols + gc] = w;
@@ -357,14 +177,9 @@ pub fn unwrap_tiled(
         t = std::time::Instant::now();
     }
 
-    // 3) FEATHERED composite. A hard "first-tile-wins" switch leaves a faint
-    //    1-px seam line wherever two tiles' (offset-aligned) values differ by a
-    //    fraction of a cycle. Instead, blend overlapping tiles with a
-    //    triangular taper (peaks at tile centre, ≥1 at edges) so that small
-    //    disagreement is spread smoothly across the overlap. A genuine 2π tear
-    //    must NOT be averaged into a half-cycle, so we gate: pass 1 finds each
-    //    pixel's dominant (max-weight) tile value as a reference; pass 2
-    //    weighted-averages only tiles whose value agrees within π of it.
+    // 3) Feathered composite: triangular taper, gated so a genuine 2π tear is
+    //    not averaged into a half-cycle (pass 1 picks each pixel's dominant tile
+    //    value; pass 2 weighted-averages only tiles agreeing within π of it).
     let taper = |p: usize, len: usize| -> f32 { (p + 1).min(len - p) as f32 };
     let mut refv = Array2::<f32>::from_elem((m, n), f32::NAN);
     let mut refw = Array2::<f32>::zeros((m, n));
@@ -427,30 +242,17 @@ pub fn unwrap_tiled(
         t = std::time::Instant::now();
     }
 
-    // 4) Coarse region-refinement: remove residual whole-region 2π-offset
-    //    artifacts (rectangular blocks bounded by high-coherence 2π rings)
-    //    that the per-tile MCF / seam reconciliation leaves behind. A
-    //    globally-consistent coarse anchor (one seam-free whole-image solve on
-    //    a heavily-multilooked copy) pins each region's integer cycle level —
-    //    this reaches low-coherence "wrong islands" that share no
-    //    high-confidence seam with the mainland, which the relative
-    //    largest-region vote cannot. `.ok()` ⇒ a degenerate coarse solve falls
-    //    back to the anchorless vote rather than failing the whole unwrap.
-    // `WHIRLWIND_NO_ANCHOR=1` disables the global anchor (falls back to the
-    // relative largest-region vote) — for before/after comparison only.
-    // Default: build the global coarse anchor and refine coarse→fine
-    // (f=16,8,4). The coarse→fine cascade re-anchors at each scale, so a wrong
-    // block fragmented at one scale is caught whole at a coarser one, and
-    // region boundaries resolve below the single-pass 8-px granularity.
-    // `WHIRLWIND_NO_ANCHOR=1` reverts to the old single-f=8, anchorless vote
-    // (for before/after comparison).
+    // 4) Global coarse anchor + multi-scale cascade (f = 16, 8, 4) to pin each
+    //    region's integer cycle level. `nlooks` is irrelevant to the anchor
+    //    (the Carballo cost ignores it), so pass 1.0. `WHIRLWIND_NO_ANCHOR`
+    //    reverts to the single-f=8 anchorless vote (before/after comparison).
     if std::env::var("WHIRLWIND_NO_ANCHOR").is_ok() {
-        coarse_refine(&mut out, corr, mask, 8, None);
+        coarse_refine(&mut out, conf, mask, 8, None);
     } else {
-        let anchor = compute_coarse_anchor(igram, corr, nlooks, mask, 8);
+        let anchor = compute_coarse_anchor(igram, conf, 1.0, mask, 8);
         let av = anchor.as_ref().map(|a| a.view());
         for &f in &[16usize, 8, 4] {
-            coarse_refine(&mut out, corr, mask, f, av);
+            coarse_refine(&mut out, conf, mask, f, av);
         }
     }
     if dbg {
@@ -461,15 +263,9 @@ pub fn unwrap_tiled(
         t = std::time::Instant::now();
     }
 
-    // 5) Heal residual thin MCF "sliver" artifacts: a ≤4-px vertical/horizontal
-    //    run the per-tile residue-pairing left a constant integer #cycles off
-    //    from a surround that AGREES on both sides (a tie-break in noise, not a
-    //    cost-shape error — present under linear and convex costs alike, so no
-    //    cost removes it). Bounded + coherence-gated; cannot fire across a real
-    //    fringe (its two sides sit at different levels). `WHIRLWIND_NO_HEAL=1`
-    //    disables it.
+    // 5) Heal residual thin MCF sliver artifacts (bounded, coherence-gated).
     if std::env::var("WHIRLWIND_NO_HEAL").is_err() {
-        heal_thin_slivers(&mut out, corr, mask, 0.2, 4, 6);
+        heal_thin_slivers(&mut out, conf, mask, 0.2, 4, 6);
     }
     if dbg {
         eprintln!(
@@ -477,7 +273,156 @@ pub fn unwrap_tiled(
             t.elapsed().as_secs_f64()
         );
     }
-    Ok(out)
+    out
+}
+
+/// Tiled CRLB-weighted 2D unwrap: per-tile CRLB solve + the shared
+/// [`assemble_and_refine`] back-half (anchor + multi-scale cascade), the same
+/// machinery as the coherence [`unwrap_tiled`]. See module docs.
+pub fn unwrap_crlb_tiled(
+    igram: ArrayView2<Complex32>,
+    variance: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    overlap: usize,
+    confidence: Option<ArrayView2<f32>>,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != variance.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    // If the image fits in one tile, fall back to the single-tile path
+    // (corner-safe reuse, not the plain capacity-1 solver).
+    if tile_size >= m && tile_size >= n {
+        return crate::unwrap_crlb_reuse(igram, variance, mask);
+    }
+    assert!(
+        overlap >= 2,
+        "overlap must be ≥ 2 for median-based stitching"
+    );
+
+    let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
+
+    let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
+    let t = std::time::Instant::now();
+
+    // 1) Unwrap each tile in parallel (CRLB cost, corner-safe reuse network).
+    let tile_unws: Vec<Result<Array2<f32>, UnwrapError>> = grid
+        .tiles
+        .par_iter()
+        .map(|t| unwrap_one_tile(igram, variance, mask, t))
+        .collect();
+    let tile_unws: Vec<Array2<f32>> = tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
+    if dbg {
+        eprintln!(
+            "[ww]     crlb tiled: per-tile solve {:.2}s ({} tiles)",
+            t.elapsed().as_secs_f64(),
+            grid.tiles.len()
+        );
+    }
+
+    // 2-5) Shared assembly. Confidence map for the anchor/cascade region-vote +
+    //      seam stitch: the caller's coherence (e.g. dolphin `.cor`) when given,
+    //      else a variance-derived pseudo-coherence. The per-tile solve stays
+    //      CRLB-cost regardless. (#35 / #58: the pseudo-coherence is low-dynamic-
+    //      range and a weak region-vote signal; a real coherence raster pins
+    //      tile-block offsets far better.)
+    let conf_owned: Array2<f32> = match confidence {
+        Some(c) => c.to_owned(),
+        None => pseudo_coh_from_variance(variance),
+    };
+    Ok(assemble_and_refine(
+        igram,
+        conf_owned.view(),
+        mask,
+        &grid,
+        &tile_unws,
+    ))
+}
+
+/// Tiled coherence-cost 2D unwrap (Carballo cost), the coherence twin of
+/// [`unwrap_crlb_tiled`]. Split into overlapping tiles, unwrap each tile
+/// independently in parallel, then BFS-stitch by a coherence-weighted
+/// overlap-median 2π reconciliation.
+///
+/// This is the memory- and robustness-motivated path: per-tile MCF keeps
+/// flow local (a misrouted residue can't accumulate cycle errors across the
+/// whole frame the way a single whole-image solve does), and peak memory is
+/// bounded by the tile size rather than the full scene.
+pub fn unwrap_tiled(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    tile_size: usize,
+    overlap: usize,
+    multilook: usize,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    // MULTILOOK-FIRST (for noisy / moderate-coherence scenes, e.g. Sentinel-1).
+    // whirlwind's linear cost mis-routes through noisy phase; coherently
+    // down-looking ×`multilook` suppresses that noise, after which the SAME
+    // tiled+anchor+cascade pipeline reaches SNAPHU quality. We tile the coarse
+    // (a whole-image coarse solve still has residual runaway), then upsample.
+    if multilook > 1 {
+        let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, multilook);
+        let (cm, cn) = cig.dim();
+        // Small coarse tiles bound the runaway (validated: whole-image coarse
+        // ≈83% vs tiled-coarse ≈97.7% on Atlanta). 1 ⇒ no further multilook.
+        let cts = 128.min(cm).min(cn);
+        let cov = (cts / 4).max(2);
+        let coarse = unwrap_tiled(
+            cig.view(),
+            ccorr.view(),
+            nlooks * (multilook * multilook) as f32,
+            Some(cmask.view()),
+            cts,
+            cov,
+            1,
+        )?;
+        return Ok(upsample_blockrep(&coarse, multilook, m, n));
+    }
+    if tile_size >= m && tile_size >= n {
+        return crate::unwrap_reuse(igram, corr, nlooks, mask);
+    }
+    assert!(
+        overlap >= 2,
+        "overlap must be ≥ 2 for median-based stitching"
+    );
+
+    let grid = TileGrid::from_decomposition(m, n, tile_size, overlap);
+    let _n_tiles = grid.tiles.len();
+
+    let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
+    let t = std::time::Instant::now();
+
+    // 1) Unwrap each tile in parallel.
+    let tile_unws: Vec<Result<Array2<f32>, UnwrapError>> = grid
+        .tiles
+        .par_iter()
+        .map(|t| unwrap_one_tile_coh(igram, corr, nlooks, mask, t))
+        .collect();
+    let tile_unws: Vec<Array2<f32>> = tile_unws.into_iter().collect::<Result<Vec<_>, _>>()?;
+    if dbg {
+        eprintln!(
+            "[ww]     tiled: per-tile solve {:.2}s ({} tiles)",
+            t.elapsed().as_secs_f64(),
+            grid.tiles.len()
+        );
+    }
+
+    // 2-5) Shared reconcile + feather composite + global anchor + multi-scale
+    //      cascade + heal (see `assemble_and_refine`).
+    Ok(assemble_and_refine(igram, corr, mask, &grid, &tile_unws))
 }
 
 /// Coherence above which a branch cut counts as "through coherent terrain".
@@ -658,32 +603,35 @@ fn pseudo_coh_from_variance(variance: ArrayView2<f32>) -> Array2<f32> {
     })
 }
 
-/// CRLB twin of [`unwrap_tiled_robust`]: gated multi-shift re-solve for the
-/// CRLB-cost path.
+/// CRLB twin of [`unwrap_tiled_robust`]: per-tile CRLB solve + the shared
+/// anchor/cascade ([`unwrap_crlb_tiled`]) with a gated multi-shift re-solve.
 ///
-/// The coherent-cut gate uses a pseudo-coherence derived from the CRLB phase
-/// variance ([`pseudo_coh_from_variance`]) in place of sample coherence, so a
-/// wrong global WINDING on a fragmented phase-linked frame is caught the same
-/// way as on the coherence path (PR #30). NOTE: the MCF offset-reconcile,
-/// global anchor, multi-scale cascade, and seam-repair of the coherence
-/// [`unwrap_tiled`] pipeline are NOT yet ported to the CRLB tiler (which still
-/// BFS-median-stitches) — see issue #35; this adds the multi-shift winding fix
-/// on top of [`unwrap_crlb_tiled`].
+/// The multi-shift gate AND the anchor/cascade region-vote use a CONFIDENCE map:
+/// the caller's coherence (e.g. dolphin `.cor`) when provided, else a
+/// pseudo-coherence derived from the CRLB variance ([`pseudo_coh_from_variance`]).
+/// The pseudo-coherence is low-dynamic-range, so passing a real coherence raster
+/// markedly improves tile-block-offset pinning (#58). The per-tile solve is
+/// CRLB-cost regardless.
 pub fn unwrap_crlb_tiled_robust(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
     mask: Option<ArrayView2<bool>>,
     tile_size: usize,
     overlap: usize,
+    confidence: Option<ArrayView2<f32>>,
 ) -> Result<Array2<f32>, UnwrapError> {
-    let base = unwrap_crlb_tiled(igram, variance, mask, tile_size, overlap)?;
+    let conf_owned: Array2<f32> = match confidence {
+        Some(c) => c.to_owned(),
+        None => pseudo_coh_from_variance(variance),
+    };
+    let conf = conf_owned.view();
+    let base = unwrap_crlb_tiled(igram, variance, mask, tile_size, overlap, Some(conf))?;
     let (m, n) = igram.dim();
     // A single-tile solve has no seams to shift.
     if tile_size >= m && tile_size >= n {
         return Ok(base);
     }
-    let pcoh = pseudo_coh_from_variance(variance);
-    let rate0 = coherent_cut_rate(igram, &base, pcoh.view(), mask, COH_CUT_THR);
+    let rate0 = coherent_cut_rate(igram, &base, conf, mask, COH_CUT_THR);
     let mut best = base;
     if rate0 > COH_CUT_FLOOR {
         let step = tile_size - overlap;
@@ -701,15 +649,21 @@ pub fn unwrap_crlb_tiled_robust(
                 p.slice_mut(s![s.., s..]).assign(&mk);
                 p
             });
+            let pconf = confidence.map(|c| {
+                let mut p = Array2::<f32>::zeros((m + s, n + s));
+                p.slice_mut(s![s.., s..]).assign(&c);
+                p
+            });
             let cand_padded = unwrap_crlb_tiled(
                 pig.view(),
                 pvar.view(),
                 pmask.as_ref().map(|a| a.view()),
                 tile_size,
                 overlap,
+                pconf.as_ref().map(|a| a.view()),
             )?;
             let cand = cand_padded.slice(s![s.., s..]).to_owned();
-            let r = coherent_cut_rate(igram, &cand, pcoh.view(), mask, COH_CUT_THR);
+            let r = coherent_cut_rate(igram, &cand, conf, mask, COH_CUT_THR);
             if r < best_rate {
                 best_rate = r;
                 best = cand;
@@ -1797,58 +1751,6 @@ fn unwrap_one_tile(
 /// integer. Returns the integer K such that adding `K · 2π` to `unw_b`'s
 /// values aligns it with `unw_a` in the overlap region. Returns 0 if there
 /// is no overlap (shouldn't happen for adjacent tiles) or no valid pixels.
-fn stitching_offset(
-    tile_a: &Tile,
-    unw_a: &Array2<f32>,
-    tile_b: &Tile,
-    unw_b: &Array2<f32>,
-    variance: ArrayView2<f32>,
-) -> i64 {
-    let r0 = tile_a.r0.max(tile_b.r0);
-    let r1 = tile_a.r1.min(tile_b.r1);
-    let c0 = tile_a.c0.max(tile_b.c0);
-    let c1 = tile_a.c1.min(tile_b.c1);
-    if r0 >= r1 || c0 >= c1 {
-        return 0;
-    }
-    // Collect (value, weight) for overlap pixels with finite difference.
-    let mut samples: Vec<(f32, f32)> = Vec::with_capacity((r1 - r0) * (c1 - c0));
-    for gi in r0..r1 {
-        for gj in c0..c1 {
-            let a = unw_a[(gi - tile_a.r0, gj - tile_a.c0)];
-            let b = unw_b[(gi - tile_b.r0, gj - tile_b.c0)];
-            if !a.is_finite() || !b.is_finite() {
-                continue;
-            }
-            let diff_2pi = (b - a) / TAU;
-            // Weight ∝ 1 / variance (CRLB). Skip nodata.
-            let v = variance[(gi, gj)];
-            let w = if v.is_finite() && v > 0.0 {
-                1.0 / v
-            } else {
-                1e-3
-            };
-            samples.push((diff_2pi, w));
-        }
-    }
-    if samples.is_empty() {
-        return 0;
-    }
-    // Weighted median.
-    samples.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
-    let total_w: f32 = samples.iter().map(|&(_, w)| w).sum();
-    let mut cum = 0.0_f32;
-    let mut median = samples[0].0;
-    for &(v, w) in &samples {
-        cum += w;
-        if cum >= 0.5 * total_w {
-            median = v;
-            break;
-        }
-    }
-    median.round() as i64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1907,8 +1809,8 @@ mod tests {
         };
         let unw_a = Array2::<f32>::zeros((m, 16));
         let unw_b = Array2::<f32>::from_elem((m, 16), 3.0 * TAU);
-        let var = Array2::<f32>::from_elem((m, 24), 0.1);
-        let k = stitching_offset(&tile_a, &unw_a, &tile_b, &unw_b, var.view());
+        let conf = Array2::<f32>::from_elem((m, 24), 0.9);
+        let (k, _w) = stitching_offset_coh(&tile_a, &unw_a, &tile_b, &unw_b, conf.view());
         assert_eq!(k, 3, "stitching should recover the planted +3·2π step");
     }
 
@@ -2175,7 +2077,7 @@ mod tests {
         let var = Array2::<f32>::from_elem((m, n), 0.1);
 
         let non_tiled = unwrap_crlb_reuse(igram.view(), var.view(), None).unwrap();
-        let tiled = unwrap_crlb_tiled(igram.view(), var.view(), None, 24, 8).unwrap();
+        let tiled = unwrap_crlb_tiled(igram.view(), var.view(), None, 24, 8, None).unwrap();
 
         // Both should be smooth. Compare to truth after aligning the
         // global integer-cycle offset.
@@ -2265,8 +2167,8 @@ mod tests {
             Array2::from_shape_fn((m, n), |(i, j)| 0.04 * i as f32 + 0.03 * j as f32);
         let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
         let var = Array2::<f32>::from_elem((m, n), 0.05);
-        let plain = unwrap_crlb_tiled(igram.view(), var.view(), None, 32, 8).unwrap();
-        let robust = unwrap_crlb_tiled_robust(igram.view(), var.view(), None, 32, 8).unwrap();
+        let plain = unwrap_crlb_tiled(igram.view(), var.view(), None, 32, 8, None).unwrap();
+        let robust = unwrap_crlb_tiled_robust(igram.view(), var.view(), None, 32, 8, None).unwrap();
         let max_diff = plain
             .iter()
             .zip(robust.iter())

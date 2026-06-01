@@ -294,9 +294,14 @@ def run(
         mask = None
         if e.mask_path is not None:
             mask = _read_bool(e.mask_path, win)
+        # `.cor` (sample coherence) is a better anchor/cascade confidence map than
+        # the variance-derived pseudo-coherence (#58): higher dynamic range → pins
+        # tile-block offsets and avoids tripping the multi-shift gate (~4× faster).
+        # NOT used as the cost — the cost stays CRLB variance.
+        coherence = _read_f32(e.cor_path, win) if e.cor_path is not None else None
         t = time.perf_counter()
         unw, _cc = ww.unwrap_crlb(
-            igram, variance, mask,
+            igram, variance, mask, coherence=coherence,
             tile_size=tile_size, tile_overlap=tile_overlap,
         )
         unw_stack[idx] = unw
