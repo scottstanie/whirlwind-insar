@@ -51,7 +51,8 @@ def main() -> None:
 
     amb = {}
     for size in (512, 1024):
-        unw = np.asarray(ww.unwrap(igc, cohc, 16.0, maskc, tile_size=size, tile_overlap=64), np.float64)
+        unw_phase, _cc = ww.unwrap(igc, cohc, 16.0, maskc, tile_size=size, tile_overlap=64)
+        unw = np.asarray(unw_phase, np.float64)
         a = np.rint((unw - prod) / TAU)
         g = modal(a[reg])
         a = a - g

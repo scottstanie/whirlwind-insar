@@ -58,7 +58,7 @@ def main() -> None:
 
     for label, kw_args in [("ml8 whole", {}), ("ml8 tiled128", dict(tile_size=128, tile_overlap=24))]:
         t0 = time.perf_counter()
-        unc = ww.unwrap(igc, cohc, nlooks=50.0*L*L, mask=mkc, **kw_args)
+        unc, _cc = ww.unwrap(igc, cohc, nlooks=50.0*L*L, mask=mkc, **kw_args)
         dt = time.perf_counter() - t0
         up = np.kron(unc, np.ones((L, L), np.float32))
         hh, wwd = up.shape

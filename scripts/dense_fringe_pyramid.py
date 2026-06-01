@@ -116,10 +116,13 @@ def rmse(unw: np.ndarray, truth: np.ndarray) -> float:
 def run_methods(ig: np.ndarray, corr: np.ndarray, nlooks: float) -> dict[str, np.ndarray]:
     ig = ig.astype(np.complex64)
     corr = corr.astype(np.float32)
+    full, _cc = ww.unwrap(ig, corr, nlooks=nlooks)
+    ml4, _cc = ww.unwrap(ig, corr, nlooks=nlooks, multilook=4)
+    ml8, _cc = ww.unwrap(ig, corr, nlooks=nlooks, multilook=8)
     return {
-        "full": ww.unwrap(ig, corr, nlooks=nlooks),
-        "ml4": ww.unwrap(ig, corr, nlooks=nlooks, multilook=4),
-        "ml8": ww.unwrap(ig, corr, nlooks=nlooks, multilook=8),
+        "full": full,
+        "ml4": ml4,
+        "ml8": ml8,
         "pyr2": ww.unwrap_pyramid(ig, corr, nlooks=nlooks, base_factor=2),
         "pyr4": ww.unwrap_pyramid(ig, corr, nlooks=nlooks, base_factor=4),
         "pyrA": ww.unwrap_pyramid(ig, corr, nlooks=nlooks, base_factor=0),

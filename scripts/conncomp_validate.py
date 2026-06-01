@@ -94,11 +94,11 @@ def render(scene, out_dir: Path):
     # --- MCF-derived components at three thresholds ---
     results = {}
     for thresh in (50, 150, 250):
-        unw, cc = ww.unwrap_with_conncomp(ig, coh, nlooks, cost_threshold=thresh)
+        unw, cc = ww.unwrap(ig, coh, nlooks, cost_threshold=thresh, goldstein_alpha=0.7)
         results[thresh] = {"unw": unw, "cc": cc}
 
     # Continuous unwrap (no components) for reference.
-    unw_ref = ww.unwrap(ig.astype(np.complex64), coh.astype(np.float32), float(nlooks))
+    unw_ref, _cc = ww.unwrap(ig.astype(np.complex64), coh.astype(np.float32), float(nlooks))
 
     fig, axes = plt.subplots(2, 4, figsize=(18, 9), constrained_layout=True)
     im_kw = dict(interpolation="none")
@@ -168,7 +168,7 @@ def threshold_sweep(scene, out_dir: Path):
     n_comps = []
     largest_frac = []
     for t in thresholds:
-        unw, cc = ww.unwrap_with_conncomp(ig, coh, nlooks, cost_threshold=int(t))
+        unw, cc = ww.unwrap(ig, coh, nlooks, cost_threshold=int(t), goldstein_alpha=0.7)
         sizes = np.bincount(cc.ravel())
         n_comps.append(int(cc.max()))
         coverages.append(float((cc > 0).mean()))

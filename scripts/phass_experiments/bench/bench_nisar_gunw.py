@@ -466,13 +466,13 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
         # ambiguity, which is what matters for artifact detection.
         igc = np.ascontiguousarray(np.exp(1j * ig), dtype=np.complex64)  # complex igram for whirlwind
         if args.tile_size and args.tile_size > 0:
-            ww_unw = ww.unwrap(igc, coh, args.nlooks, mask,
+            ww_unw, _cc = ww.unwrap(igc, coh, args.nlooks, mask,
                                tile_size=args.tile_size, tile_overlap=args.tile_overlap,
                                multilook=args.multilook)
         elif args.multilook > 1:
-            ww_unw = ww.unwrap(igc, coh, args.nlooks, mask, multilook=args.multilook)
+            ww_unw, _cc = ww.unwrap(igc, coh, args.nlooks, mask, multilook=args.multilook)
         else:
-            ww_unw = ww.unwrap(igc, coh, args.nlooks, mask)
+            ww_unw, _cc = ww.unwrap(igc, coh, args.nlooks, mask)
         ww_cc = None
         runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()

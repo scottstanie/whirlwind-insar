@@ -41,10 +41,10 @@ def main() -> None:
     region = (scc == 1) & mask
 
     t = time.perf_counter()
-    uw = ww.unwrap(ig, coh, nlooks=100.0, mask=mask)
+    uw, _cc = ww.unwrap(ig, coh, nlooks=100.0, mask=mask)
     tw = time.perf_counter() - t
     t = time.perf_counter()
-    ut = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
+    ut, _cc = ww.unwrap(ig, coh, nlooks=100.0, mask=mask, tile_size=512, tile_overlap=64)
     tt = time.perf_counter() - t
 
     def kf(unw):

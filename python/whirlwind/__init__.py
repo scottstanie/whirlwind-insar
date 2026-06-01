@@ -17,7 +17,6 @@ from ._native import (
     quality_triangles,
     set_num_threads,
     simulate_ifg,
-    unwrap,
     unwrap_crlb,
     unwrap_crlb_grounded,
     unwrap_crlb_with_conncomp,
@@ -28,7 +27,7 @@ from ._native import (
     unwrap_sparse,
     wrap_phase,
 )
-from ._native import unwrap_with_conncomp as _unwrap_with_conncomp_native
+from ._native import _unwrap_native
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -114,30 +113,35 @@ def unwrap_crlb_stack(
     return unw_out, cc_out
 
 
-def unwrap_with_conncomp(
+def unwrap(
     igram: "NDArray[np.complex64]",
     corr: "NDArray[np.float32]",
     nlooks: float,
     mask: "NDArray[np.bool_] | None" = None,
+    *,
+    multilook: int = 1,
+    tile_size: int = 0,
+    tile_overlap: int = 0,
     cost_threshold: int = 50,
     min_size_px: int = 100,
-    min_size_frac: float = 0.0001,
     max_ncomps: int = 1024,
-    goldstein_alpha: float = 0.7,
+    goldstein_alpha: float = 0.0,
     goldstein_psize: int = 64,
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
-    """MCF unwrap + SNAPHU-style connected components (Carballo cost).
+    """MCF unwrap returning ``(unwrapped_phase, conn_components)``.
 
-    Pre-filters the wrapped phase with the Goldstein adaptive filter
-    (Goldstein & Werner 1998) to inform the MCF, then *applies the
-    resulting 2π·k integer-cycle field to the original wrapped phase*.
-    The output therefore preserves every per-pixel phase value the
-    caller passed in; Goldstein only decides which 2π cycle each pixel
-    sits on. Set ``goldstein_alpha=0`` to skip the filter entirely.
+    The main entry point. Runs the robust tiled pipeline for the phase
+    (auto-tile large frames at 512, gated multi-shift re-solve, global
+    coarse anchor, multi-scale cascade, seam-repair) and grows SNAPHU-style
+    connected components globally from the same Carballo coherence cost.
 
-    Validated on a 40 MHz NISAR HH GSLC: agreement with SNAPHU
-    80% → 99.5% within ±π/2 vs the no-filter baseline, while keeping
-    the original wrapped phase under the integration.
+    Optionally pre-filters with the Goldstein adaptive filter (off by
+    default; set ``goldstein_alpha > 0`` to enable). When enabled, Goldstein
+    (Goldstein & Werner 1998) informs the MCF, then the resulting 2π·k
+    integer-cycle field is *applied to the original wrapped phase* — so the
+    output preserves every per-pixel phase value the caller passed in;
+    Goldstein only decides which 2π cycle each pixel sits on. (The
+    Goldstein-on vs -off trade-off is currently under evaluation.)
 
     Parameters
     ----------
@@ -149,29 +153,43 @@ def unwrap_with_conncomp(
         Effective number of looks (≥ 1).
     mask : bool, optional
         Valid-pixel mask (True = valid).
-    cost_threshold, min_size_frac, max_ncomps :
+    multilook : int, default 1
+        > 1 coherently down-looks first (noisy / moderate-coherence scenes),
+        unwraps the coarse frame, then upsamples.
+    tile_size, tile_overlap : int
+        ``tile_size=0`` (default) auto-tiles frames larger than 512 px at
+        512 / overlap-64. Set ``tile_size`` ≥ 4 (with ``tile_overlap`` ≥ 2)
+        to force a tile size.
+    cost_threshold, min_size_px, max_ncomps :
         Connected-component growing parameters (see
         :class:`whirlwind_core::conncomp::ConnCompParams`).
-    goldstein_alpha : float, default 0.7
-        Goldstein filter strength in ``[0, 1]``. 0 disables filtering.
+    goldstein_alpha : float, default 0.0
+        Goldstein filter strength in ``[0, 1]``. 0 (default) disables
+        filtering; a typical "on" value is 0.7.
     goldstein_psize : int, default 64
-        Goldstein FFT patch size.
+        Goldstein FFT patch size (only used when ``goldstein_alpha > 0``).
+
+    Returns
+    -------
+    unwrapped : float32, shape ``(m, n)``
+    conncomp : uint32, shape ``(m, n)``
+        Component labels; 0 = background / dropped.
     """
     if goldstein_alpha <= 0:
-        return _unwrap_with_conncomp_native(
+        return _unwrap_native(
             igram, corr, nlooks,
-            mask=mask, cost_threshold=cost_threshold,
-            min_size_px=min_size_px, min_size_frac=min_size_frac, max_ncomps=max_ncomps,
+            mask=mask, tile_size=tile_size, tile_overlap=tile_overlap, multilook=multilook,
+            cost_threshold=cost_threshold, min_size_px=min_size_px, max_ncomps=max_ncomps,
         )
 
     ig_filt = goldstein(igram, alpha=goldstein_alpha, psize=goldstein_psize)
     if mask is not None:
         ig_filt = ig_filt.copy()
         ig_filt[~mask] = 0
-    unw_filt, cc = _unwrap_with_conncomp_native(
+    unw_filt, cc = _unwrap_native(
         ig_filt, corr, nlooks,
-        mask=mask, cost_threshold=cost_threshold,
-        min_size_frac=min_size_frac, max_ncomps=max_ncomps,
+        mask=mask, tile_size=tile_size, tile_overlap=tile_overlap, multilook=multilook,
+        cost_threshold=cost_threshold, min_size_px=min_size_px, max_ncomps=max_ncomps,
     )
     # Transfer the integer 2π·k field from the filtered unwrap onto the
     # *original* wrapped phase, rounding against the original (not the
@@ -216,6 +234,5 @@ __all__ = [
     "unwrap_pyramid",
     "unwrap_reuse",
     "unwrap_sparse",
-    "unwrap_with_conncomp",
     "wrap_phase",
 ]

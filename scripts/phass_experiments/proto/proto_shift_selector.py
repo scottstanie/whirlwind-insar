@@ -58,12 +58,13 @@ def unw_shift(ig, coh, valid, s):
     H, W = ig.shape
     igc = np.exp(1j * ig).astype(np.complex64)
     if s == 0:
-        return np.asarray(ww.unwrap(np.ascontiguousarray(igc), np.ascontiguousarray(coh, np.float32),
-                                    16.0, np.ascontiguousarray(valid, bool), tile_size=TS, tile_overlap=OV), np.float64)
+        u0, _cc = ww.unwrap(np.ascontiguousarray(igc), np.ascontiguousarray(coh, np.float32),
+                            16.0, np.ascontiguousarray(valid, bool), tile_size=TS, tile_overlap=OV)
+        return np.asarray(u0, np.float64)
     pig = np.zeros((H + s, W + s), np.complex64); pco = np.zeros((H + s, W + s), np.float32); pmk = np.zeros((H + s, W + s), bool)
     pig[s:, s:] = igc; pco[s:, s:] = coh.astype(np.float32); pmk[s:, s:] = valid
-    u = ww.unwrap(np.ascontiguousarray(pig), np.ascontiguousarray(pco), 16.0,
-                  np.ascontiguousarray(pmk), tile_size=TS, tile_overlap=OV)
+    u, _cc = ww.unwrap(np.ascontiguousarray(pig), np.ascontiguousarray(pco), 16.0,
+                       np.ascontiguousarray(pmk), tile_size=TS, tile_overlap=OV)
     return np.asarray(u, np.float64)[s:, s:]
 
 

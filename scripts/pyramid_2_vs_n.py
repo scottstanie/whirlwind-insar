@@ -70,7 +70,10 @@ def upsample(c, m, n):
 
 def _solve(z, coh, nlooks, solver):
     zc = z / np.where(np.abs(z) > 0, np.abs(z), 1)
-    return FN[solver](zc.astype(np.complex64), coh.astype(np.float32), nlooks=float(nlooks))
+    out = FN[solver](zc.astype(np.complex64), coh.astype(np.float32), nlooks=float(nlooks))
+    if solver == "linear":  # ww.unwrap now returns (phase, conncomp)
+        out, _cc = out
+    return out
 
 
 def two_level(ig, coh, base, nlooks, solver="reuse"):
@@ -115,7 +118,8 @@ def main():
                 ig, coh = ig.astype(np.complex64), coh.astype(np.float32)
                 a2.append(kpct(two_level(ig, coh, base, nlooks), t))
                 aN.append(kpct(n_level(ig, coh, base, nlooks), t))
-                af.append(kpct(ww.unwrap(ig, coh, nlooks=float(nlooks)), t))
+                unw_full, _cc = ww.unwrap(ig, coh, nlooks=float(nlooks))
+                af.append(kpct(unw_full, t))
             m2, mN, mf = np.mean(a2), np.mean(aN), np.mean(af)
             flag = "  <-- N>2 wins" if mN > m2 + 3 else ""
             print(f"{base:>4} {gamma:>6.2f} {nlooks:>6} {mf:>6.1f} {m2:>6.1f} {mN:>6.1f} {mN - m2:>+6.1f}{flag}")

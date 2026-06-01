@@ -64,13 +64,13 @@ def main():
         print(f"\n[{pair}] valid {int(mask.sum())}/{ig.size}  median coh={float(np.median(cor[mask])):.3f}")
 
         t0 = time.perf_counter()
-        unw_off, cc_off = ww.unwrap_with_conncomp(
+        unw_off, cc_off = ww.unwrap(
             ig, cor, 100.0, mask=mask, cost_threshold=10, goldstein_alpha=0.0
         )
         t_off = time.perf_counter() - t0
 
         t0 = time.perf_counter()
-        unw_on, cc_on = ww.unwrap_with_conncomp(
+        unw_on, cc_on = ww.unwrap(
             ig, cor, 100.0, mask=mask, cost_threshold=10, goldstein_alpha=0.7
         )
         t_on = time.perf_counter() - t0

@@ -56,7 +56,7 @@ def main() -> None:
     print(f"coarse mask: {n} connected pieces; largest={100*sizes.max()/mo.sum():.1f}% of coarse-valid", flush=True)
 
     # unwrap the coarse whole-image (this IS compute_coarse_anchor's core)
-    canchor = ww.unwrap(igo, co, nlooks=50.0*L*L, mask=mo)
+    canchor, _cc = ww.unwrap(igo, co, nlooks=50.0*L*L, mask=mo)
     up = np.kron(canchor, np.ones((L, L), np.float32))
     hh, wwd = up.shape
     m = mask[:hh, :wwd]; pr = prod[:hh, :wwd]; cc = pcc[:hh, :wwd]

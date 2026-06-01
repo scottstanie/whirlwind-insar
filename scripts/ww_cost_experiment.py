@@ -62,8 +62,8 @@ def run_ww(ig, coh, mask, nlooks, threshold):
     import whirlwind as ww
 
     t0 = time.perf_counter()
-    unw, cc = ww.unwrap_with_conncomp(
-        ig, coh, float(nlooks), mask=mask, cost_threshold=threshold
+    unw, cc = ww.unwrap(
+        ig, coh, float(nlooks), mask=mask, cost_threshold=threshold, goldstein_alpha=0.7
     )
     return unw, cc, time.perf_counter() - t0
 

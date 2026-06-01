@@ -75,7 +75,7 @@ def main() -> None:
             if cost == "reuse":
                 cunw = ww.unwrap_reuse(igo, co, 50.0 * L * L, mo)
             else:
-                cunw = ww.unwrap(igo, co, 50.0 * L * L, mo, tile_size=100000, tile_overlap=64)
+                cunw, _cc = ww.unwrap(igo, co, 50.0 * L * L, mo, tile_size=100000, tile_overlap=64)
             cunw = np.asarray(cunw, np.float64)
             H, W = prod.shape
             ii = np.minimum(np.arange(H) // L, cunw.shape[0] - 1)

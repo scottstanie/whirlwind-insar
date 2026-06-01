@@ -81,10 +81,10 @@ print(f"[{scene}/{mode}] shape={ig.shape}  valid={mask.sum():,}  "
       f"cost_threshold={cost_threshold}", flush=True)
 
 t0 = time.perf_counter()
-unw, cc = ww.unwrap_with_conncomp(
+unw, cc = ww.unwrap(
     ig, coh, nlooks=nlooks, mask=mask,
     cost_threshold=cost_threshold,
-    min_size_frac=0.001, max_ncomps=10,
+    max_ncomps=10,
     goldstein_alpha=0.0,  # α=0: no Goldstein. The whole point.
 )
 elapsed = time.perf_counter() - t0

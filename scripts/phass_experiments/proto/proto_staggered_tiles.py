@@ -73,14 +73,14 @@ def unwrap_shifted(ig, coh, valid, shift):
     H, W = ig.shape
     igc = np.exp(1j * ig).astype(np.complex64)
     if shift == 0:
-        u = ww.unwrap(np.ascontiguousarray(igc), np.ascontiguousarray(coh, np.float32),
+        u, _cc = ww.unwrap(np.ascontiguousarray(igc), np.ascontiguousarray(coh, np.float32),
                       16.0, np.ascontiguousarray(valid, bool), tile_size=TS, tile_overlap=OV)
         return np.asarray(u, np.float64)
     pig = np.zeros((H + shift, W + shift), np.complex64)
     pco = np.zeros((H + shift, W + shift), np.float32)
     pmk = np.zeros((H + shift, W + shift), bool)
     pig[shift:, shift:] = igc; pco[shift:, shift:] = coh; pmk[shift:, shift:] = valid
-    u = ww.unwrap(np.ascontiguousarray(pig), np.ascontiguousarray(pco), 16.0,
+    u, _cc = ww.unwrap(np.ascontiguousarray(pig), np.ascontiguousarray(pco), 16.0,
                   np.ascontiguousarray(pmk), tile_size=TS, tile_overlap=OV)
     return np.asarray(u, np.float64)[shift:, shift:]
 

@@ -11,7 +11,7 @@ y, x = np.ogrid[-3:3:512j, -3:3:512j]
 phase = (np.pi * (x + y)).astype(np.float32)
 ig = np.exp(1j * phase).astype(np.complex64)
 coh = np.ones((512, 512), np.float32) * 0.999
-u = ww.unwrap(ig, coh, 1.0, tile_size=256, tile_overlap=32)
+u, _cc = ww.unwrap(ig, coh, 1.0, tile_size=256, tile_overlap=32)
 o = u[0, 0] - phase[0, 0]
 err = float(np.nanmax(np.abs((u - o) - phase)))
 print(f"  {S:7s} tiled256  max|err|={err:.3f} rad  {'PASS' if err < 0.5 else 'FAIL'}", flush=True)

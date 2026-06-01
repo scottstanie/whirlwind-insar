@@ -15,6 +15,9 @@ def _align_to_truth(unw: np.ndarray, truth: np.ndarray) -> np.ndarray:
 
 
 class TestUnwrap:
+    # ww.unwrap now returns (phase, conncomp). These solver-recovery tests pass
+    # goldstein_alpha=0 to exercise the bare MCF unwrap (their original intent);
+    # the Goldstein-on default path is covered by test_unwrap_returns_conncomp.
     def test_diagonal_ramp_clean(self):
         """SNAPHU-style smooth diagonal-ramp regression test."""
         y, x = np.ogrid[-3:3:512j, -3:3:512j]
@@ -22,7 +25,7 @@ class TestUnwrap:
         igram = np.exp(1j * phase).astype(np.complex64)
         corr = np.ones(igram.shape, dtype=np.float32) * 0.999
 
-        unw = ww.unwrap(igram, corr, nlooks=1.0)
+        unw, _cc = ww.unwrap(igram, corr, nlooks=1.0, goldstein_alpha=0)
 
         aligned = _align_to_truth(unw, phase)
         np.testing.assert_allclose(aligned, phase, atol=1e-2)
@@ -33,7 +36,7 @@ class TestUnwrap:
         igram = np.exp(1j * phase).astype(np.complex64)
         corr = np.ones(igram.shape, dtype=np.float32) * 0.999
 
-        unw = ww.unwrap(igram, corr, nlooks=1.0)
+        unw, _cc = ww.unwrap(igram, corr, nlooks=1.0, goldstein_alpha=0)
         aligned = _align_to_truth(unw, phase)
         np.testing.assert_allclose(aligned, phase, atol=1e-2)
 
@@ -53,7 +56,7 @@ class TestUnwrap:
         # Replace NaN before passing (whirlwind-rs doesn't auto-handle NaN igram).
         igram = np.nan_to_num(igram, nan=0.0).astype(np.complex64)
 
-        unw = ww.unwrap(igram, corr, nlooks=1.0, mask=mask)
+        unw, _cc = ww.unwrap(igram, corr, nlooks=1.0, mask=mask, goldstein_alpha=0)
         # Only check the valid band.
         aligned = _align_to_truth(unw[mask], phase[mask])
         np.testing.assert_allclose(aligned, phase[mask], atol=5e-2)
@@ -75,7 +78,7 @@ class TestUnwrap:
 
         gamma = np.full((m, n), 0.85, dtype=np.float32)
         igram, corr = ww.simulate_ifg(truth, gamma, nlooks=10, seed=42)
-        unw = ww.unwrap(igram, corr, nlooks=10.0)
+        unw, _cc = ww.unwrap(igram, corr, nlooks=10.0, goldstein_alpha=0)
         aligned = _align_to_truth(unw, truth)
         # Within 2π pretty much anywhere for a smooth bump.
         assert np.max(np.abs(aligned - truth)) < 6.5
@@ -84,15 +87,39 @@ class TestUnwrap:
         igram = np.zeros((8, 8), dtype=np.complex64)
         corr = np.zeros((8, 9), dtype=np.float32)
         with pytest.raises(ValueError):
-            ww.unwrap(igram, corr, nlooks=1.0)
+            ww.unwrap(igram, corr, nlooks=1.0, goldstein_alpha=0)
 
     def test_dtype_preserved(self):
         m, n = 16, 16
         igram = np.ones((m, n), dtype=np.complex64)
         corr = np.ones((m, n), dtype=np.float32)
-        unw = ww.unwrap(igram, corr, nlooks=1.0)
+        unw, _cc = ww.unwrap(igram, corr, nlooks=1.0, goldstein_alpha=0)
         assert unw.dtype == np.float32
         assert unw.shape == (m, n)
+
+    def test_unwrap_returns_conncomp(self):
+        """Default path returns (phase, conncomp); Goldstein off by default."""
+        y, x = np.ogrid[-2:2:128j, -2:2:128j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.ones(igram.shape, dtype=np.float32) * 0.95
+
+        unw, cc = ww.unwrap(igram, corr, nlooks=5.0)
+        assert unw.shape == igram.shape and unw.dtype == np.float32
+        assert cc.shape == igram.shape and cc.dtype == np.uint32
+        # A coherent clean ramp is one connected component.
+        assert cc.max() >= 1
+
+        # The opt-in Goldstein path also works and returns a valid tuple.
+        ug, ccg = ww.unwrap(igram, corr, nlooks=5.0, goldstein_alpha=0.7)
+        assert ug.shape == igram.shape and ccg.dtype == np.uint32
+
+        # Regression for the #34 bug: min_size_px was silently dropped on the
+        # GOLDSTEIN branch specifically. A huge floor must drop all there too.
+        _ug, ccg_strict = ww.unwrap(
+            igram, corr, nlooks=5.0, goldstein_alpha=0.7, min_size_px=10**9
+        )
+        assert ccg_strict.max() == 0
 
 
 def _bowl(shape, g_edge):
@@ -135,7 +162,7 @@ class TestPyramid:
         truth = _bowl((192, 192), 0.5 * np.pi)
         ig, corr = ww.simulate_ifg(truth, np.full(truth.shape, 0.95, np.float32), 8, 0)
 
-        ml8 = ww.unwrap(ig, corr, nlooks=8.0, multilook=8)
+        ml8, _cc = ww.unwrap(ig, corr, nlooks=8.0, multilook=8, goldstein_alpha=0)
         pyr = ww.unwrap_pyramid(ig, corr, nlooks=8.0, base_factor=2)
 
         assert _k_correct(ml8, truth) < 0.3, "multilook ×8 should alias the steep bowl"
@@ -158,11 +185,11 @@ class TestPyramid:
         assert _k_correct(pyr, truth) > _k_correct(full, truth) + 0.1
 
     def test_base_factor_one_linear_matches_plain_unwrap(self):
-        # base=1 + linear solver degenerates to a single plain unwrap.
+        # base=1 + reuse degenerates to a single plain (no-Goldstein) unwrap.
         truth = _cone((64, 64), 0.15 * np.pi)
         ig, corr = ww.simulate_ifg(truth, np.full(truth.shape, 0.9, np.float32), 8, 0)
-        a = ww.unwrap_pyramid(ig, corr, nlooks=8.0, base_factor=1, solver="linear")
-        b = ww.unwrap(ig, corr, nlooks=8.0)
+        a = ww.unwrap_pyramid(ig, corr, nlooks=8.0, base_factor=1, solver="reuse")
+        b, _cc = ww.unwrap(ig, corr, nlooks=8.0, goldstein_alpha=0)
         np.testing.assert_allclose(a, b, atol=1e-4)
 
     def test_reuse_solver_fixes_clean_bowl_corners(self):

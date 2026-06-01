@@ -47,7 +47,7 @@ def main() -> None:
     reliable = (scc > 0) & mask
 
     t0 = time.perf_counter()
-    unw = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
+    unw, _cc = ww.unwrap(ig, coh, nlooks=NLOOKS, mask=mask, tile_size=TS, tile_overlap=OV)
     dt = time.perf_counter() - t0
     kw = np.round((unw - wrapped) / TAU); kw[~mask] = np.nan
     np.save(OUT / f"nisar_tileconvex_{label}_unw.npy", unw.astype(np.float32))

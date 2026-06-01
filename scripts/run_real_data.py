@@ -73,7 +73,7 @@ def unwrap_and_save(
         print(f"  mask: {mask.sum()} / {mask.size} valid")
 
     t0 = time.perf_counter()
-    unw = ww.unwrap(igram, cor, float(nlooks), mask)
+    unw, _cc = ww.unwrap(igram, cor, float(nlooks), mask)
     dt = time.perf_counter() - t0
     print(f"  unwrap took {dt:.2f}s ({igram.size / dt / 1e6:.2f} Mpx/s)")
 

@@ -46,7 +46,7 @@ def main() -> None:
     print(f"shape={ig.shape} valid={mask.sum():,} mainland={mainland.sum():,} sign={s:+.0f}", flush=True)
 
     t0 = time.perf_counter()
-    unw = ww.unwrap(ig, cohw, nlooks=50.0, mask=mask, multilook=8)
+    unw, _cc = ww.unwrap(ig, cohw, nlooks=50.0, mask=mask, multilook=8)
     dt = time.perf_counter() - t0
     # multilook upsample (block-replicate) may trim the trailing partial block.
     hh, wwd = unw.shape

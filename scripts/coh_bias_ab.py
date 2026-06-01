@@ -59,7 +59,7 @@ def main() -> None:
     print(f"# WHIRLWIND_COH_BIAS_CORRECT={flag!r}")
     print(f"  {'γ':>4}  {'L':>3}  {'RMSE':>8}  {'cycle_err':>9}")
     for gamma, nlooks, ig, cor, truth in make_scenes():
-        unw = ww.unwrap(ig, cor, float(nlooks))
+        unw, _cc = ww.unwrap(ig, cor, float(nlooks))
         rmse, errs = metric(unw, truth)
         print(f"  {gamma:>4.2f} {nlooks:>3}  {rmse:>8.3f}  {errs:>9d}")
 

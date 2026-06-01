@@ -48,7 +48,8 @@ def main() -> None:
         mk = np.ascontiguousarray(valid, bool)
         reg = valid & (pcc > 0)
         t0 = time.perf_counter()
-        u = np.asarray(ww.unwrap(igc, cohc, 16.0, mk), np.float64)  # TRUE default (tile_size=0)
+        _u, _cc = ww.unwrap(igc, cohc, 16.0, mk)  # TRUE default (tile_size=0)
+        u = np.asarray(_u, np.float64)
         dt = time.perf_counter() - t0
         a = np.rint((u - prod) / TAU)[reg]; a = a - modal(a)
         m = 100 * np.mean(np.abs(a) < 0.5)
