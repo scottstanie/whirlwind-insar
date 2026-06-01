@@ -51,85 +51,6 @@ pub enum UnwrapError {
     TooSmall((usize, usize)),
 }
 
-/// Top-level phase unwrap (coherence-based cost — for raw boxcar IGs).
-///
-/// * `igram` — complex interferogram of shape `(m, n)`.
-/// * `corr`  — sample coherence in `[0, 1]` of shape `(m, n)`.
-/// * `nlooks` — effective number of looks (≥ 1).
-/// * `mask` — optional valid-pixel mask (True = valid); same shape.
-///
-/// Returns an `(m, n)` unwrapped phase array (`f32`).
-pub fn unwrap(
-    igram: ArrayView2<Complex32>,
-    corr: ArrayView2<f32>,
-    nlooks: f32,
-    mask: Option<ArrayView2<bool>>,
-) -> Result<Array2<f32>, UnwrapError> {
-    let (m, n) = igram.dim();
-    if (m, n) != corr.dim() {
-        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
-    }
-    if m < 2 || n < 2 {
-        return Err(UnwrapError::TooSmall((m, n)));
-    }
-
-    let wrapped_phase = igram.mapv(|z| z.arg());
-    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
-
-    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
-
-    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
-
-    // max_iter=50: per primal-dual iteration we run one multi-source Dijkstra
-    // that batches every source's augmentation; the SSP fallback does one
-    // Dijkstra *per source*. On very noisy data (hundreds of thousands of
-    // residues) it's ~6× faster end-to-end to run more PD iters and skip
-    // SSP entirely. See `examples/bench_scale.rs`.
-    primal_dual::run(&graph, &mut net, 50);
-
-    let unw = if mask.is_some() {
-        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
-    } else {
-        integrate::integrate(wrapped_phase.view(), &graph, &net)
-    };
-    Ok(unw)
-}
-
-/// [`unwrap`] + SNAPHU-style connected components from the same MCF solve.
-///
-/// Equivalent to running `unwrap` and then growing components on the resulting
-/// MCF network — but does the (expensive) solve only once. See
-/// [`conncomp::grow_components`] for the cut/region-growing rules.
-pub fn unwrap_with_components(
-    igram: ArrayView2<Complex32>,
-    corr: ArrayView2<f32>,
-    nlooks: f32,
-    mask: Option<ArrayView2<bool>>,
-    params: ConnCompParams,
-) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
-    let (m, n) = igram.dim();
-    if (m, n) != corr.dim() {
-        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
-    }
-    if m < 2 || n < 2 {
-        return Err(UnwrapError::TooSmall((m, n)));
-    }
-    let wrapped_phase = igram.mapv(|z| z.arg());
-    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
-    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
-    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
-    primal_dual::run(&graph, &mut net, 50);
-    let unw = if mask.is_some() {
-        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
-    } else {
-        integrate::integrate(wrapped_phase.view(), &graph, &net)
-    };
-    let comps = conncomp::grow_components(&graph, &net, mask, &params);
-    Ok((unw, comps))
-}
-
 /// Robust coherence-cost phase unwrap with auto-tiling.
 ///
 /// `tile_size == 0` (and `multilook <= 1`) auto-tiles frames larger than
@@ -204,9 +125,9 @@ pub fn components_only(
 ///
 /// Phase comes from the robust tiled pipeline ([`unwrap_coherence`]); components
 /// are grown globally and solve-free ([`components_only`]). This replaces the
-/// old whole-image [`unwrap_with_components`] on the public path: the conncomp
-/// path now inherits the same tiling/robustness as phase, and skips the global
-/// solve entirely (strictly less memory than the old path).
+/// old whole-image solve-then-grow path: the conncomp path now inherits the
+/// same tiling/robustness as phase, and skips the global solve entirely
+/// (strictly less memory than the old path).
 pub fn unwrap_coherence_with_components(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -245,9 +166,9 @@ pub fn unwrap_coherence_with_components(
     Ok((phase, comps))
 }
 
-/// **Specialized — not a general substitute for [`unwrap`].**
+/// **Specialized — not a general substitute for [`unwrap_reuse`].**
 ///
-/// [`unwrap`] with a virtual ground node, the coherence-cost twin of
+/// [`unwrap_reuse`] with a virtual ground node, the coherence-cost twin of
 /// [`unwrap_crlb_grounded`]. Adds a single ground node connected to every
 /// boundary residue with a unit-capacity arc of `ground_cost`, so
 /// wrap-line endpoints can terminate at the image boundary independently
@@ -263,7 +184,7 @@ pub fn unwrap_coherence_with_components(
 /// along non-physical paths corrupts the unwrap. Same direction on a NISAR
 /// scene (80 % → 42 %).
 ///
-/// Use [`unwrap`] for real data. This function is exported only for the
+/// Use [`unwrap_reuse`] for real data. This function is exported only for the
 /// boundary-stacking regression and for callers who have verified their
 /// scene is in that regime.
 pub fn unwrap_grounded(
@@ -302,7 +223,7 @@ pub fn unwrap_grounded(
 
 /// **Prototype — SNAPHU-style convex (quadratic) cost solver.**
 ///
-/// Same coherence input as [`unwrap`], but the per-arc cost is parabolic
+/// Same coherence input as [`unwrap_reuse`], but the per-arc cost is parabolic
 /// in flow rather than linear: `c_e(k) = w_e · (k · 100 − offset_e)²`,
 /// where `offset_e` encodes the local smoothed phase gradient as a
 /// preferred integer flow direction, and `w_e` is the inverse noise
@@ -351,7 +272,7 @@ pub fn unwrap_convex(
 
 /// **Prototype — PHASS-style flow-reuse solver.**
 ///
-/// Same Carballo coherence cost as [`unwrap`], same primal-dual driver,
+/// Same Carballo coherence cost as [`unwrap_reuse`], same primal-dual driver,
 /// same Dial bucket-queue Dijkstra. The only difference: the underlying
 /// `Network` runs in `reuse_mode`, which makes every arc multi-unit
 /// (no saturation), and Dial overrides reduced cost to 0 on any arc
@@ -388,56 +309,14 @@ pub fn unwrap_reuse(
     Ok(unw)
 }
 
-/// Top-level phase unwrap (CRLB-weighted cost — for phase-linked IGs).
-///
-/// For interferograms formed from phase-linked SLCs (Dolphin, EVD, EMI),
-/// the proper per-pixel noise weight is the CRLB-derived phase variance,
-/// not the sliding-window sample coherence used by [`unwrap`].
-///
-/// * `igram` — complex interferogram, shape `(m, n)`.
-/// * `variance` — per-pixel phase variance σ²_IG = σ²_a + σ²_b in rad²,
-///   typically `crlb_<date_a>.tif + crlb_<date_b>.tif`. NoData = 0 is fine.
-/// * `mask` — optional valid-pixel mask.
-///
-/// NOTE: uses a unit-capacity network, so it has the capacity-1
-/// boundary-stacking limit — it mis-routes the corners of smooth STEEP signals
-/// (e.g. a clean steep ramp). The DEFAULT CRLB path does NOT use this; it routes
-/// through the corner-safe [`unwrap_crlb_reuse`]. Kept as a building block and
-/// for the boundary-stacking regression — not recommended directly.
-pub fn unwrap_crlb(
-    igram: ArrayView2<Complex32>,
-    variance: ArrayView2<f32>,
-    mask: Option<ArrayView2<bool>>,
-) -> Result<Array2<f32>, UnwrapError> {
-    let (m, n) = igram.dim();
-    if (m, n) != variance.dim() {
-        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
-    }
-    if m < 2 || n < 2 {
-        return Err(UnwrapError::TooSmall((m, n)));
-    }
-    let wrapped_phase = igram.mapv(|z| z.arg());
-    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
-    let costs = cost::compute_crlb_costs(igram, variance, mask);
-    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
-    primal_dual::run(&graph, &mut net, 50);
-    let unw = if mask.is_some() {
-        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
-    } else {
-        integrate::integrate(wrapped_phase.view(), &graph, &net)
-    };
-    Ok(unw)
-}
-
 /// Corner-safe CRLB unwrap (CRLB cost + PHASS flow-reuse network) — the default
 /// whole-image CRLB path, the CRLB twin of [`unwrap_reuse`].
 ///
-/// [`unwrap_crlb`] uses a unit-capacity network that mis-routes the corners of
-/// smooth steep signals (the capacity-1 boundary-stacking limit). The reuse
-/// network lets arcs carry multiple units of flow at zero marginal cost after
-/// the first push, which fixes that. The public `unwrap_crlb` binding and the
-/// CRLB tiler route through this.
+/// A plain unit-capacity network mis-routes the corners of smooth steep signals
+/// (the capacity-1 boundary-stacking limit). The reuse network lets arcs carry
+/// multiple units of flow at zero marginal cost after the first push, which
+/// fixes that. The public `unwrap_crlb` binding and the CRLB tiler route through
+/// this.
 pub fn unwrap_crlb_reuse(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
@@ -462,35 +341,6 @@ pub fn unwrap_crlb_reuse(
         integrate::integrate(wrapped_phase.view(), &graph, &net)
     };
     Ok(unw)
-}
-
-/// [`unwrap_crlb`] + SNAPHU-style connected components from the same solve.
-pub fn unwrap_crlb_with_components(
-    igram: ArrayView2<Complex32>,
-    variance: ArrayView2<f32>,
-    mask: Option<ArrayView2<bool>>,
-    params: ConnCompParams,
-) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
-    let (m, n) = igram.dim();
-    if (m, n) != variance.dim() {
-        return Err(UnwrapError::ShapeMismatch((m, n), variance.dim()));
-    }
-    if m < 2 || n < 2 {
-        return Err(UnwrapError::TooSmall((m, n)));
-    }
-    let wrapped_phase = igram.mapv(|z| z.arg());
-    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
-    let costs = cost::compute_crlb_costs(igram, variance, mask);
-    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
-    primal_dual::run(&graph, &mut net, 50);
-    let unw = if mask.is_some() {
-        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
-    } else {
-        integrate::integrate(wrapped_phase.view(), &graph, &net)
-    };
-    let comps = conncomp::grow_components(&graph, &net, mask, &params);
-    Ok((unw, comps))
 }
 
 /// CRLB-cost connected components from the global cost grid **without running
@@ -560,7 +410,7 @@ pub fn unwrap_crlb_robust_with_components(
 /// Adds a single ground node connected to every boundary residue with a
 /// unit-capacity forward arc of cost `ground_cost`. Wrap-line endpoints
 /// can then terminate at the image boundary independently of each other,
-/// fixing the capacity-1 stacking limitation of [`unwrap_crlb`].
+/// fixing the capacity-1 stacking limitation of a unit-capacity network.
 ///
 /// * `ground_cost = 0` — ground is free. Best for clean inputs whose
 ///   wrap-lines all exit at the boundary (e.g. smooth ramps with no
