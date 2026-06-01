@@ -46,7 +46,11 @@ pub fn wrap_phase(unw: &Array2<f32>) -> Array2<f32> {
     let two_pi = std::f32::consts::TAU;
     unw.mapv(|x| {
         let y = x - two_pi * (x / two_pi).round();
-        if y == -std::f32::consts::PI { -std::f32::consts::PI } else { y }
+        if y == -std::f32::consts::PI {
+            -std::f32::consts::PI
+        } else {
+            y
+        }
     })
 }
 

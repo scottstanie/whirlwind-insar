@@ -259,28 +259,29 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                 }
                 let pot_u = net.potential[u];
                 let src_u = sp.source[u];
-                let mut relax = |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
-                    if net.is_arc_saturated(arc) {
-                        return;
-                    }
-                    let rc = if net.is_used(arc) {
-                        0
-                    } else if net.convex_mode {
-                        net.marginal_cost(arc) - pot_u + net.potential[v]
-                    } else {
-                        net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
+                let mut relax =
+                    |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
+                        if net.is_arc_saturated(arc) {
+                            return;
+                        }
+                        let rc = if net.is_used(arc) {
+                            0
+                        } else if net.convex_mode {
+                            net.marginal_cost(arc) - pot_u + net.potential[v]
+                        } else {
+                            net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
+                        };
+                        let nd = cur_dist + rc;
+                        if nd < sp.dist[v] {
+                            sp.dist[v] = nd;
+                            sp.pred_arc[v] = arc as i32;
+                            sp.pred_node[v] = u as i32;
+                            sp.source[v] = src_u;
+                            let b = (nd as usize) % k;
+                            buckets[b].push((v, nd));
+                            *pending += 1;
+                        }
                     };
-                    let nd = cur_dist + rc;
-                    if nd < sp.dist[v] {
-                        sp.dist[v] = nd;
-                        sp.pred_arc[v] = arc as i32;
-                        sp.pred_node[v] = u as i32;
-                        sp.source[v] = src_u;
-                        let b = (nd as usize) % k;
-                        buckets[b].push((v, nd));
-                        *pending += 1;
-                    }
-                };
                 out_buf.clear();
                 if u < g.num_nodes() {
                     g.outgoing(u, &mut out_buf);
@@ -307,10 +308,21 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             let (proposals, popped_nodes, sinks_popped, _) = current
                 .par_iter()
                 .fold(
-                    || (Vec::<Proposal>::new(), Vec::<u32>::new(), 0_usize, Vec::<(usize, usize)>::with_capacity(8)),
+                    || {
+                        (
+                            Vec::<Proposal>::new(),
+                            Vec::<u32>::new(),
+                            0_usize,
+                            Vec::<(usize, usize)>::with_capacity(8),
+                        )
+                    },
                     |(mut props, mut pops, mut nsinks, mut out_buf): (
-                        Vec<Proposal>, Vec<u32>, usize, Vec<(usize, usize)>,
-                    ), &(u, qd)| {
+                        Vec<Proposal>,
+                        Vec<u32>,
+                        usize,
+                        Vec<(usize, usize)>,
+                    ),
+                     &(u, qd)| {
                         if visited_ref[u].load(Ordering::Relaxed) {
                             return (props, pops, nsinks, out_buf);
                         }

@@ -91,7 +91,11 @@ pub fn grow_components(
     let n_phase = g.n - 1;
     assert!(m_phase >= 1 && n_phase >= 1);
     if let Some(mm) = pixel_mask {
-        assert_eq!(mm.dim(), (m_phase, n_phase), "pixel mask must be (m-1, n-1)");
+        assert_eq!(
+            mm.dim(),
+            (m_phase, n_phase),
+            "pixel mask must be (m-1, n-1)"
+        );
     }
 
     let valid = |i: usize, j: usize| pixel_mask.map(|m| m[(i, j)]).unwrap_or(true);
@@ -212,15 +216,10 @@ mod tests {
         let mask_view = mask.view();
         let costs = cost::compute_carballo_costs(igram.view(), corr.view(), 5.0, Some(mask_view));
         let graph = RectangularGridGraph::new(m + 1, n + 1);
-        let residues = residue::compute_with_mask(
-            igram.mapv(|z| z.arg()).view(),
-            Some(mask_view),
-        );
-        let mut net =
-            Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));
+        let residues = residue::compute_with_mask(igram.mapv(|z| z.arg()).view(), Some(mask_view));
+        let mut net = Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));
         primal_dual::run(&graph, &mut net, 50);
-        let labels =
-            grow_components(&graph, &net, Some(mask_view), &ConnCompParams::default());
+        let labels = grow_components(&graph, &net, Some(mask_view), &ConnCompParams::default());
         // Left and right halves should be in different components.
         let left = labels[(m / 2, n / 4)];
         let right = labels[(m / 2, 3 * n / 4)];
@@ -253,12 +252,8 @@ mod tests {
         let mask_view = mask.view();
         let costs = cost::compute_carballo_costs(igram.view(), corr.view(), 5.0, Some(mask_view));
         let graph = RectangularGridGraph::new(m + 1, n + 1);
-        let residues = residue::compute_with_mask(
-            igram.mapv(|z| z.arg()).view(),
-            Some(mask_view),
-        );
-        let mut net =
-            Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));
+        let residues = residue::compute_with_mask(igram.mapv(|z| z.arg()).view(), Some(mask_view));
+        let mut net = Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));
         primal_dual::run(&graph, &mut net, 50);
         // Default policy: absolute 100-px floor governs (frac is a negligible cap).
         let labels = grow_components(&graph, &net, Some(mask_view), &ConnCompParams::default());
@@ -273,7 +268,10 @@ mod tests {
 
         // The old 1% fraction would have orphaned the 12x12 island: assert the
         // absolute floor is what keeps it (raising min_size_px past 144 drops it).
-        let strict = ConnCompParams { min_size_px: 300, ..Default::default() };
+        let strict = ConnCompParams {
+            min_size_px: 300,
+            ..Default::default()
+        };
         let labels_strict = grow_components(&graph, &net, Some(mask_view), &strict);
         assert_eq!(labels_strict[(9, 9)], 0);
     }

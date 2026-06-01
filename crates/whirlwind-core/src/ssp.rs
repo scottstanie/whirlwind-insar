@@ -13,8 +13,18 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
     let safety_limit = 4 * net.num_nodes();
     while net.excess_nodes().next().is_some() {
         if dbg && safety % 50 == 0 {
-            let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
-            let df: i64 = net.excess.iter().filter(|&&e| e < 0).map(|&e| -e as i64).sum();
+            let ex: i64 = net
+                .excess
+                .iter()
+                .filter(|&&e| e > 0)
+                .map(|&e| e as i64)
+                .sum();
+            let df: i64 = net
+                .excess
+                .iter()
+                .filter(|&&e| e < 0)
+                .map(|&e| -e as i64)
+                .sum();
             eprintln!("[ssp] iter={safety} excess={ex} deficit={df}");
         }
         crate::primal_dual::record_ssp_iter();
@@ -30,7 +40,9 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
         let mut cur = sink;
         loop {
             let parc = sp.pred_arc[cur];
-            if parc < 0 { break; }
+            if parc < 0 {
+                break;
+            }
             arcs.push(parc as usize);
             cur = sp.pred_node[cur] as usize;
             if arcs.len() > net.num_nodes() {
