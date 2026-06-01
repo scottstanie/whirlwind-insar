@@ -20,16 +20,18 @@ single Python process has no effect after the first unwrap.
 | Var | Default | Effect |
 |---|---|---|
 | `WHIRLWIND_DIJKSTRA` | `dial` | Select the multi-source Dijkstra backend: `dial` (serial Dial's bucket queue, default and fastest), `heap` (binary heap, reference implementation), `dial-par` (rayon-parallel Dial — slower than serial on every workload we measured; kept for the explanation in [`PERFORMANCE.md`](PERFORMANCE.md#on-parallelizing-the-multi-source-dijkstra)). |
-| `WHIRLWIND_LLR_COST` | unset | Switch the coherence-cost path to the Carballo log-likelihood-ratio cost rather than the SNAPHU-style non-negative cost. Negative-cost-tolerant and currently requires Bellman-Ford preprocessing to seed initial potentials (not yet wired up), so do not use for production unwraps. |
 | `WHIRLWIND_NO_ANCHOR` | unset | If set, disables the global coarse anchor **and** the multi-scale cascade in the tiled coherence path (`unwrap(..., tile_size, tile_overlap)`), reverting to the single-f=8 anchorless region vote. The default (unset) is the production path that reaches SNAPHU quality (NISAR 99.79 % K-match). For before/after comparison only — see [`report_anchor_cascade.md`](../paper/report_anchor_cascade.md). |
+| `WHIRLWIND_NO_HEAL` | unset | If set, disables the bounded thin-sliver healing pass in the tiled coherence path. Diagnostic before/after only. |
+| `WHIRLWIND_TILE_SOLVER` | `reuse` | Per-tile / whole-image base solver: `reuse` (PHASS flow-reuse, corner-safe, default), `linear` (plain unit-capacity — has a capacity-1 boundary-stacking bug on steep ramps; kept for regression only, see #50), or `convex`. |
+| `WHIRLWIND_TILE_CONVEX` | unset | Legacy alias selecting the convex (quadratic) solver. Research-only — sound but not a general win (Atlanta +4%, regresses NISAR, ~20× slower); see [`convex_cost_design.md`](../paper/convex_cost_design.md). |
 
 Note: there is no env var for the noisy-scene multilook path or for tiling —
 those are proper function arguments: `unwrap(..., tile_size=512,
-tile_overlap=64, multilook=8)`. A set of `WHIRLWIND_CONVEX_*` / `WHIRLWIND_PHASS_COST`
-/ `WHIRLWIND_DEVIATION_COST` / `WHIRLWIND_HARD_CUT_THRESH` / `WHIRLWIND_COH_BIAS_CORRECT`
-knobs also exist in `cost/mod.rs` for the convex-cost prototype; they are
-research-only (the convex solver is unsound — see [`tiling.md`](../paper/tiling.md)
-"Corrections" #2) and should not be used for production.
+tile_overlap=64, multilook=8)`. The earlier `WHIRLWIND_LLR_COST` /
+`WHIRLWIND_CONVEX_OFFSET_*` / `WHIRLWIND_PHASS_COST` / `WHIRLWIND_DEVIATION_COST`
+/ `WHIRLWIND_HARD_CUT_THRESH` / `WHIRLWIND_COH_BIAS_CORRECT` cost-experiment
+knobs have been **removed** (all were dead or proven-worse — see
+`paper/phass_experiments.md` / `convex_cost_design.md` for the negative results).
 
 For the CRLB cost path (`unwrap_crlb`, `unwrap_crlb_grounded`,
 `compute_crlb_costs`) the cost function is fixed — no env-var switch.
