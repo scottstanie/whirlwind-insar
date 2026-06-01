@@ -91,7 +91,8 @@ pub fn build_cycle_basis(graph: &TemporalGraph, tree: &SpanningTree) -> CycleBas
     }
 
     let mut steps: Vec<CycleStep> = Vec::new();
-    let mut cycle_offsets: Vec<u32> = Vec::with_capacity(graph.edges.len() - tree.tree_edges.len() + 1);
+    let mut cycle_offsets: Vec<u32> =
+        Vec::with_capacity(graph.edges.len() - tree.tree_edges.len() + 1);
     let mut defining_edge: Vec<u32> = Vec::new();
     cycle_offsets.push(0);
 
@@ -121,22 +122,34 @@ pub fn build_cycle_basis(graph: &TemporalGraph, tree: &SpanningTree) -> CycleBas
             // walking the IG in the direction pd→x picks up +sgn·ψ̃. Going
             // the other way (x→pd) picks up −sgn·ψ̃.
             let (pd, eidx, sgn) = tree.parent[x].expect("non-reference has parent");
-            path_from_a.push(CycleStep { edge_idx: eidx as u32, sign: -(sgn as i8) });
+            path_from_a.push(CycleStep {
+                edge_idx: eidx as u32,
+                sign: -(sgn as i8),
+            });
             x = pd as usize;
         }
         while depth[y] > depth[x] {
             let (pd, eidx, sgn) = tree.parent[y].expect("non-reference has parent");
             // Walking y→pd then reversing later: in the final a→b traversal
             // this segment is pd→y, which contributes +sgn·ψ̃.
-            path_from_b.push(CycleStep { edge_idx: eidx as u32, sign: sgn as i8 });
+            path_from_b.push(CycleStep {
+                edge_idx: eidx as u32,
+                sign: sgn as i8,
+            });
             y = pd as usize;
         }
         while x != y {
             let (pdx, eidxx, sgnx) = tree.parent[x].expect("non-reference has parent");
-            path_from_a.push(CycleStep { edge_idx: eidxx as u32, sign: -(sgnx as i8) });
+            path_from_a.push(CycleStep {
+                edge_idx: eidxx as u32,
+                sign: -(sgnx as i8),
+            });
             x = pdx as usize;
             let (pdy, eidxy, sgny) = tree.parent[y].expect("non-reference has parent");
-            path_from_b.push(CycleStep { edge_idx: eidxy as u32, sign: sgny as i8 });
+            path_from_b.push(CycleStep {
+                edge_idx: eidxy as u32,
+                sign: sgny as i8,
+            });
             y = pdy as usize;
         }
         // Tree path a→b = path_from_a (in order) ++ reverse(path_from_b).
@@ -148,13 +161,20 @@ pub fn build_cycle_basis(graph: &TemporalGraph, tree: &SpanningTree) -> CycleBas
         }
         // Closing edge: travel back b→a via e_nt. Sign of −1 since the IG is
         // oriented from edge.from → edge.to.
-        steps.push(CycleStep { edge_idx: e_idx as u32, sign: -1 });
+        steps.push(CycleStep {
+            edge_idx: e_idx as u32,
+            sign: -1,
+        });
 
         defining_edge.push(e_idx as u32);
         cycle_offsets.push(steps.len() as u32);
     }
 
-    CycleBasis { steps, cycle_offsets, defining_edge }
+    CycleBasis {
+        steps,
+        cycle_offsets,
+        defining_edge,
+    }
 }
 
 /// One temporal-graph edge: an interferogram between two acquisition dates.
@@ -175,13 +195,20 @@ pub struct TemporalGraph {
 
 impl TemporalGraph {
     pub fn new(n_dates: usize, edges: Vec<Edge>, reference: usize) -> Self {
-        assert!(reference < n_dates, "reference {reference} ≥ n_dates {n_dates}");
+        assert!(
+            reference < n_dates,
+            "reference {reference} ≥ n_dates {n_dates}"
+        );
         for e in &edges {
             assert!((e.from as usize) < n_dates);
             assert!((e.to as usize) < n_dates);
             assert_ne!(e.from, e.to, "self-loop in temporal graph");
         }
-        Self { n_dates, edges, reference }
+        Self {
+            n_dates,
+            edges,
+            reference,
+        }
     }
 }
 
@@ -296,8 +323,8 @@ pub fn build_spanning_tree(graph: &TemporalGraph, priority: Option<&[f32]>) -> S
     // Adjacency: for each date, list of (neighbour_date, edge_index, signed_dir).
     let mut adj: Vec<Vec<(u32, usize, f32)>> = vec![Vec::new(); d];
     for (idx, e) in graph.edges.iter().enumerate() {
-        adj[e.from as usize].push((e.to, idx, 1.0));   // travelling from→to gives +ψ_e
-        adj[e.to as usize].push((e.from, idx, -1.0));  // travelling to→from gives −ψ_e
+        adj[e.from as usize].push((e.to, idx, 1.0)); // travelling from→to gives +ψ_e
+        adj[e.to as usize].push((e.from, idx, -1.0)); // travelling to→from gives −ψ_e
     }
 
     let mut parent: Vec<Option<(u32, usize, f32)>> = vec![None; d];
@@ -325,10 +352,11 @@ pub fn build_spanning_tree(graph: &TemporalGraph, priority: Option<&[f32]>) -> S
                 continue;
             }
             if let Some((p, _, _, _)) = best[v]
-                && p < pick_pri {
-                    pick = Some(v);
-                    pick_pri = p;
-                }
+                && p < pick_pri
+            {
+                pick = Some(v);
+                pick_pri = p;
+            }
         }
         let v = pick.expect("graph not connected");
         let (_, pdate, eidx, sgn) = best[v].unwrap();
@@ -339,7 +367,11 @@ pub fn build_spanning_tree(graph: &TemporalGraph, priority: Option<&[f32]>) -> S
         relax(v, &adj, priority, &in_tree, &mut best);
     }
 
-    SpanningTree { tree_edges, bfs_order, parent }
+    SpanningTree {
+        tree_edges,
+        bfs_order,
+        parent,
+    }
 }
 
 fn relax(
@@ -576,10 +608,7 @@ fn quality_row(
 /// Returns shape (m, n); each value is the per-pixel max |K| over all
 /// triangles that pass through this pixel. K = 0 means every triangle
 /// agrees on its integer ambiguities here.
-pub fn quality_from_triangles(
-    unw_stack: ArrayView3<f32>,
-    graph: &TemporalGraph,
-) -> Array2<u16> {
+pub fn quality_from_triangles(unw_stack: ArrayView3<f32>, graph: &TemporalGraph) -> Array2<u16> {
     let (n_edges, m, n) = unw_stack.dim();
     assert_eq!(n_edges, graph.edges.len());
 
@@ -606,10 +635,16 @@ pub fn quality_from_triangles(
     let d = graph.n_dates as u32;
     for a in 0..d {
         for b in (a + 1)..d {
-            let Some(&(e_ab, s_ab)) = edge_lookup.get(&(a, b)) else { continue };
+            let Some(&(e_ab, s_ab)) = edge_lookup.get(&(a, b)) else {
+                continue;
+            };
             for c in (b + 1)..d {
-                let Some(&(e_bc, s_bc)) = edge_lookup.get(&(b, c)) else { continue };
-                let Some(&(e_ac, s_ac)) = edge_lookup.get(&(a, c)) else { continue };
+                let Some(&(e_bc, s_bc)) = edge_lookup.get(&(b, c)) else {
+                    continue;
+                };
+                let Some(&(e_ac, s_ac)) = edge_lookup.get(&(a, c)) else {
+                    continue;
+                };
                 triangles.push((e_ab, s_ab, e_bc, s_bc, e_ac, s_ac));
             }
         }
@@ -689,7 +724,10 @@ mod quality_tests {
             }
         }
         let q = quality_max_integer_cycles(stack.view(), &g, None);
-        assert!(q.iter().all(|&v| v == 0), "consistent stack should give K=0 everywhere");
+        assert!(
+            q.iter().all(|&v| v == 0),
+            "consistent stack should give K=0 everywhere"
+        );
     }
 
     #[test]
@@ -733,8 +771,8 @@ mod quality_tests {
             for j in 0..n {
                 let a = 0.1 * i as f32;
                 let b = 0.2 * j as f32;
-                stack[(0, i, j)] = a;     // 0→1
-                stack[(1, i, j)] = b;     // 1→2
+                stack[(0, i, j)] = a; // 0→1
+                stack[(1, i, j)] = b; // 1→2
                 stack[(2, i, j)] = a + b; // 0→2
             }
         }
@@ -762,7 +800,7 @@ mod quality_tests {
             n_dates: 3,
             edges: vec![
                 Edge { from: 0, to: 1 },
-                Edge { from: 2, to: 1 },  // reversed: stack[1] = θ(1) - θ(2)
+                Edge { from: 2, to: 1 }, // reversed: stack[1] = θ(1) - θ(2)
                 Edge { from: 0, to: 2 },
             ],
             reference: 0,
@@ -774,9 +812,9 @@ mod quality_tests {
             for j in 0..n {
                 let theta1 = 0.1 * i as f32;
                 let theta2 = theta1 + 0.2 * j as f32;
-                stack[(0, i, j)] = theta1;          // θ(1) - θ(0); θ(0)=0
+                stack[(0, i, j)] = theta1; // θ(1) - θ(0); θ(0)=0
                 stack[(1, i, j)] = theta1 - theta2; // θ(1) - θ(2) (reversed)
-                stack[(2, i, j)] = theta2;          // θ(2) - θ(0)
+                stack[(2, i, j)] = theta2; // θ(2) - θ(0)
             }
         }
         // Consistent stack ⇒ closure must be 0 even with reversed edge.
@@ -841,7 +879,11 @@ pub fn refine_mcf(
 ) -> RefineOutput {
     let (n_edges, m, n) = unw_stack.dim();
     assert_eq!(n_edges, graph.edges.len(), "stack/graph edge mismatch");
-    assert_eq!(crlb_per_date.dim().0, graph.n_dates, "CRLB date axis mismatch");
+    assert_eq!(
+        crlb_per_date.dim().0,
+        graph.n_dates,
+        "CRLB date axis mismatch"
+    );
     assert_eq!(crlb_per_date.dim().1, m);
     assert_eq!(crlb_per_date.dim().2, n);
 
@@ -904,10 +946,10 @@ pub fn refine_mcf(
 }
 
 struct RefineRow {
-    corrected: Vec<f32>,    // (E, n)
-    corrections: Vec<i16>,  // (E, n)
-    violations: Vec<u16>,   // (n,)
-    iters: Vec<u8>,         // (n,)
+    corrected: Vec<f32>,   // (E, n)
+    corrections: Vec<i16>, // (E, n)
+    violations: Vec<u16>,  // (n,)
+    iters: Vec<u8>,        // (n,)
 }
 
 fn refine_row(
@@ -929,8 +971,8 @@ fn refine_row(
     // Per-pixel scratch (reused across columns in this row).
     let mut y = vec![0.0_f32; n_edges];
     let mut k = vec![0_i32; n_edges];
-    let mut sigma2 = vec![0.0_f32; n_edges];           // per-edge IG variance
-    let mut demand = vec![0_i32; basis.num_cycles()];  // residue per cycle / 2π, rounded
+    let mut sigma2 = vec![0.0_f32; n_edges]; // per-edge IG variance
+    let mut demand = vec![0_i32; basis.num_cycles()]; // residue per cycle / 2π, rounded
 
     for j in 0..n {
         // Initialise y from the input stack and σ²_e from per-date CRLB.
@@ -938,8 +980,8 @@ fn refine_row(
             y[e] = unw_stack[(e, i, j)];
             k[e] = 0;
             let edge = graph.edges[e];
-            sigma2[e] = crlb_per_date[(edge.from as usize, i, j)]
-                + crlb_per_date[(edge.to as usize, i, j)];
+            sigma2[e] =
+                crlb_per_date[(edge.from as usize, i, j)] + crlb_per_date[(edge.to as usize, i, j)];
         }
 
         // Compute initial demands per cycle.
@@ -1015,7 +1057,12 @@ fn refine_row(
         }
     }
 
-    RefineRow { corrected, corrections, violations, iters }
+    RefineRow {
+        corrected,
+        corrections,
+        violations,
+        iters,
+    }
 }
 
 // ---- tests ---------------------------------------------------------------
@@ -1040,7 +1087,11 @@ mod tests {
             ],
             0,
         );
-        let theta = [0.0_f32, std::f32::consts::FRAC_PI_4, std::f32::consts::FRAC_PI_2];
+        let theta = [
+            0.0_f32,
+            std::f32::consts::FRAC_PI_4,
+            std::f32::consts::FRAC_PI_2,
+        ];
         let mut psi = Vec::<f32>::new();
         for e in &graph.edges {
             psi.push(theta[e.to as usize] - theta[e.from as usize]);
@@ -1061,10 +1112,13 @@ mod tests {
         // Sum of integer corrections, weighted by sign in the cycle, must be ±1.
         // (Some edge absorbs the +1 cycle; the tree-based picker may put it
         //  on a different edge than the original injection.)
-        let total_k: i32 = out.corrections[(0, 0, 0)] as i32
-            + out.corrections[(1, 0, 0)] as i32
+        let total_k: i32 = out.corrections[(0, 0, 0)] as i32 + out.corrections[(1, 0, 0)] as i32
             - out.corrections[(2, 0, 0)] as i32;
-        assert_eq!(total_k.abs(), 1, "total cycle correction magnitude should be 1, got {total_k}");
+        assert_eq!(
+            total_k.abs(),
+            1,
+            "total cycle correction magnitude should be 1, got {total_k}"
+        );
     }
 
     /// Noiseless dense network of 4 dates and 6 IGs: corrections should be all
@@ -1129,7 +1183,7 @@ mod tests {
         }
         // Inject errors on non-tree edges (the tree will be 0,1,2 for natural
         // BFS order from 0). Edges 3, 4, 5 are loops.
-        psi[3] += TAU;     // (1,2) +1 cycle
+        psi[3] += TAU; // (1,2) +1 cycle
         psi[5] -= 2.0 * TAU; // (2,3) -2 cycles
 
         let mut stack = Array3::<f32>::zeros((6, 1, 1));
@@ -1202,11 +1256,16 @@ mod tests {
         }
         let out = refine_mcf(stack.view(), &graph, crlb.view(), Some(&prio), 16);
         // After MCF, the +1 cycle on edge 1 should be removed.
-        assert_eq!(out.residual_violations[(0, 0)], 0, "all cycles should close");
+        assert_eq!(
+            out.residual_violations[(0, 0)],
+            0,
+            "all cycles should close"
+        );
         // Sign convention: corrected = original − 2π·k. Injection was +2π, so
         // the correction that removes it is k = +1.
         assert_eq!(
-            out.corrections[(1, 0, 0)], 1,
+            out.corrections[(1, 0, 0)],
+            1,
             "MCF should record k=+1 on edge 1, got {}",
             out.corrections[(1, 0, 0)]
         );
@@ -1247,12 +1306,12 @@ mod tests {
         let graph = TemporalGraph::new(
             4,
             vec![
-                Edge { from: 0, to: 1 },  // edge 0  — cheap
-                Edge { from: 0, to: 2 },  // edge 1  — expensive
-                Edge { from: 0, to: 3 },  // edge 2  — expensive
-                Edge { from: 1, to: 2 },  // edge 3  — cheap
-                Edge { from: 1, to: 3 },  // edge 4  — expensive
-                Edge { from: 2, to: 3 },  // edge 5  — cheap
+                Edge { from: 0, to: 1 }, // edge 0  — cheap
+                Edge { from: 0, to: 2 }, // edge 1  — expensive
+                Edge { from: 0, to: 3 }, // edge 2  — expensive
+                Edge { from: 1, to: 2 }, // edge 3  — cheap
+                Edge { from: 1, to: 3 }, // edge 4  — expensive
+                Edge { from: 2, to: 3 }, // edge 5  — cheap
             ],
             0,
         );

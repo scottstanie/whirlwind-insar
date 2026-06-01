@@ -19,7 +19,7 @@
 //! Block iteration is parallelised over independent FFTs via rayon and
 //! batched (write-back is serial) so peak memory stays small.
 
-use ndarray::{s, Array2, ArrayView2, Axis};
+use ndarray::{Array2, ArrayView2, Axis, s};
 use num_complex::Complex32;
 use rayon::prelude::*;
 use rustfft::{Fft, FftPlanner};
@@ -33,13 +33,12 @@ use std::sync::Arc;
 /// * `alpha` — filter strength in `[0, 1]`. `0` = identity (returns a
 ///   unit-magnitude copy of the input).
 /// * `psize` — square FFT patch size. Must be even and ≥ 4.
-pub fn goldstein(
-    igram: ArrayView2<Complex32>,
-    alpha: f32,
-    psize: usize,
-) -> Array2<Complex32> {
+pub fn goldstein(igram: ArrayView2<Complex32>, alpha: f32, psize: usize) -> Array2<Complex32> {
     assert!(alpha >= 0.0, "alpha must be >= 0, got {alpha}");
-    assert!(psize >= 4 && psize.is_multiple_of(2), "psize must be even and ≥ 4");
+    assert!(
+        psize >= 4 && psize.is_multiple_of(2),
+        "psize must be even and ≥ 4"
+    );
     let (m, n) = igram.dim();
     let step = psize / 2;
 
@@ -136,20 +135,17 @@ pub fn goldstein(
         .slice(s![pad_top..pad_top + m, pad_left..pad_left + n])
         .to_owned();
     let mut result = cropped;
-    ndarray::Zip::from(&mut result).and(&empty).for_each(|r, &is_empty| {
-        if is_empty {
-            *r = Complex32::default();
-        }
-    });
+    ndarray::Zip::from(&mut result)
+        .and(&empty)
+        .for_each(|r, &is_empty| {
+            if is_empty {
+                *r = Complex32::default();
+            }
+        });
     result
 }
 
-fn extract_patch(
-    src: ArrayView2<Complex32>,
-    r0: usize,
-    c0: usize,
-    psize: usize,
-) -> Vec<Complex32> {
+fn extract_patch(src: ArrayView2<Complex32>, r0: usize, c0: usize, psize: usize) -> Vec<Complex32> {
     let mut buf = Vec::with_capacity(psize * psize);
     for i in 0..psize {
         for j in 0..psize {
@@ -163,12 +159,7 @@ fn extract_patch(
 ///
 /// `scratch` must have length `p * p`; it's used for the column-pass
 /// transpose and reused across calls so we don't reallocate per patch.
-fn fft2_inplace(
-    buf: &mut [Complex32],
-    scratch: &mut [Complex32],
-    fft: &dyn Fft<f32>,
-    p: usize,
-) {
+fn fft2_inplace(buf: &mut [Complex32], scratch: &mut [Complex32], fft: &dyn Fft<f32>, p: usize) {
     debug_assert_eq!(buf.len(), p * p);
     debug_assert_eq!(scratch.len(), p * p);
     // FFT each row.

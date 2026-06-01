@@ -40,10 +40,7 @@ fn diagonal_ramp_512() {
     let unw = unwrap(igram.view(), corr.view(), 1.0, None).unwrap();
     let aligned = align_to_truth(&unw, &truth);
     let err = max_abs_err(&aligned, &truth);
-    assert!(
-        err < 1e-2,
-        "max error {err} too large for a smooth ramp"
-    );
+    assert!(err < 1e-2, "max error {err} too large for a smooth ramp");
 }
 
 /// The same 6π smooth-ramp regression test, but with the SNAPHU-style
@@ -60,7 +57,10 @@ fn diagonal_ramp_512_convex() {
     let unw = unwrap_convex(igram.view(), corr.view(), 1.0, None).unwrap();
     let aligned = align_to_truth(&unw, &truth);
     let err = max_abs_err(&aligned, &truth);
-    assert!(err < 1e-2, "max error {err} too large for convex-mode smooth ramp");
+    assert!(
+        err < 1e-2,
+        "max error {err} too large for convex-mode smooth ramp"
+    );
 }
 
 /// The 6π diagonal ramp test that fails under [`unwrap`]'s capacity-1
@@ -77,7 +77,10 @@ fn diagonal_ramp_512_reuse() {
     let unw = unwrap_reuse(igram.view(), corr.view(), 1.0, None).unwrap();
     let aligned = align_to_truth(&unw, &truth);
     let err = max_abs_err(&aligned, &truth);
-    assert!(err < 1e-2, "max error {err} too large for reuse-mode smooth ramp");
+    assert!(
+        err < 1e-2,
+        "max error {err} too large for reuse-mode smooth ramp"
+    );
 }
 
 /// The 6π diagonal ramp test that fails under [`unwrap`]'s capacity-1 setup
@@ -96,7 +99,10 @@ fn diagonal_ramp_512_grounded() {
     let unw = unwrap_crlb_grounded(igram.view(), var.view(), None, 0).unwrap();
     let aligned = align_to_truth(&unw, &truth);
     let err = max_abs_err(&aligned, &truth);
-    assert!(err < 1e-2, "max error {err} too large for grounded smooth ramp");
+    assert!(
+        err < 1e-2,
+        "max error {err} too large for grounded smooth ramp"
+    );
 }
 
 /// Single planted residue pair: a phase that loops once around an interior

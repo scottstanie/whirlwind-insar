@@ -23,7 +23,7 @@ use ndarray::ArrayView2;
 pub struct Network {
     pub excess: Vec<i32>,
     pub potential: Vec<i64>,
-    pub cost_fwd: Vec<i32>,   // length = nf_total (grid + ground forward costs)
+    pub cost_fwd: Vec<i32>, // length = nf_total (grid + ground forward costs)
     pub is_saturated: BitVec, // length = 2 * nf_total
 
     /// Signed flow on each forward arc; only meaningful in `reuse_mode` or
@@ -137,13 +137,7 @@ impl Network {
         // Build a zero-cost linear network just to reuse the topology /
         // mask-forbidding plumbing; we override cost lookups in dial.rs.
         let placeholder_costs = vec![0_i32; g.num_forward];
-        let mut net = Self::new_with_mask_and_ground(
-            g,
-            residues,
-            &placeholder_costs,
-            mask,
-            None,
-        );
+        let mut net = Self::new_with_mask_and_ground(g, residues, &placeholder_costs, mask, None);
         net.convex_mode = true;
         net.offsets = offsets.to_vec();
         net.weights = weights.to_vec();
@@ -197,15 +191,27 @@ impl Network {
         costs: Vec<i32>,
         forbidden_fwd: Option<&BitSlice>,
     ) -> Self {
-        assert_eq!(excess.len(), num_nodes, "excess length must match num_nodes");
-        assert_eq!(costs.len(), num_forward, "costs length must match num_forward");
+        assert_eq!(
+            excess.len(),
+            num_nodes,
+            "excess length must match num_nodes"
+        );
+        assert_eq!(
+            costs.len(),
+            num_forward,
+            "costs length must match num_forward"
+        );
 
         let nf = num_forward;
         let mut sat = bitvec![1; 2 * nf];
         sat[..nf].fill(false);
 
         if let Some(forbidden) = forbidden_fwd {
-            assert_eq!(forbidden.len(), nf, "forbidden_fwd length must match num_forward");
+            assert_eq!(
+                forbidden.len(),
+                nf,
+                "forbidden_fwd length must match num_forward"
+            );
             for a in 0..nf {
                 if forbidden[a] {
                     sat.set(a, true);
@@ -423,11 +429,7 @@ impl Network {
     pub fn transpose(&self, arc: usize) -> usize {
         let nf = self.num_forward();
         debug_assert!(arc < 2 * nf, "arc {arc} out of bounds (nf={nf})");
-        if arc < nf {
-            arc + nf
-        } else {
-            arc - nf
-        }
+        if arc < nf { arc + nf } else { arc - nf }
     }
 
     /// For a boundary residue node, returns the index `i` such that the
@@ -437,11 +439,7 @@ impl Network {
     #[inline]
     pub fn boundary_idx_of(&self, node: usize) -> Option<usize> {
         let i = *self.node_to_ground_idx.get(node)?;
-        if i < 0 {
-            None
-        } else {
-            Some(i as usize)
-        }
+        if i < 0 { None } else { Some(i as usize) }
     }
 
     /// Forward arc IDs for the two ground-arcs at boundary index `i`:
@@ -652,7 +650,11 @@ impl Network {
             return 0;
         }
         let nf = self.num_forward();
-        let (fwd, sign) = if arc < nf { (arc, 1_i64) } else { (arc - nf, -1_i64) };
+        let (fwd, sign) = if arc < nf {
+            (arc, 1_i64)
+        } else {
+            (arc - nf, -1_i64)
+        };
         let f = self.flow_count[fwd] as i64;
         let o = self.offsets[fwd] as i64;
         let w = self.weights[fwd] as i64;
@@ -711,7 +713,11 @@ impl Network {
             return self.flow_count[fwd];
         }
         let rev = fwd + nf;
-        if self.is_saturated[fwd] && !self.is_saturated[rev] { 1 } else { 0 }
+        if self.is_saturated[fwd] && !self.is_saturated[rev] {
+            1
+        } else {
+            0
+        }
     }
 
     /// Reduced cost of an arc: `c - π_tail + π_head`.
@@ -824,8 +830,16 @@ mod convex_marginal_tests {
         let net = make_net_convex(offsets, weights);
 
         assert_eq!(net.marginal_cost(0), 10_000, "offset=0 forward push");
-        assert_eq!(net.marginal_cost(1), 0,      "offset=50 forward push (indifferent)");
-        assert_eq!(net.marginal_cost(2), 20_000, "offset=-50 forward push (resist)");
+        assert_eq!(
+            net.marginal_cost(1),
+            0,
+            "offset=50 forward push (indifferent)"
+        );
+        assert_eq!(
+            net.marginal_cost(2),
+            20_000,
+            "offset=-50 forward push (resist)"
+        );
     }
 
     /// Pushing flow toward offset should be cheaper than pushing away.
@@ -841,10 +855,22 @@ mod convex_marginal_tests {
         let weights = vec![1_i32; nf];
         let net = make_net_convex(offsets, weights);
         // Reverse arc id = fwd + nf.
-        assert_eq!(net.marginal_cost(0),        0,      "fwd push toward +50 offset = 0");
-        assert_eq!(net.marginal_cost(0 + nf),   20_000, "rev push away from +50 offset = 20000");
-        assert_eq!(net.marginal_cost(1),        20_000, "fwd push away from -50 offset = 20000");
-        assert_eq!(net.marginal_cost(1 + nf),   0,      "rev push toward -50 offset = 0");
+        assert_eq!(net.marginal_cost(0), 0, "fwd push toward +50 offset = 0");
+        assert_eq!(
+            net.marginal_cost(0 + nf),
+            20_000,
+            "rev push away from +50 offset = 20000"
+        );
+        assert_eq!(
+            net.marginal_cost(1),
+            20_000,
+            "fwd push away from -50 offset = 20000"
+        );
+        assert_eq!(
+            net.marginal_cost(1 + nf),
+            0,
+            "rev push toward -50 offset = 0"
+        );
     }
 
     /// MCF-mode networks have marginal_cost always returning 0 (no overhead).
@@ -877,7 +903,10 @@ mod convex_marginal_tests {
         let mut net = Network::new_convex_with_mask(&g, residues.view(), &offsets, &weights, None);
 
         // Pre-condition: arc 0's forward marginal is NEGATIVE at f=0.
-        assert!(net.marginal_cost(0) < 0, "offset=90 should give negative f=0 marginal");
+        assert!(
+            net.marginal_cost(0) < 0,
+            "offset=90 should give negative f=0 marginal"
+        );
 
         net.preload_convex_min(&g);
 
@@ -888,10 +917,20 @@ mod convex_marginal_tests {
         // Soundness invariant: all reduced costs at zero potential (= marginals
         // at the pre-loaded flow) are ≥0 in both directions.
         for fwd in 0..nf {
-            assert!(net.marginal_cost(fwd) >= 0, "fwd arc {fwd} marginal < 0 after preload");
-            assert!(net.marginal_cost(fwd + nf) >= 0, "rev arc {fwd} marginal < 0 after preload");
+            assert!(
+                net.marginal_cost(fwd) >= 0,
+                "fwd arc {fwd} marginal < 0 after preload"
+            );
+            assert!(
+                net.marginal_cost(fwd + nf) >= 0,
+                "rev arc {fwd} marginal < 0 after preload"
+            );
         }
         // Conservation preserved.
-        assert_eq!(net.excess.iter().sum::<i32>(), 0, "preload must keep sum(excess)=0");
+        assert_eq!(
+            net.excess.iter().sum::<i32>(),
+            0,
+            "preload must keep sum(excess)=0"
+        );
     }
 }

@@ -38,7 +38,7 @@
 //! `Network::warm_start`.
 
 use crate::residual_graph::ResidualGraph;
-use delaunator::{triangulate, Point, EMPTY};
+use delaunator::{EMPTY, Point, triangulate};
 
 /// Sparse dual graph of a Delaunay triangulation over a set of input pixels.
 pub struct TriangulatedGraph {
@@ -118,9 +118,7 @@ impl TriangulatedGraph {
         let mut edge_pixels: Vec<(u32, u32)> = Vec::new();
         let mut is_long: Vec<bool> = Vec::new();
 
-        let next_he = |he: usize| -> usize {
-            if he % 3 == 2 { he - 2 } else { he + 1 }
-        };
+        let next_he = |he: usize| -> usize { if he % 3 == 2 { he - 2 } else { he + 1 } };
         let pixel_dist_sq = |a: usize, b: usize| -> f64 {
             let pa = &points[a];
             let pb = &points[b];
@@ -217,7 +215,11 @@ impl TriangulatedGraph {
     #[inline]
     pub fn triangle_vertices(&self, t: usize) -> (u32, u32, u32) {
         let base = 3 * t;
-        (self.triangles[base], self.triangles[base + 1], self.triangles[base + 2])
+        (
+            self.triangles[base],
+            self.triangles[base + 1],
+            self.triangles[base + 2],
+        )
     }
 
     /// Pixel indices `(origin, destination)` for the canonical direction of
@@ -239,7 +241,11 @@ impl TriangulatedGraph {
     pub fn arc_pixel_pair(&self, arc: usize) -> (u32, u32) {
         let e_idx = self.edge_index_of_arc(arc);
         let (a, b) = self.edge_pixels[e_idx];
-        if self.arc_is_canonical_direction(arc) { (a, b) } else { (b, a) }
+        if self.arc_is_canonical_direction(arc) {
+            (a, b)
+        } else {
+            (b, a)
+        }
     }
 
     /// True if `arc` runs in the canonical direction (`tail[e] -> head[e]`).
@@ -299,14 +305,14 @@ impl ResidualGraph for TriangulatedGraph {
                 // node == tail[eidx]. Forward canonical arc out + residual
                 // reverse of the reversed-direction forward arc.
                 let head_node = self.head[eidx] as usize;
-                out.push((eidx, head_node));               // canonical fwd
-                out.push((eidx + 3 * e, head_node));       // residual reverse of reversed fwd
+                out.push((eidx, head_node)); // canonical fwd
+                out.push((eidx + 3 * e, head_node)); // residual reverse of reversed fwd
             } else {
                 // node == head[eidx]. Forward reversed arc out + residual
                 // reverse of the canonical-direction forward arc.
                 let tail_node = self.tail[eidx] as usize;
-                out.push((eidx + e, tail_node));           // reversed fwd
-                out.push((eidx + 2 * e, tail_node));       // residual reverse of canonical fwd
+                out.push((eidx + e, tail_node)); // reversed fwd
+                out.push((eidx + 2 * e, tail_node)); // residual reverse of canonical fwd
             }
         }
     }
