@@ -24,7 +24,6 @@ from ._native import (
     unwrap_crlb as unwrap_crlb,
     unwrap_crlb_grounded as unwrap_crlb_grounded,
     unwrap_grounded as unwrap_grounded,
-    unwrap_pyramid as unwrap_pyramid,
     unwrap_reuse as unwrap_reuse,
     unwrap_sparse as unwrap_sparse,
     wrap_phase as wrap_phase,

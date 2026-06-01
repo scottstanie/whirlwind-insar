@@ -85,20 +85,6 @@ def unwrap_grounded(
     on clean smooth ramps but corrupts noisy real data. See
     ``paper/phass_experiments.md``."""
 
-def unwrap_pyramid(
-    igram: NDArray[np.complex64],
-    corr: NDArray[np.float32],
-    nlooks: float = ...,
-    mask: NDArray[np.bool_] | None = ...,
-    base_factor: int = ...,
-    solver: str = ...,
-    tile_size: int = ...,
-) -> NDArray[np.float32]:
-    """Pyramidal (coarse-to-fine) unwrap — a non-aliasing alternative to
-    single-shot ``multilook`` for steep dense-fringe scenes. ``base_factor``
-    is the coarsest down-look (power of two); ``solver`` is
-    ``"reuse"|"convex"|"linear"``. See ``paper/pyramid_aliasing.md``."""
-
 def unwrap_crlb(
     igram: NDArray[np.complex64],
     variance: NDArray[np.float32],
