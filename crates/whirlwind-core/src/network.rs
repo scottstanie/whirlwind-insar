@@ -259,8 +259,8 @@ impl Network {
     ///    recompute valid potentials, plus Klein cycle-cancellation when
     ///    the warm-start flow contains negative residual cycles.
     ///
-    /// See PR #7's "Stage 3 was harder than the 50-LOC estimate" section in
-    /// `docs/TILING_DESIGN.md` for the full analysis.
+    /// See the "Stage 3 was harder than the 50-LOC estimate" section in
+    /// `paper/tiling.md` for the full analysis.
     ///
     /// Until that machinery lands, prefer the [`Network::from_topology`]
     /// `excess` parameter for "apply div(warm-start) without saturating

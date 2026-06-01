@@ -37,7 +37,7 @@ def _unwrap_native(
     best universal size (whole-image runs away to ~80% on NISAR, and bigger
     tiles REGRESS clean scenes — e.g. D_074 98→81% at tile1024). Pass
     ``tile_size`` (``2<=tile_overlap<tile_size``) to override. The base solver
-    defaults to corner-safe REUSE (override ``WHIRLWIND_TILE_SOLVER``). The tiled
+    is corner-safe REUSE (:func:`unwrap_reuse`; override ``WHIRLWIND_TILE_SOLVER``). The tiled
     path = per-tile MCF + global coarse anchor + multi-scale cascade + bounded
     sliver cleanup + a GATED MULTI-SHIFT re-solve and seam-repair for fragmented
     scenes (no-op on clean ones). Fixes NISAR-GUNW A_016 (55→97%).
@@ -57,33 +57,12 @@ def unwrap_reuse(
     nlooks: float = ...,
     mask: NDArray[np.bool_] | None = ...,
 ) -> NDArray[np.float32]:
-    """Prototype: PHASS-style flow-reuse solver (the whole-image base solver).
+    """PHASS-style flow-reuse solver — the default whole-image tile solver.
 
     Same Carballo coherence cost as :func:`whirlwind.unwrap`, but arcs carry
-    multiple units of flow at zero marginal cost after the first push.
+    multiple units of flow at zero marginal cost after the first push (the
+    corner-safe behaviour that replaced the removed capacity-1 solver).
     """
-
-def unwrap_convex(
-    igram: NDArray[np.complex64],
-    corr: NDArray[np.float32],
-    nlooks: float = ...,
-    mask: NDArray[np.bool_] | None = ...,
-) -> NDArray[np.float32]:
-    """Prototype: SNAPHU-style convex (quadratic) per-arc cost. Sound but not a
-    general win (see ``paper/convex_cost_design.md``); research use only."""
-
-def unwrap_grounded(
-    igram: NDArray[np.complex64],
-    corr: NDArray[np.float32],
-    nlooks: float = ...,
-    mask: NDArray[np.bool_] | None = ...,
-    ground_cost: int = ...,
-) -> NDArray[np.float32]:
-    """Specialized — NOT a general substitute for :func:`whirlwind.unwrap`.
-
-    Coherence-cost unwrap with a virtual ground node; fixes boundary-stacking
-    on clean smooth ramps but corrupts noisy real data. See
-    ``paper/phass_experiments.md``."""
 
 def unwrap_crlb(
     igram: NDArray[np.complex64],

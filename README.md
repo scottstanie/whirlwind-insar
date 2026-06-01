@@ -1,8 +1,9 @@
 # whirlwind-rs
 
 A fast Bayesian phase unwrapper for InSAR — both individual interferograms
-and full phase-linked time-series stacks. Written in Rust with Python
-bindings.
+and phase-linked time-series stacks (2D per-IG is the validated, default path;
+3D temporal closure is opt-in and currently regresses on tight unwraps — see
+below). Written in Rust with Python bindings.
 
 Two entry points, sharing the same minimum-cost-flow core:
 
@@ -30,8 +31,16 @@ Two entry points, sharing the same minimum-cost-flow core:
   selection → per-date posterior std).
 
 A Python orchestrator (`scripts/unwrap_stack.py`) wraps `unwrap_crlb` over
-a full Dolphin output dir to produce a closure-consistent, reference-anchored
-unwrapped stack + per-pixel quality map + per-date posterior σ cube.
+a full Dolphin output dir to produce a reference-anchored unwrapped stack +
+per-pixel quality map + per-date posterior σ cube.
+
+> **3D is not a closed-loop unwrapper by default.** `unwrap_stack.py` emits raw
+> per-IG unwraps with reference-pixel anchoring (`--closure off`, the default and
+> highest-quality option). The optional `--closure tree` enforces exact temporal
+> consistency but currently *regresses*: median absolute RMS vs SNAPHU is 2.29 rad
+> without closure vs 5.61 rad with it (see
+> [`ATBD-3d.md §10.2`](ATBD-3d.md#102-closure-correction-now-hurts-more-than-it-helps)).
+> The 2D per-IG path is what CI validates and what dolphin uses.
 
 ## Documents
 
@@ -45,11 +54,11 @@ unwrapped stack + per-pixel quality map + per-date posterior σ cube.
 - **`paper/whirlwind3d.tex`** — IEEE GRSL letter draft (5 pp.) covering
   the publishable claims; build the PDF with
   `cd paper && latexmk -pdf whirlwind3d.tex`.
-- **[`PERFORMANCE.md`](PERFORMANCE.md)** — per-stage timings,
+- **[`PERFORMANCE.md`](docs/PERFORMANCE.md)** — per-stage timings,
   scaling, memory model, mask-acceleration numbers.
-- **[`TILING_DESIGN.md`](TILING_DESIGN.md)** — design notes for
-  the tiled solver (Stage 1 implemented; Stages 2–3 deferred).
-- **[`ENV_VARS.md`](ENV_VARS.md)** — debug / research env vars.
+- **[`TILING_DESIGN.md`](docs/TILING_DESIGN.md)** — pointer to the
+  authoritative tiling account in `paper/tiling.md`.
+- **[`ENV_VARS.md`](docs/ENV_VARS.md)** — debug / research env vars.
 
 The same docs are also published as a Material-themed mkdocs site (see
 `mkdocs.yml`; build locally with `uv run mkdocs serve`). The Rust crate
@@ -212,7 +221,7 @@ Single-IG throughput is **~50–105 Mpx/s** on clean / lightly-noisy data
 (cost-build-bound) and **~1 Mpx/s** on uniform-noisy residue-dense
 scenes (Dijkstra-bound). Memory ~115 bytes/pixel working set — a 100 Mpx
 Sentinel-1 IW frame fits in ~11.5 GiB single-piece, or tile to cap. See
-[`PERFORMANCE.md`](PERFORMANCE.md) for the full per-stage
+[`PERFORMANCE.md`](docs/PERFORMANCE.md) for the full per-stage
 timing breakdown and the discussion of why we don't ship the
 rayon-parallel Dijkstra backend.
 
@@ -226,7 +235,7 @@ this, the arbitrary phase values in masked regions (typically
 residues at every mask boundary that dominate the MCF problem.
 
 On a 4096² γ=0.7 land + 35 % blob-water-mask scene this is **0.54 s with
-mask vs 75 s without (139×)**. See `PERFORMANCE.md` for details.
+mask vs 75 s without (139×)**. See [`PERFORMANCE.md`](docs/PERFORMANCE.md) for details.
 
 ## Status
 

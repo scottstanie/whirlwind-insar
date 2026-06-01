@@ -46,7 +46,9 @@ pub struct ConnCompParams {
     /// frames (it can only RAISE `min_size_px`, never lower it). At the default
     /// 1e-4 it stays negligible (<100 px below ~1M valid). Do NOT raise toward
     /// 0.01 — on a NISAR frame 1% is a ~25 km minimum feature, which orphans
-    /// every island a user might want to reference into.
+    /// every island a user might want to reference into. The effective floor is
+    /// `max(min_size_px, ceil(min_size_frac * n_valid))`, so this fraction only
+    /// bites when it exceeds the absolute `min_size_px` control.
     pub min_size_frac: f32,
     /// Keep at most this many components (largest by size). 0 → keep all. The
     /// `min_size_px` floor is the real speckle control; this is only a guard
@@ -80,7 +82,7 @@ fn edge_is_cut(net: &Network, fwd1: usize, fwd2: usize, thresh: i32) -> bool {
 
 /// Grow components on the pixel grid using a solved MCF network. Returns a
 /// `(m_phase, n_phase)` `u32` label array; 0 = unassigned (cut off or smaller
-/// than `min_size_px`).
+/// than `max(min_size_px, ceil(min_size_frac * n_valid))`), renumbered by size.
 pub fn grow_components(
     g: &RectangularGridGraph,
     net: &Network,

@@ -270,18 +270,17 @@ pub fn unwrap_convex(
     Ok(unw)
 }
 
-/// **Prototype — PHASS-style flow-reuse solver.**
+/// PHASS-style flow-reuse solver — the default whole-image coherence solver
+/// (and the per-tile default; see [`tile`]). The corner-safe replacement for
+/// the removed capacity-1 solver.
 ///
-/// Same Carballo coherence cost as [`unwrap_reuse`], same primal-dual driver,
-/// same Dial bucket-queue Dijkstra. The only difference: the underlying
-/// `Network` runs in `reuse_mode`, which makes every arc multi-unit
-/// (no saturation), and Dial overrides reduced cost to 0 on any arc
-/// with prior flow (PHASS `ASSP.cc:2034`). After one wrap-line is laid
-/// down, subsequent demands route through the same arcs for free.
-///
-/// Built to test whether flow-reuse — without amplitude edges, without
-/// convex costs — closes the no-Goldstein PHASS gap from
-/// `paper/phass_experiments.md`. Not production-tested.
+/// Same Carballo coherence cost and primal-dual driver as the tiled coherence
+/// path, same Dial bucket-queue Dijkstra. The difference: the underlying
+/// `Network` runs in `reuse_mode`, which makes every arc multi-unit (no
+/// saturation), and Dial overrides reduced cost to 0 on any arc with prior flow
+/// (PHASS `ASSP.cc:2034`). After one wrap-line is laid down, subsequent demands
+/// route through the same arcs for free — which fixes the capacity-1
+/// boundary-stacking bug on steep clean ramps.
 pub fn unwrap_reuse(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,

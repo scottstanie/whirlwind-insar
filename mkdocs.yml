@@ -3,12 +3,11 @@
 # Build:    uv run mkdocs build           # writes ./site/
 # Serve:    uv run mkdocs serve           # http://127.0.0.1:8000/
 #
-# The repo's canonical README and ATBDs live at the repo root for GitHub
-# rendering. The `docs/` directory contains symlinks to those files
-# (docs/README.md -> ../README.md, docs/ATBD-3d.md -> ../ATBD-3d.md, etc.)
-# so the mkdocs site renders the same content without duplication and any
-# cross-doc links of the form `[X](X.md)` resolve correctly in both
-# contexts.
+# The mkdocs site is self-contained under docs/ (no symlinks). The repo's
+# canonical README and ATBDs live at the repo root for GitHub rendering; this
+# site links out to them from docs/index.md. The reference pages
+# (PERFORMANCE.md, TILING_DESIGN.md, ENV_VARS.md) and figures/ are real files
+# in docs/.
 
 site_name: whirlwind-rs
 site_description: >-
@@ -23,22 +22,14 @@ docs_dir: docs
 site_dir: site
 use_directory_urls: true
 
-# `docs/paper/` is a symlink to the top-level paper/ so the PDF link in
-# README resolves in mkdocs. `docs/requirements.txt` and
-# `docs/comparison_to_dolphin.json` are auxiliary files mkdocs would
-# otherwise copy into the site without referencing.
+# `docs/requirements.txt` and `docs/comparison_to_dolphin.json` are auxiliary
+# files mkdocs would otherwise copy into the site without referencing.
 exclude_docs: |
-  paper/README.md
-  paper/whirlwind3d.tex
-  paper/.gitignore
-  paper/figures/
   requirements.txt
   comparison_to_dolphin.json
 
 nav:
-  - Overview: README.md
-  - 'ATBD — 3D / time series': ATBD-3d.md
-  - 'ATBD — 2D MCF core': ATBD-whirlwind.md
+  - Home: index.md
   - Performance: PERFORMANCE.md
   - Tiling design: TILING_DESIGN.md
   - Environment variables: ENV_VARS.md

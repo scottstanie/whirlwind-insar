@@ -11,7 +11,7 @@ on an Apple M-series laptop (12 perf cores, 36 GB RAM).
 > anchor + cascade reaches **99.79 % K-match / 0 % multi-cycle in 3.9 s** vs
 > SNAPHU 9×9's ~17 min, and stays memory-bounded to tile scale. Tiling is a
 > **correctness necessity**, not just an optimization. Real-scene method,
-> numbers, and figures: [`../paper/report_anchor_cascade.md`](../paper/report_anchor_cascade.md).
+> numbers, and figures: [`paper/report_anchor_cascade.md`](https://github.com/scottstanie/whirlwind-insar/blob/main/paper/report_anchor_cascade.md).
 > The synthetic baselines and the memory/parallelism analysis below remain
 > accurate for what they measure (the per-tile core).
 
