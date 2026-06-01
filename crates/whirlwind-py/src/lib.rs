@@ -297,69 +297,6 @@ fn unwrap_convex<'py>(
     Ok(unw.into_pyarray(py))
 }
 
-/// Pyramidal (coarse-to-fine, multi-resolution) phase unwrap.
-///
-/// A safer alternative to the single-shot ``multilook``-first path for
-/// scenes that may contain steep / dense-fringe signals (volcano bowls,
-/// earthquake near-field). Instead of down-looking by one big factor and
-/// block-replicating the coarse solve — which ALIASES any signal whose
-/// fringe rate ``g`` satisfies ``multilook·g > π`` and locks in the wrong
-/// integer cycle count — this refines by powers of two
-/// (``base_factor, base_factor/2, …, 1``). Each finer level unwraps only the
-/// residual against the upsampled coarser-level solution (the previous level's
-/// ``K`` used as a prior), so the surface is refined back to full resolution
-/// without ever re-aliasing.
-///
-/// * ``base_factor`` — the coarsest down-look (power of two). ``1`` (default)
-///   does a single full-resolution solve — corner-safe and never aliasing, the
-///   conservative default. ``N > 1`` opts into a fixed ``N, N/2, …, 1`` cascade
-///   for noise suppression (the coarsest level must stay unaliased,
-///   ``N·g < π``). ``0`` opts into the EXPERIMENTAL automatic probe (largest
-///   unaliased down-look); it is synthetic-tuned and has a near-Nyquist
-///   constant-ramp blind spot — not the default. See ``paper/pyramid_aliasing.md``.
-/// * ``solver`` — per-level base unwrap: ``"reuse"`` (default), ``"convex"``,
-///   or ``"linear"``. The linear coherence cost mis-routes the corners of
-///   smooth steep signals (capacity-1 boundary stacking — ~88 % on a clean
-///   0.7π bowl vs 100 % for reuse/convex), so it is not the default here.
-/// * ``tile_size`` — if ≥ 4, any level larger than this is tiled to bound peak
-///   memory on the finest levels of a large frame. ``0`` (default) never tiles.
-///
-/// See ``paper/pyramid_aliasing.md`` and ``scripts/dense_fringe_pyramid.py``.
-#[pyfunction]
-#[pyo3(signature = (igram, corr, nlooks = 1.0, mask = None, base_factor = 1, solver = "reuse", tile_size = 0))]
-fn unwrap_pyramid<'py>(
-    py: Python<'py>,
-    igram: PyReadonlyArray2<'py, Complex32>,
-    corr: PyReadonlyArray2<'py, f32>,
-    nlooks: f32,
-    mask: Option<PyReadonlyArray2<'py, bool>>,
-    base_factor: usize,
-    solver: &str,
-    tile_size: usize,
-) -> PyResult<Bound<'py, PyArray2<f32>>> {
-    let ig = igram.as_array();
-    let co = corr.as_array();
-    let m = mask.as_ref().map(|m| m.as_array());
-    let base_solver = whirlwind_core::pyramid::BaseSolver::parse(solver).ok_or_else(|| {
-        PyValueError::new_err(format!(
-            "unknown solver {solver:?}; expected \"reuse\", \"convex\", or \"linear\""
-        ))
-    })?;
-    let unw = py.detach(|| {
-        whirlwind_core::pyramid::unwrap_pyramid(
-            ig,
-            co,
-            nlooks,
-            m,
-            base_factor,
-            base_solver,
-            tile_size,
-        )
-    });
-    let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
-    Ok(unw.into_pyarray(py))
-}
-
 /// **Prototype.** PHASS-style flow-reuse solver — same coherence cost
 /// as `unwrap`, but arcs can carry multiple units of flow at zero
 /// marginal cost after the first push. Tests whether flow-reuse alone
@@ -715,7 +652,6 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_grounded, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_convex, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_reuse, m)?)?;
-    m.add_function(wrap_pyfunction!(unwrap_pyramid, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_native, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;
