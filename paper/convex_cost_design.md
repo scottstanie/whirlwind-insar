@@ -144,7 +144,7 @@ No change needed.
 
 Add `pub fn unwrap_convex(...)` mirroring `unwrap_reuse`. Python
 binding `whirlwind.unwrap_convex(...)`. Companion experiment script
-`scripts/phass_experiments/run_convex.py`.
+`scripts/phass_experiments/run/run_convex.py`.
 
 ## Decision gates
 
@@ -159,7 +159,7 @@ binding `whirlwind.unwrap_convex(...)`. Companion experiment script
 ## First-run results (2026-05-28 evening)
 
 Phase 5+6 implementation completed. `unwrap_convex` in Rust and Python;
-`scripts/phass_experiments/run_convex.py` for reproduction.
+`scripts/phass_experiments/run/run_convex.py` for reproduction.
 
 The end-to-end `diagonal_ramp_512_convex` test passes (max error 0.0
 rad) — algorithm is sound on synthetic.

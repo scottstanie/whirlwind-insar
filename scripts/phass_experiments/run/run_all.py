@@ -24,17 +24,17 @@ OUT = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/phass_experiments/ou
 LOG = OUT.parent / "run.log"
 
 JOBS: list[tuple[str, list[str]]] = [
-    ("snaphu_pv", [PY, str(ROOT / "run_snaphu_pv.py")]),
+    ("snaphu_pv", [PY, str(ROOT / "run" / "run_snaphu_pv.py")]),
     # TODO: find another, but for now, let's skip PV
-    # ("pv/baseline",      [PY, str(ROOT / "run_one.py"), "pv",   "baseline"]),
-    # ("pv/hard_cut",      [PY, str(ROOT / "run_one.py"), "pv",   "hard_cut"]),
-    # ("pv/phass_cost",    [PY, str(ROOT / "run_one.py"), "pv",   "phass_cost"]),
-    # ("pv/phass_full",    [PY, str(ROOT / "run_one.py"), "pv",   "phass_full"]),
-    ("nisar/baseline", [PY, str(ROOT / "run_one.py"), "nisar", "baseline"]),
-    ("nisar/hard_cut", [PY, str(ROOT / "run_one.py"), "nisar", "hard_cut"]),
-    ("nisar/phass_cost", [PY, str(ROOT / "run_one.py"), "nisar", "phass_cost"]),
-    ("nisar/phass_full", [PY, str(ROOT / "run_one.py"), "nisar", "phass_full"]),
-    ("analyze", [PY, str(ROOT / "analyze.py")]),
+    # ("pv/baseline",      [PY, str(ROOT / "run" / "run_one.py"), "pv",   "baseline"]),
+    # ("pv/hard_cut",      [PY, str(ROOT / "run" / "run_one.py"), "pv",   "hard_cut"]),
+    # ("pv/phass_cost",    [PY, str(ROOT / "run" / "run_one.py"), "pv",   "phass_cost"]),
+    # ("pv/phass_full",    [PY, str(ROOT / "run" / "run_one.py"), "pv",   "phass_full"]),
+    ("nisar/baseline", [PY, str(ROOT / "run" / "run_one.py"), "nisar", "baseline"]),
+    ("nisar/hard_cut", [PY, str(ROOT / "run" / "run_one.py"), "nisar", "hard_cut"]),
+    ("nisar/phass_cost", [PY, str(ROOT / "run" / "run_one.py"), "nisar", "phass_cost"]),
+    ("nisar/phass_full", [PY, str(ROOT / "run" / "run_one.py"), "nisar", "phass_full"]),
+    ("analyze", [PY, str(ROOT / "analyze" / "analyze.py")]),
 ]
 
 

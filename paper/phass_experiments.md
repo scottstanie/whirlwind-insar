@@ -406,13 +406,13 @@ cd /Users/staniewi/repos/whirlwind-insar
 maturin develop --release
 
 # Sequential — never run more than one heavy unwrap at a time on this laptop:
-$PY scripts/phass_experiments/run_snaphu_pv.py
+$PY scripts/phass_experiments/run/run_snaphu_pv.py
 for scene in pv nisar; do
   for mode in baseline hard_cut phass_cost; do
-    $PY scripts/phass_experiments/run_one.py "$scene" "$mode"
+    $PY scripts/phass_experiments/run/run_one.py "$scene" "$mode"
   done
 done
-$PY scripts/phass_experiments/analyze.py
+$PY scripts/phass_experiments/analyze/analyze.py
 ```
 
 Outputs land in

@@ -175,7 +175,7 @@ range ±0.09 m. Provides:
 * a different SAR system (S-1 C-band, λ ≈ 5.6 cm) for cross-checking
   that conclusions generalize beyond NISAR.
 
-Runner: `scripts/phass_experiments/run_atlanta.py <mode>`.
+Runner: `scripts/phass_experiments/run/run_atlanta.py <mode>`.
 
 Results pending; see `outputs/atlanta_*.npz` once runs complete.
 
