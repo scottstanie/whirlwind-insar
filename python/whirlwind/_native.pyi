@@ -24,13 +24,24 @@ def unwrap(
 ) -> NDArray[np.float32]:
     """2D phase unwrap with the Carballo/SNAPHU-style coherence cost.
 
-    With ``tile_size>=4`` and ``2<=tile_overlap<tile_size`` (recommended:
-    ``tile_size=512, tile_overlap=64``) runs the tiled path: per-tile MCF +
-    global coarse anchor + multi-scale cascade — the production default, which
-    reaches SNAPHU quality without Goldstein and stays memory-bounded.
-    ``multilook=L`` (L>1) coherently down-looks the igram ×L first (for noisy /
-    moderate-coherence scenes, e.g. Sentinel-1) then tiles+anchors the coarse
-    and upsamples; routes through the tiled path even with no ``tile_size``.
+    ``tile_size=0`` (default) AUTO-TILES large frames at 512 (overlap 64);
+    frames that fit in one 512 tile are solved whole. 512 is the empirically
+    best universal size (whole-image runs away to ~80% on NISAR; tile512 =
+    99.84%). Bigger tiles are NOT uniformly better — across a NISAR-GUNW sweep,
+    tile2048 fixes a rare fragmented (decorrelation-split) frame (57→97%) but
+    regresses the majority (others 98→81-86%, NISAR 99.84→99.40%); the optimal
+    size is scene-dependent, so pass ``tile_size`` (with
+    ``2<=tile_overlap<tile_size``) explicitly to trade clean-scene quality for
+    robustness on a known-fragmented frame.
+    The per-tile (and whole-image) base solver defaults to corner-safe REUSE
+    (PHASS flow-reuse): the plain linear coherence cost mis-routes the corners of
+    smooth STEEP signals (capacity-1 boundary-stacking — fails a clean 6π ramp by
+    ~12 rad; reuse/convex are exact). Reuse also improves real scenes (NISAR
+    mainland 99.84→99.96%). Override with ``WHIRLWIND_TILE_SOLVER=linear|convex``.
+    The tiled path = per-tile MCF + global coarse anchor + multi-scale cascade +
+    bounded sliver cleanup, reaching SNAPHU quality without Goldstein, memory-
+    bounded. ``multilook=L`` (L>1) coherently down-looks ×L first (noisy /
+    moderate-coherence scenes, e.g. Sentinel-1) then tiles+anchors the coarse.
     """
 
 def unwrap_crlb(

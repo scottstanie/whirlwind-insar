@@ -46,6 +46,24 @@ fn unwrap<'py>(
     let ig = igram.as_array();
     let co = corr.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
+    // AUTO-TILING DEFAULT (tile_size == 0, no multilook): tile large frames at
+    // 512 instead of falling to the whole-image footgun (whole-image NISAR runs
+    // away to ~80%; tile512+anchor+cascade = 99.84%). 512 is the empirically
+    // best UNIVERSAL size across a 5-frame NISAR-GUNW sweep + NISAR/Atlanta —
+    // bigger tiles are NOT uniformly better: tile2048 fixes the rare
+    // fragmented-scene drift (GUNW A_016 57→97%) but REGRESSES the majority
+    // (D_074 98→81%, A_035 98→86%, NISAR 99.84→99.40%) by reintroducing the
+    // linear-cost runaway. The optimal size is scene-dependent; fixing the
+    // fragmented case without regressing the rest needs a drift-correcting
+    // reconciliation, not a tile-size knob (open). Callers can pass tile_size
+    // explicitly to override (e.g. 1024-2048 to trade clean-scene quality for
+    // robustness on a known-fragmented frame).
+    let (tile_size, tile_overlap) = if tile_size == 0 && multilook <= 1 {
+        let (mm, nn) = ig.dim();
+        if mm > 512 || nn > 512 { (512, 64) } else { (0, 0) }
+    } else {
+        (tile_size, tile_overlap)
+    };
     // `multilook > 1` routes through the tiled path's multilook-first branch
     // (coherent down-look → tiled+anchor+cascade on the coarse → upsample) for
     // noisy / moderate-coherence scenes, even when no tile_size is given.
@@ -56,7 +74,11 @@ fn unwrap<'py>(
         if use_tiling {
             whirlwind_core::tile::unwrap_tiled(ig, co, nlooks, m, tile_size, tile_overlap, multilook)
         } else {
-            whirlwind_core::unwrap(ig, co, nlooks, m)
+            // Whole-image path (frame fits one 512 tile): use the corner-safe
+            // reuse solver, not the linear cost. The linear coherence cost has a
+            // capacity-1 boundary-stacking bug on smooth STEEP signals (fails a
+            // clean 6π ramp by ~12 rad; reuse = exact) — see TileSolver / #28.
+            whirlwind_core::unwrap_reuse(ig, co, nlooks, m)
         }
     });
     let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;

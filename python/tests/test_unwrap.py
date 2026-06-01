@@ -148,7 +148,11 @@ class TestPyramid:
         truth = _cone((192, 192), 0.2 * np.pi)
         ig, corr = ww.simulate_ifg(truth, np.full(truth.shape, 0.25, np.float32), 4, 0)
 
-        full = ww.unwrap(ig, corr, nlooks=4.0)
+        # Baseline pinned to LINEAR full-res: ww.unwrap now defaults to the
+        # corner-safe reuse solver, which is itself competitive in heavy noise
+        # (≈0.94 vs pyramid ≈0.95 here), so the pyramid's margin is measured
+        # against the weak linear cost the multigrid prediction rescues.
+        full = ww.unwrap_pyramid(ig, corr, nlooks=4.0, base_factor=1, solver="linear")
         pyr = ww.unwrap_pyramid(ig, corr, nlooks=4.0, base_factor=4)
 
         assert _k_correct(pyr, truth) > _k_correct(full, truth) + 0.1
@@ -183,8 +187,10 @@ class TestPyramid:
         noisy = _cone((256, 256), 0.2 * np.pi)
         ig, corr = ww.simulate_ifg(noisy, np.full(noisy.shape, 0.25, np.float32), 4, 0)
         ka = _k_correct(ww.unwrap_pyramid(ig, corr, nlooks=4.0, base_factor=0), noisy)
-        kf = _k_correct(ww.unwrap(ig, corr, nlooks=4.0), noisy)
-        assert ka > kf + 0.05, f"auto-base {ka} should beat full-res {kf} in heavy noise"
+        # vs LINEAR full-res (ww.unwrap now defaults to corner-safe reuse, which
+        # is competitive in heavy noise — see test_beats_fullres_in_heavy_noise).
+        kf = _k_correct(ww.unwrap_pyramid(ig, corr, nlooks=4.0, base_factor=1, solver="linear"), noisy)
+        assert ka > kf + 0.05, f"auto-base {ka} should beat linear full-res {kf} in heavy noise"
 
     def test_tiled_finest_level_matches_untiled(self):
         # In-regime (base unaliased): tiling the finest levels must not change
