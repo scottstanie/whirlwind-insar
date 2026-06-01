@@ -276,7 +276,7 @@ pub fn unwrap_tiled(
         return Ok(upsample_blockrep(&coarse, multilook, m, n));
     }
     if tile_size >= m && tile_size >= n {
-        return crate::unwrap(igram, corr, nlooks, mask);
+        return crate::unwrap_reuse(igram, corr, nlooks, mask);
     }
     assert!(
         overlap >= 2,
@@ -1286,7 +1286,9 @@ fn compute_coarse_anchor(
     }
     let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, lk);
     // One whole-image solve on the tiny coarse image; effective looks ×lk².
-    let cunw = crate::unwrap(
+    // Corner-safe reuse (the coarse image is gentle, but #50 removed the plain
+    // capacity-1 solver entirely).
+    let cunw = crate::unwrap_reuse(
         cig.view(),
         ccorr.view(),
         nlooks * (lk * lk) as f32,
@@ -1637,26 +1639,27 @@ fn heal_thin_slivers(
 /// flow-reuse) and `convex` (SNAPHU quadratic) are corner-safe.
 #[derive(Clone, Copy, PartialEq)]
 enum TileSolver {
-    Linear,
     Reuse,
     Convex,
 }
 
-/// `WHIRLWIND_TILE_SOLVER=linear|reuse|convex` (default set in code below).
-/// Legacy `WHIRLWIND_TILE_CONVEX=1` still selects convex.
+/// `WHIRLWIND_TILE_SOLVER=reuse|convex` (default reuse). Legacy
+/// `WHIRLWIND_TILE_CONVEX=1` also selects convex.
+///
+/// The old `linear` unit-capacity solver was removed in #50: it had the
+/// capacity-1 boundary-stacking bug on steep clean ramps (12.6 rad error vs
+/// reuse's 0.0) AND ~6× more single-cycle errors than reuse on real scenes
+/// (NISAR 99.86% vs 99.97%), for only a speed win — not worth an ever-artifacty
+/// solver. Reuse (PHASS flow-reuse) is the corner-safe default; convex is
+/// research-only.
 fn tile_solver() -> TileSolver {
     use std::sync::OnceLock;
     static F: OnceLock<TileSolver> = OnceLock::new();
     *F.get_or_init(|| match std::env::var("WHIRLWIND_TILE_SOLVER").as_deref() {
-        Ok("reuse") => TileSolver::Reuse,
         Ok("convex") => TileSolver::Convex,
-        Ok("linear") => TileSolver::Linear,
         _ if std::env::var("WHIRLWIND_TILE_CONVEX").is_ok() => TileSolver::Convex,
-        // DEFAULT: reuse (PHASS flow-reuse). Validated 2026-05-31 across a clean
-        // steep ramp (linear FAILs 12.6 rad / reuse PASSes 0.0 — the corner bug),
-        // NISAR (linear 99.84% → reuse 99.96%), and a 5-frame NISAR-GUNW sweep
-        // (reuse within ~0.4% of linear, better on 3/5). Corner-safe and a net
-        // win; ~slower than linear but speed is not the constraint vs SNAPHU.
+        // DEFAULT: reuse (PHASS flow-reuse), corner-safe. `WHIRLWIND_TILE_SOLVER=reuse`
+        // (and any other/unknown value) lands here too.
         _ => TileSolver::Reuse,
     })
 }
@@ -1690,10 +1693,6 @@ fn unwrap_one_tile_coh(
         TileSolver::Reuse => {
             let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
             Network::new_reuse_with_mask(&graph, residues.view(), &costs, mk)
-        }
-        TileSolver::Linear => {
-            let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
-            Network::new_with_mask(&graph, residues.view(), &costs, mk)
         }
     };
     primal_dual::run(&graph, &mut net, 50);
@@ -1853,7 +1852,7 @@ fn stitching_offset(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::unwrap_crlb;
+    use crate::unwrap_crlb_reuse;
 
     #[test]
     fn decompose_single_tile_when_image_fits() {
@@ -2126,7 +2125,7 @@ mod tests {
 
     #[test]
     fn tiled_coherence_matches_single_tile_on_smooth_input() {
-        use crate::unwrap;
+        use crate::unwrap_reuse;
         use ndarray::Array2;
         // Smooth ramp with no wraps: tiled coherence unwrap must agree with
         // the whole-image coherence unwrap (up to a global integer cycle).
@@ -2137,7 +2136,7 @@ mod tests {
         let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
         let corr = Array2::<f32>::from_elem((m, n), 0.9);
 
-        let whole = unwrap(igram.view(), corr.view(), 10.0, None).unwrap();
+        let whole = unwrap_reuse(igram.view(), corr.view(), 10.0, None).unwrap();
         let tiled = unwrap_tiled(igram.view(), corr.view(), 10.0, None, 32, 8, 1).unwrap();
 
         let align = |u: &Array2<f32>| -> Array2<f32> {
@@ -2175,7 +2174,7 @@ mod tests {
         let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
         let var = Array2::<f32>::from_elem((m, n), 0.1);
 
-        let non_tiled = unwrap_crlb(igram.view(), var.view(), None).unwrap();
+        let non_tiled = unwrap_crlb_reuse(igram.view(), var.view(), None).unwrap();
         let tiled = unwrap_crlb_tiled(igram.view(), var.view(), None, 24, 8).unwrap();
 
         // Both should be smooth. Compare to truth after aligning the
