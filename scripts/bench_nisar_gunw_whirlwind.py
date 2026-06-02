@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
     run.add_argument("--out-dir", type=Path, default=Path("ww_gunw_bench"), help="Output directory.")
     run.add_argument("--pol", default=None, help="Polarization group to use, e.g. HH or VV. Default: first available.")
     run.add_argument("--nlooks", type=float, default=1.0, help="nlooks argument passed to whirlwind.unwrap.")
+    run.add_argument("--tile-size", type=int, default=0, help="tile_size passed to ww.unwrap. 0=auto (512 for >512px). Use a value >= frame dims to force a single whole-image solve.")
+    run.add_argument("--tile-overlap", type=int, default=0, help="tile_overlap passed to ww.unwrap (0=auto).")
     run.add_argument("--sizes", nargs="*", default=["full"], help="Square center-crop sizes to run, plus optional 'full'.")
     run.add_argument("--crop", nargs=4, type=int, metavar=("Y0", "Y1", "X0", "X1"), help="Explicit crop window. Overrides --sizes.")
     run.add_argument("--coh-threshold", type=float, default=0.0, help="Minimum coherence for unwrapping mask.")
@@ -507,7 +509,10 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
         # ww.unwrap takes a COMPLEX interferogram; `ig` here is the real wrapped
         # phase (kept real for the comparison stats below). Convert for the call.
         ig_complex = np.exp(1j * ig).astype(np.complex64)
-        ww_unw, ww_cc = ww.unwrap(ig_complex, coh, args.nlooks, mask)
+        ww_unw, ww_cc = ww.unwrap(
+            ig_complex, coh, args.nlooks, mask,
+            tile_size=args.tile_size, tile_overlap=args.tile_overlap,
+        )
         runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
         rss_delta = None if (rss0 is None or rss1 is None) else rss1 - rss0
