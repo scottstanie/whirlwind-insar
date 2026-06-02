@@ -83,6 +83,10 @@ pub fn unwrap_coherence(
     let use_tiling = multilook > 1 || (ts >= 4 && to >= 2 && to < ts);
     if use_tiling {
         tile::unwrap_tiled_robust(igram, corr, nlooks, mask, ts, to, multilook)
+    } else if std::env::var("WHIRLWIND_TILE_SOLVER").as_deref() == Ok("convex") {
+        // Whole-image (no-tiling) path honors the solver, for the convex
+        // cost-model experiment: a clean single convex solve, no tile/multi-shift.
+        unwrap_convex(igram, corr, nlooks, mask)
     } else {
         unwrap_reuse(igram, corr, nlooks, mask)
     }

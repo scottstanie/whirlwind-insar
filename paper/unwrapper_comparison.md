@@ -68,17 +68,33 @@ tuning issue.
   prototype, but it's unsound/untuned whole-image (negative marginal costs from the offset
   break Dial's non-negative-reduced-cost assumption without a Bellman-Ford/SPFA pre-pass).
 
-## Empirical backbone (NISAR GUNW, water-masked, nlooks=16)
+## Empirical backbone (NISAR GUNW, water-masked, nlooks=16, per-component match)
 
-- **No tile size/overlap fully fixes the steep-ramp D-frames.** Best D_077 per-component
-  match: 512/64=48%, 512/256=**72%**, 1024/512=54%, 2048/256=54%, single-tile=1%. Bigger
-  overlap helps (the 64-px default is far below snaphu's 400-px floor) but is non-monotonic
-  and caps well short of clean — consistent with "the linear cost, not the granularity, is
-  the limit." (`ww_gunw_overlap/`)
-- **snaphu single-tile runtime baseline:** *pending* (jobs `b301s2xsg`/`bj7mnxb8e`; clearly
-  minutes — confirms ww's tiled 2–20 s is a large speed win and even whole-image 119–290 s
-  is competitive; speed is not the problem, artifacts are).
-- **Convex whole-image on D_077/D_078:** *pending* (the decisive cost-shape test).
+Decisive head-to-head on the two steep-ramp D-frames where ww fails:
+
+| frame | ww reuse whole-image | ww **convex** prototype whole-image | ww tiled (best 512/256) | **snaphu single-tile** |
+|---|--:|--:|--:|--:|
+| D_077 | 1% (119 s) | **2%** (86 s) | 72% (58 s) | **99.3% (736 s)** |
+| D_078 | 7% (111 s) | **24%** (63 s) | 72% (43 s) | **99.9% (749 s)** |
+
+Three results, all clean:
+
+1. **The convex *concept* is proven by snaphu.** snaphu's sound convex/statistical cost
+   gets **99.3–99.9% single-tile with no artifacts** on the exact steep ramps where ww
+   tops out at 72%. Single-tile convex IS the quality ceiling — confirming the thesis.
+2. **whirlwind's convex *prototype* is broken whole-image** (2–24%, *worse* than the
+   tiled linear cost) — it does not realize the convex benefit (unsound: the parabola
+   offset creates negative marginal costs that Dial's non-negative-reduced-cost Dijkstra
+   can't handle without a Bellman-Ford/SPFA pre-pass). So the lever is a *sound* convex
+   cost, not the current prototype.
+3. **Speed is not ww's problem.** snaphu single-tile = **~12 min/frame**; ww tiled = 2–20 s,
+   ww whole-image = 119–290 s. ww is **6–60× faster than snaphu**. "Like snaphu but faster"
+   reduces to "match snaphu quality at ww speed."
+
+- **Tile size/overlap can't fully fix the steep ramps.** Best D_077: 512/64=48%,
+  512/256=**72%**, 1024/512=54%, 2048/1024=54%, single=1%. Raising the default overlap
+  (64→256, far below snaphu's 400 floor) is a strict +24-pt win but caps at ~72% — the
+  linear cost, not the granularity, is the limit. (`ww_gunw_overlap/`)
 
 ## Harness
 
@@ -91,13 +107,27 @@ does snaphu directly; tophu adds ICU + PHASS for free.
 
 ## Path to the goal
 
-1. **The structural lever is the convex/statistical cost.** Make the convex mode *sound
-   and tuned whole-image* (Bellman-Ford/SPFA for the negative-reduced-cost case, or the
-   `preload_convex_min` already added) and re-evaluate it **whole-image** (not tiled, where
-   tiling already hides the linear cost's problem — the reason convex earlier "didn't
-   win"). If convex-whole-image is clean on D_077/D_078, that's the fix *and* the
-   explanation, and tiling reverts to memory-only.
-2. **Meanwhile**, raise the default tile overlap (64 → ~tile/2) — it's a strict improvement
-   on the steep ramps (48→72% on D_077) at a runtime cost we've now established is fine.
-3. **Validate against tophu** (snaphu/icu/phass) on the full GUNW set so "matches
-   single-tile snaphu" is measured directly, not inferred.
+1. **Implement a SOUND convex/statistical cost — this is the lever, now empirically
+   confirmed.** snaphu's convex single-tile hits 99.3–99.9% clean on the frames where ww
+   tops out at 72%; ww's convex *prototype* gets 2–24% because it's unsound (negative
+   marginal costs from the parabola offset break the Dial/Dijkstra non-negativity
+   assumption — `preload_convex_min` is insufficient). The real work: a convex per-arc
+   cost (snaphu-style MAP/smooth) with a solver that tolerates negative reduced costs
+   (Bellman-Ford/SPFA potential init + Klein cycle-cancelling, or a cost-scaling MCF).
+   With ww's fast machinery this should give **snaphu quality at a fraction of snaphu's
+   ~12-min single-tile runtime**, and the tile artifacts vanish (whole-image becomes
+   well-posed, so no tiling/multi-shift reconciliation to leave seams).
+2. **Cheap immediate win (ship now):** raise the default tile overlap 64 → ~256 — a strict
+   +24-pt improvement on steep ramps (48→72%), runtime cost is fine. Doesn't fix the
+   ceiling but removes the worst of the checkerboard while the cost work lands.
+3. **Validate against tophu** (snaphu/icu/phass uniform harness, `scripts/tophu_compare.py`)
+   on the full GUNW set so "matches single-tile snaphu" is measured directly, and to see
+   where PHASS sits (the "give up less / fewer conncomps" axis).
+
+## Bottom line
+
+whirlwind is already a fast, phase-aware-linear-cost MCF that **beats PHASS** on
+conncomp count + recall, and is **6–60× faster than snaphu**. The single remaining gap to
+"matches single-tile snaphu, no artifacts" is the **cost shape**: a sound convex cost. The
+tile-block/checkerboard/streak artifacts are not tiling bugs to patch one-by-one — they're
+symptoms of the linear cost needing tiling as a crutch. Fix the cost and they disappear.

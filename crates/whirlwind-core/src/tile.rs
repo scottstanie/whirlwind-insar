@@ -392,7 +392,14 @@ pub fn unwrap_tiled(
         return Ok(upsample_blockrep(&coarse, multilook, m, n));
     }
     if tile_size >= m && tile_size >= n {
-        return crate::unwrap_reuse(igram, corr, nlooks, mask);
+        // Single whole-image solve. Honor WHIRLWIND_TILE_SOLVER like the tiled
+        // path does (default reuse; convex enables the cost-model experiment —
+        // a SNAPHU-style convex cost should make the whole-image solve well-posed
+        // where the linear/reuse cost runs away).
+        return match tile_solver() {
+            TileSolver::Convex => crate::unwrap_convex(igram, corr, nlooks, mask),
+            TileSolver::Reuse => crate::unwrap_reuse(igram, corr, nlooks, mask),
+        };
     }
     assert!(
         overlap >= 2,
