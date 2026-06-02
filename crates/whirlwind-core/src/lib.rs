@@ -21,6 +21,7 @@
 pub mod closure;
 pub mod conncomp;
 pub mod cost;
+pub mod cycle_cancel;
 pub mod goldstein;
 pub mod grid;
 pub mod integrate;
@@ -241,6 +242,15 @@ pub fn unwrap_grounded(
 /// the linear coherence-cost model. Quadratic curvature should make
 /// large coherent multi-cycle deviations structurally expensive in a
 /// way linear cost cannot. See `paper/convex_cost_design.md`.
+/// Convex-solve backend selector (issue #65), read once from
+/// `WHIRLWIND_CONVEX_SOLVE` ∈ {`pd` (default), `ssp`, `cancel`}.
+fn convex_solve_mode() -> String {
+    use std::sync::OnceLock;
+    static M: OnceLock<String> = OnceLock::new();
+    M.get_or_init(|| std::env::var("WHIRLWIND_CONVEX_SOLVE").unwrap_or_else(|_| "pd".into()))
+        .clone()
+}
+
 pub fn unwrap_convex(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -265,7 +275,24 @@ pub fn unwrap_convex(
     // Network::preload_convex_min). Without this the solve silently corrupts in
     // release once any |offset| > 50 (which the deviation offset now produces).
     net.preload_convex_min(&graph);
-    primal_dual::run(&graph, &mut net, 50);
+    // Solve dispatch (issue #65). Default `pd` = fast batched primal-dual augment,
+    // which is feasible but lands far from the convex optimum at NISAR scale
+    // (the batched multi-path augment places ~all flow at one stale Dijkstra
+    // snapshot's marginals; nothing re-optimizes it). `ssp` = pure single-path
+    // successive-shortest-paths (sound but O(units) Dijkstras — only viable on
+    // crops). `cancel` = fast `pd` warm-start + negative-cycle canceling to drive
+    // the feasible flow to the convex optimum (scalable; the real fix).
+    match convex_solve_mode().as_str() {
+        "ssp" => ssp::run(&graph, &mut net),
+        "cancel" => {
+            primal_dual::run(&graph, &mut net, 50);
+            let n = cycle_cancel::cancel_negative_cycles(&graph, &mut net, usize::MAX);
+            if primal_dual::debug_enabled() {
+                eprintln!("[convex] cancelled {n} negative cycles");
+            }
+        }
+        _ => primal_dual::run(&graph, &mut net, 50),
+    }
     let unw = if mask.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
     } else {
