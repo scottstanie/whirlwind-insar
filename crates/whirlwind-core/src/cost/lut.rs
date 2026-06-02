@@ -169,6 +169,130 @@ pub fn get_or_build_variance(nlooks: f32) -> &'static VarianceLut {
     lut
 }
 
+// =============================================================================
+// Carballo LLR cost LUT: -log(p1/p0) from Lee 1994 CDF
+// =============================================================================
+//
+// p0(α) = ∫_{α−π}^{π}  Lee_PDF(t | γ, L) dt  (for α > 0, upper=π, lower=α−π)
+// p1(α) = ∫_{−π}^{α−π} Lee_PDF(t | γ, L) dt  (for α > 0; = CDF(α−π))
+// cost(α, γ) = min(−log(p1/p0), MAX_CARBALLO_COST)
+//
+// At α = π  (wrap line): CDF(0) = 0.5 → p1=p0=0.5 → cost = 0.
+// At α → 0+ (smooth):    CDF(−π)→0   → p1→0         → cost = MAX_CARBALLO_COST.
+// For α ≤ 0:             p1 = 0 by construction        → cost = MAX_CARBALLO_COST.
+//
+// The LUT is indexed by (gamma, alpha) with bilinear interpolation. Built once
+// per nlooks (rounded to 0.1) and leaked to 'static — ~160 KB per nlooks.
+
+const N_ALPHA_CARB: usize = 501;
+const N_GAMMA_CARB: usize = 101;
+/// Maximum Carballo LLR cost, in nats. Arcs with p1 ≈ 0 are capped here.
+pub const MAX_CARBALLO_COST: f32 = 50.0;
+
+pub struct CarballoLut {
+    values: Vec<f32>, // [N_GAMMA_CARB × N_ALPHA_CARB], row = gamma, col = alpha
+}
+
+impl CarballoLut {
+    /// Build the LUT by integrating the Lee PDF CDF for each γ sample.
+    pub fn build(nlooks: f32) -> Self {
+        use std::f32::consts::PI;
+        const N_CDF: usize = 2001; // trapezoidal nodes over [−π, π]
+        let dt = 2.0 * PI as f64 / ((N_CDF - 1) as f64);
+
+        let mut values = vec![MAX_CARBALLO_COST; N_GAMMA_CARB * N_ALPHA_CARB];
+
+        for ig in 0..N_GAMMA_CARB {
+            let gamma = (ig as f32) / ((N_GAMMA_CARB - 1) as f32) * 0.999_f32;
+
+            // 1. Build CDF[k] = ∫_{-π}^{t_k} Lee_PDF(s) ds via trapezoidal rule.
+            let mut cdf = vec![0.0_f64; N_CDF];
+            for k in 1..N_CDF {
+                let t0 = -PI as f64 + ((k - 1) as f64) * dt;
+                let t1 = -PI as f64 + (k as f64) * dt;
+                let p0 = super::lee_pdf::pdf(t0 as f32, gamma, nlooks) as f64;
+                let p1 = super::lee_pdf::pdf(t1 as f32, gamma, nlooks) as f64;
+                cdf[k] = cdf[k - 1] + 0.5 * (p0 + p1) * dt;
+            }
+            let total = cdf[N_CDF - 1].max(1e-12);
+            for c in cdf.iter_mut() {
+                *c /= total;
+            }
+
+            // Linearly interpolated CDF lookup at t ∈ [-π, π].
+            let cdf_at = |t: f32| -> f64 {
+                let tc = (t as f64).clamp(-PI as f64, PI as f64);
+                let ki = (tc - (-PI as f64)) / dt;
+                let k0 = (ki.floor() as usize).min(N_CDF - 2);
+                let f = ki - k0 as f64;
+                cdf[k0] * (1.0 - f) + cdf[k0 + 1] * f
+            };
+
+            // 2. For each alpha sample compute the Carballo cost.
+            for ia in 0..N_ALPHA_CARB {
+                let alpha = -PI + (ia as f32) / ((N_ALPHA_CARB - 1) as f32) * 2.0 * PI;
+                let cost = if alpha <= 0.0 {
+                    MAX_CARBALLO_COST
+                } else {
+                    let p1 = cdf_at(alpha - PI);
+                    let p0 = 1.0 - p1;
+                    if p1 < 1e-30 {
+                        MAX_CARBALLO_COST
+                    } else {
+                        (-(p1 / p0).ln() as f32).min(MAX_CARBALLO_COST).max(0.0)
+                    }
+                };
+                values[ig * N_ALPHA_CARB + ia] = cost;
+            }
+        }
+        Self { values }
+    }
+
+    /// Bilinear lookup. Returns cost ∈ [0, MAX_CARBALLO_COST].
+    #[inline]
+    pub fn eval(&self, alpha: f32, gamma: f32) -> f32 {
+        use std::f32::consts::PI;
+        let a = alpha.clamp(-PI, PI);
+        let g = gamma.clamp(0.0, 0.999);
+
+        let ai = (a + PI) / (2.0 * PI) * ((N_ALPHA_CARB - 1) as f32);
+        let gi = g / 0.999 * ((N_GAMMA_CARB - 1) as f32);
+
+        let a0 = (ai.floor() as usize).min(N_ALPHA_CARB - 2);
+        let g0 = (gi.floor() as usize).min(N_GAMMA_CARB - 2);
+        let fa = ai - a0 as f32;
+        let fg = gi - g0 as f32;
+
+        let v00 = self.values[g0 * N_ALPHA_CARB + a0];
+        let v01 = self.values[g0 * N_ALPHA_CARB + a0 + 1];
+        let v10 = self.values[(g0 + 1) * N_ALPHA_CARB + a0];
+        let v11 = self.values[(g0 + 1) * N_ALPHA_CARB + a0 + 1];
+        let v0 = v00 * (1.0 - fa) + v01 * fa;
+        let v1 = v10 * (1.0 - fa) + v11 * fa;
+        v0 * (1.0 - fg) + v1 * fg
+    }
+}
+
+type CarbLutMap = Mutex<HashMap<u32, &'static CarballoLut>>;
+
+fn carb_cache() -> &'static CarbLutMap {
+    static CACHE: OnceLock<CarbLutMap> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Get the Carballo cost LUT for `nlooks`, building and caching on first use.
+/// nlooks is rounded to one decimal (e.g., 9.97 → 10.0) for cache sharing.
+pub fn get_or_build_carballo(nlooks: f32) -> &'static CarballoLut {
+    let key = (nlooks * 10.0).round() as u32;
+    let mut map = carb_cache().lock().unwrap();
+    if let Some(l) = map.get(&key) {
+        return l;
+    }
+    let lut: &'static CarballoLut = Box::leak(Box::new(CarballoLut::build(nlooks)));
+    map.insert(key, lut);
+    lut
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +307,56 @@ mod tests {
             assert!(
                 (lut_v - ref_v).abs() < 0.01 * ref_v.max(0.01),
                 "LUT vs direct mismatch at ({a}, {g}): {lut_v} vs {ref_v}"
+            );
+        }
+    }
+
+    #[test]
+    fn carballo_lut_wrap_line_has_zero_cost() {
+        use std::f32::consts::PI;
+        // At alpha=π, cost must be 0 regardless of gamma: CDF(0)=0.5 → p1=p0.
+        let lut = CarballoLut::build(10.0);
+        for ig in 0..N_GAMMA_CARB {
+            let gamma = (ig as f32) / ((N_GAMMA_CARB - 1) as f32) * 0.999;
+            let c = lut.eval(PI, gamma);
+            assert!(
+                c < 1e-2,
+                "cost at alpha=π, gamma={gamma} should be ~0, got {c}"
+            );
+        }
+    }
+
+    #[test]
+    fn carballo_lut_smooth_interior_has_max_cost() {
+        // At alpha=0.0 (or negative), cost must equal MAX_CARBALLO_COST.
+        let lut = CarballoLut::build(10.0);
+        let c_zero = lut.eval(0.0, 0.8);
+        let c_neg = lut.eval(-1.0, 0.8);
+        assert_eq!(
+            c_zero, MAX_CARBALLO_COST,
+            "cost at alpha=0 should be MAX, got {c_zero}"
+        );
+        assert_eq!(
+            c_neg, MAX_CARBALLO_COST,
+            "cost at alpha<0 should be MAX, got {c_neg}"
+        );
+    }
+
+    #[test]
+    fn carballo_lut_monotone_decreasing_in_alpha() {
+        use std::f32::consts::PI;
+        // For fixed gamma > 0, cost should decrease monotonically from 0 to π.
+        let lut = CarballoLut::build(16.0);
+        let gamma = 0.7;
+        let alphas: Vec<f32> = (1..=50).map(|k| k as f32 / 50.0 * PI).collect();
+        let costs: Vec<f32> = alphas.iter().map(|&a| lut.eval(a, gamma)).collect();
+        for i in 1..costs.len() {
+            assert!(
+                costs[i] <= costs[i - 1] + 1e-3,
+                "cost should decrease in alpha: cost[{i}]={} > cost[{}]={}",
+                costs[i],
+                i - 1,
+                costs[i - 1]
             );
         }
     }

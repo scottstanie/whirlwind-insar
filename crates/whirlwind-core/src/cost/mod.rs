@@ -25,6 +25,12 @@ use rayon::prelude::*;
 /// quantization error ≤ 0.005 per arc.
 pub const COST_SCALE: f32 = 100.0;
 
+/// Scale for the analytical Carballo LLR cost specifically. The raw LLR
+/// is capped at `lut::MAX_CARBALLO_COST = 50.0`; multiplying by 6 gives
+/// max integer cost = 300, matching the Dial's bucket-queue speed of the
+/// earlier simplified formula while using the correct Lee 1994 shape.
+pub const CARBALLO_COST_SCALE: f32 = 6.0;
+
 /// Compute 7x7 box-filtered phase gradients (vertical & horizontal).
 /// Mode = nearest (edge values replicate).
 pub fn smooth_phase_gradients(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2<f32>) {
@@ -256,12 +262,6 @@ pub fn compute_carballo_costs(
     // phase_dy_s: (m_phase-1, n_phase) = (m-2, n-1)
     // phase_dx_s: (m_phase, n_phase-1) = (m-1, n-2)
 
-    // `nlooks` is unused by the default Carballo cost (γ·max(0, π−α) has no
-    // nlooks term); kept in the signature for API stability / parity with
-    // `compute_crlb_costs`.
-    let _ = nlooks;
-    let corr_use = corr;
-
     // Per-edge coherence (minimum of the two endpoint pixels).
     let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase)); // vertical edges in pixel space
     cor_dy
@@ -270,7 +270,7 @@ pub fn compute_carballo_costs(
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase {
-                row[j] = corr_use[(i, j)].min(corr_use[(i + 1, j)]);
+                row[j] = corr[(i, j)].min(corr[(i + 1, j)]);
             }
         });
     let mut cor_dx = Array2::<f32>::zeros((m_phase, n_phase - 1)); // horizontal edges
@@ -280,7 +280,7 @@ pub fn compute_carballo_costs(
         .enumerate()
         .for_each(|(i, mut row)| {
             for j in 0..n_phase - 1 {
-                row[j] = corr_use[(i, j)].min(corr_use[(i, j + 1)]);
+                row[j] = corr[(i, j)].min(corr[(i, j + 1)]);
             }
         });
     let mask_dy = mask.map(|m_| {
@@ -308,32 +308,19 @@ pub fn compute_carballo_costs(
         out
     });
 
-    // Per-direction topological cost (Carballo-style, sign-aware).
+    // Analytical Carballo LLR cost from Lee 1994 multilook phase CDF.
     //
-    //   c_{+}(α, γ) = γ · max(0, π − α)
-    //   c_{−}(α, γ) = γ · max(0, π + α) = c_{+}(−α, γ)
+    //   cost(+, α, γ) = min(−log(CDF_Lee(α−π) / (1−CDF_Lee(α−π))), MAX)
+    //                   for α > 0; MAX for α ≤ 0.
+    //   cost(−, α, γ) = cost(+, −α, γ)    (opposite direction)
     //
-    // `c_{+}` is the cost of pushing +2π through the arc; it is 0 when
-    // α = +π (true wrap line in the + direction), γ·π when α = 0 (smooth
-    // interior — never cut here), and γ·2π when α = −π (perversely add +2π
-    // where the wrap is in the opposite direction — strongly avoid).
-    // `c_{−}` is the mirror image. The asymmetry is essential: MCF must
-    // see different costs for DOWN vs UP arcs at a single pixel edge,
-    // otherwise the LP is degenerate and arbitrary tie-breaking flips the
-    // unwrap topology under tiny input perturbations.
-    //
-    // The earlier symmetric `γ · (π − |α|)` form lost this distinction and
-    // produced block-2π errors in coherent regions on real NISAR data; see
-    // `paper/binary_vs_continuous.md` "Posterior reliability" section.
-    //
-    // Cost of pushing +2π through this arc, given a smoothed gradient α and
-    // edge coherence γ: the direction-aware Carballo cost `γ · max(0, π − α)`.
-    // The opposite direction is `cost_dir(-α, γ)`. (The SNAPHU-equivalent
-    // statistical cost is the convex parabola in `compute_snaphu_smooth_costs`,
-    // reached via `unwrap_convex` / `WHIRLWIND_TILE_CONVEX`.)
+    // At α = +π (wrap line): CDF(0) = 0.5 → cost = 0 (free to cross).
+    // At α → 0  (smooth):    CDF(−π) → 0  → cost = MAX (never cut here).
+    // The asymmetry between +/− directions is essential (see earlier
+    // Carballo comment block); the LUT encodes it via the sign of α.
+    let carb_lut = lut::get_or_build_carballo(nlooks);
     let cost_dir = |alpha: f32, gamma: f32| -> f32 {
-        let pi = std::f32::consts::PI;
-        (gamma * (pi - alpha)).max(0.0)
+        carb_lut.eval(alpha, gamma)
     };
 
     // Forward-arc cost vector split into 4 direction slabs. Each slab is a
@@ -380,8 +367,8 @@ pub fn compute_carballo_costs(
                 } else {
                     (cost_dir(-alpha, gamma), cost_dir(alpha, gamma))
                 };
-                right_row[j] = (c_rt * COST_SCALE).round() as i32;
-                left_row[j] = (c_lt * COST_SCALE).round() as i32;
+                right_row[j] = (c_rt * CARBALLO_COST_SCALE).round() as i32;
+                left_row[j] = (c_lt * CARBALLO_COST_SCALE).round() as i32;
             }
         });
 
@@ -405,8 +392,8 @@ pub fn compute_carballo_costs(
                     (cost_dir(alpha, gamma), cost_dir(-alpha, gamma))
                 };
                 let col = j + 1;
-                down_row[col] = (c_dn * COST_SCALE).round() as i32;
-                up_row[col] = (c_up * COST_SCALE).round() as i32;
+                down_row[col] = (c_dn * CARBALLO_COST_SCALE).round() as i32;
+                up_row[col] = (c_up * CARBALLO_COST_SCALE).round() as i32;
             }
         });
 
