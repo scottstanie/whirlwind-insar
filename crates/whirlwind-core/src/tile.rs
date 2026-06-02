@@ -249,7 +249,8 @@ fn assemble_and_refine(
     if std::env::var("WHIRLWIND_NO_ANCHOR").is_ok() {
         coarse_refine(&mut out, conf, mask, 8, None);
     } else {
-        let anchor = compute_coarse_anchor(igram, conf, 1.0, mask, 8);
+        let lk = anchor_lk(igram.dim());
+        let anchor = compute_coarse_anchor(igram, conf, 1.0, mask, lk);
         let av = anchor.as_ref().map(|a| a.view());
         for &f in &[16usize, 8, 4] {
             coarse_refine(&mut out, conf, mask, f, av);
@@ -1232,6 +1233,39 @@ fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Arr
         }
     }
     out
+}
+
+/// Adaptive multilook factor for the global coarse anchor (issue #65).
+///
+/// The anchor is a whole-image solve on the `lk×`-multilooked image. A whole-
+/// image MCF solve "runs away" once the domain exceeds ~256 px (the per-arc cost
+/// optimum drifts to a wrong large-scale winding; see
+/// `paper/why_whole_image_runs_away.md`). The historical hardcoded `lk = 8` left
+/// the coarse solve at e.g. 522 px on a 4176-px NISAR frame — so the *anchor
+/// itself ran away* (D_077 tiled: 48 → 63 % once the coarse image is pushed
+/// below ~256 px). We therefore size `lk` so the coarse image lands just under
+/// ~256 px: large enough that the coarse solve doesn't run away, but no coarser
+/// — over-multilooking smooths away real winding and regresses gentler frames
+/// (A_030 held at lk≤16 / coarse≥266 px but lost 2.6 pts by lk=20 / coarse
+/// 213 px in the 13-frame sweep). Floor at 8 (the historical value) for small
+/// frames where the whole-image solve is already well-posed.
+/// `WHIRLWIND_ANCHOR_LK` overrides for A/B testing.
+fn anchor_lk((m, n): (usize, usize)) -> usize {
+    if let Ok(v) = std::env::var("WHIRLWIND_ANCHOR_LK") {
+        if let Ok(k) = v.parse::<usize>() {
+            return k.max(1);
+        }
+    }
+    // Coarse image ~256-288 px: large enough the coarse solve doesn't run away,
+    // not so coarse it over-smooths real winding. The sweet spot is narrow and
+    // mildly content-dependent (gentler frames over-smooth sooner), so we clamp
+    // lk to [8, 16]: lk=16 was good for BOTH the runaway-prone D-frames (D_077
+    // +15 pts) AND the gentle A_030 (no regression) in the 13-frame sweep, while
+    // lk>=18 (coarse < ~256 px) regressed A_030. floor(maxdim/256) reaches the
+    // cap of 16 for all ~4200-4600 px NISAR GUNW frames.
+    const TARGET_COARSE_PX: usize = 256;
+    let maxdim = m.max(n);
+    (maxdim / TARGET_COARSE_PX).clamp(8, 16)
 }
 
 fn compute_coarse_anchor(
