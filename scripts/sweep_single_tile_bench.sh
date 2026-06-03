@@ -18,14 +18,33 @@ OUT=${OUT:-/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_singletile_sweep}
 NLOOKS=${NLOOKS:-16}
 mkdir -p "$OUT"
 
+# Never orphan a bench child. Each frame's heavy unwrap is ~6-14 GB; if this
+# script is interrupted/killed (or the tracked task dies and leaves it), kill
+# any bench process for THIS sweep (matched by its --out-dir under $OUT) so it
+# can't accumulate. Scoped to $OUT so unrelated runs are untouched. Run this
+# script in the FOREGROUND (not a detached background task) so it dies with the
+# caller — backgrounding it is what previously orphaned children.
+cleanup() { pkill -9 -f -- "$OUT" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+# Resume-friendly: by default skip frames whose result JSON already exists
+# (so the sweep can be run foreground in ≤10-min batches under the tool timeout
+# without redoing finished frames). Set FORCE=1 to redo everything.
+FORCE_FLAG=""
+[ "${FORCE:-0}" = "1" ] && FORCE_FLAG="--force"
+
 i=0
 for h5 in "$H5DIR"/*.h5; do
   i=$((i + 1))
   frame=$(basename "$h5" | sed -E 's/.*_([AD]_[0-9]{3})_.*/\1/')
+  if [ -z "$FORCE_FLAG" ] && find "$OUT/$frame" -name '*.json' 2>/dev/null | grep -q .; then
+    printf '>>> [%d] %s (done, skip)\n' "$i" "$frame"
+    continue
+  fi
   printf '>>> [%d] %s\n' "$i" "$frame"
   /usr/bin/time -l python scripts/bench_nisar_gunw_whirlwind.py \
     --local-h5 "$h5" --solver linear --nlooks "$NLOOKS" \
-    --out-dir "$OUT/$frame" --force \
+    --out-dir "$OUT/$frame" $FORCE_FLAG \
     > "$OUT/$frame.stdout" 2> "$OUT/$frame.time" || {
       printf '    FRAME FAILED (exit %d) — see %s\n' "$?" "$OUT/$frame.time"
       continue

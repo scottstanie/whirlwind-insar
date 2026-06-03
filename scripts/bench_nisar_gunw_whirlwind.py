@@ -528,16 +528,31 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
         t0 = time.perf_counter()
         # ww.unwrap takes a COMPLEX interferogram; `ig` here is the real wrapped
         # phase (kept real for the comparison stats below). Convert for the call.
-        ig_complex = np.exp(1j * ig).astype(np.complex64)
+        # ZERO the phase outside the mask: the production unwrappedPhase is NOT
+        # flat in masked regions, and `unwrap_linear` computes residues on the
+        # FULL phase (no mask-gating, for Python parity), so masked-region phase
+        # detonates into a wall of spurious residues (A_013: 715k vs 778 when
+        # zeroed) and blows up the MCF. Zeroing makes masked regions flat (no
+        # residues); the tiled path gates them anyway, so this is safe for both.
+        ig_solver = np.where(mask, ig, 0.0).astype(np.float32)
+        ig_complex = np.exp(1j * ig_solver).astype(np.complex64)
+        # Sanitize coherence for the SOLVER only (stats below still use raw `coh`).
+        # Raw coh can carry NaN / out-of-range values in masked regions; feeding
+        # those to the Carballo cost LUT yields garbage costs, which on the
+        # `linear` path blows up Dial's bucket count (max_reduced_cost) and its
+        # memory. Clip to [0,1], NaN->0, and zero coherence outside the mask.
+        coh_solver = np.where(
+            mask, np.clip(np.nan_to_num(coh), 0.0, 1.0), 0.0
+        ).astype(np.float32)
         if args.solver == "linear":
             # VERIFIED path: single-tile whole-image MCF with fixed Carballo parity
             # costs (matches Python ww-orig). No connected-component labels are
             # returned by this solver, so component-level stats are skipped.
-            ww_unw = ww._native.unwrap_linear(ig_complex, coh, float(args.nlooks), mask)
+            ww_unw = ww._native.unwrap_linear(ig_complex, coh_solver, float(args.nlooks), mask)
             ww_cc = None
         else:
             ww_unw, ww_cc = ww.unwrap(
-                ig_complex, coh, args.nlooks, mask,
+                ig_complex, coh_solver, args.nlooks, mask,
                 tile_size=args.tile_size, tile_overlap=args.tile_overlap,
             )
         runtime_s = time.perf_counter() - t0
