@@ -160,3 +160,43 @@ fn single_source_ssp_keeps_nonnegative_reduced_costs() {
         "unwrap_linear produced non-finite output"
     );
 }
+
+/// Regression for the zero-cost masked-sea blowup. `unwrap_linear` does NOT
+/// forbid masked arcs (cost 0), so a heavily-masked frame is a vast zero-cost
+/// "sea"; the single-source SSP must cross it to pair residues. With a binary
+/// heap this ballooned to millions of equal-distance entries (RSS climbed
+/// without bound → hang/OOM-looking); Dial's bucket queue traverses the sea in
+/// O(nodes). This test must simply COMPLETE with finite output on the valid
+/// pixels — a regression to the heap would hang here.
+#[test]
+fn single_source_ssp_bounded_on_zero_cost_masked_sea() {
+    use rand::SeedableRng;
+    let (m, n) = (128usize, 128usize);
+    let cycles = 5.0_f32;
+    let truth = Array2::from_shape_fn((m, n), |(i, j)| {
+        2.0 * std::f32::consts::PI * cycles * (i as f32 + j as f32) / (m as f32)
+    });
+    let gamma = Array2::<f32>::from_elem((m, n), 0.3);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+    let (igram, corr) = simulate::simulate_ifg(&truth, &gamma, 4, &mut rng);
+    // Sparse, fragmented validity (~12 %): a wide masked sea between valid lines,
+    // so leftover residues must route across cost-0 masked region in the SSP.
+    let mask = Array2::from_shape_fn((m, n), |(i, j)| (i % 16 < 2) || (j % 16 < 2));
+
+    let unw = whirlwind_core::unwrap_linear(igram.view(), corr.view(), 4.0, Some(mask.view()))
+        .unwrap();
+    let t = whirlwind_core::primal_dual::last_timings();
+    assert!(
+        t.ssp_iters > 0,
+        "test did not exercise the single-source SSP over the masked sea (ssp_iters=0)"
+    );
+    // Completion + finiteness on valid pixels is the guard (the old binary-heap
+    // SSP would balloon/hang on the zero-cost sea instead of returning). Masked
+    // pixels are intentionally NaN.
+    assert!(
+        unw.iter()
+            .zip(mask.iter())
+            .all(|(&v, &keep)| !keep || v.is_finite()),
+        "unwrap_linear produced non-finite output on valid pixels"
+    );
+}
