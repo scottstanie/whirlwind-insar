@@ -310,6 +310,50 @@ fn unwrap_reuse<'py>(
     Ok(unw.into_pyarray(py))
 }
 
+/// Capacity-1 (linear) MCF solver — exact replica of Python `whirlwind_orig`.
+///
+/// Uses unit-capacity arcs and only 8 primal-dual iterations, matching
+/// `primal_dual(network, maxiter=8)` in `ww_orig._unwrap`. Diagnostic function
+/// for validating Rust/Python parity; use `unwrap_reuse` for production.
+#[pyfunction]
+#[pyo3(signature = (igram, corr, nlooks = 1.0, mask = None))]
+fn unwrap_linear<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    corr: PyReadonlyArray2<'py, f32>,
+    nlooks: f32,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    let ig = igram.as_array();
+    let co = corr.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let unw = py.detach(|| whirlwind_core::unwrap_linear(ig, co, nlooks, m));
+    let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(unw.into_pyarray(py))
+}
+
+/// Diagnostic: capacity-1 MCF with externally-supplied arc costs.
+///
+/// Accepts costs in Rust arc order: ``[DOWN(n_v), UP(n_v), RIGHT(n_h), LEFT(n_h)]``.
+/// Convert from Python ``_cost.compute_carballo_costs`` output (layout
+/// ``[UP, LEFT, DOWN, RIGHT]``) with the mapping documented in
+/// ``whirlwind_core::unwrap_linear_ext_costs``.
+#[pyfunction]
+#[pyo3(signature = (igram, mask, costs))]
+fn unwrap_linear_ext_costs<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    costs: PyReadonlyArray1<'py, i32>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    let ig = igram.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let c = costs.as_slice().map_err(|e| PyValueError::new_err(format!("costs must be C-contiguous: {e}")))?;
+    let unw = py.detach(|| whirlwind_core::unwrap_linear_ext_costs(ig, m, c));
+    let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(unw.into_pyarray(py))
+}
+
 /// Per-pixel quality from temporal triangles (3-cycles).
 ///
 /// Same idea as `quality_map` but uses only triangles instead of the
@@ -492,6 +536,45 @@ fn unwrap_native<'py>(
     Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
 }
 
+/// Whole-image MCF unwrap with caller-supplied integer arc costs.
+///
+/// For testing/research: pass precomputed costs (e.g. Python Carballo spline)
+/// directly to the Rust reuse-network primal-dual solver, bypassing the
+/// built-in cost computation. Costs must be packed in the same arc-id order
+/// as `whirlwind_core::cost::compute_carballo_costs` returns.
+///
+/// * ``igram`` — complex64 (m, n); used for residues and integration only.
+/// * ``costs`` — int32 flat vector of length ``num_forward_arcs``.
+/// * ``mask`` — optional bool (m, n) validity mask.
+#[pyfunction]
+#[pyo3(signature = (igram, costs, mask = None))]
+fn _unwrap_with_costs<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    costs: PyReadonlyArray1<'py, i32>,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    use whirlwind_core::{grid, integrate, network, primal_dual, residue};
+    let ig = igram.as_array();
+    let cost_slice = costs.as_slice().map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    let m_view = mask.as_ref().map(|m| m.as_array());
+    let out = py.detach(|| {
+        let (m, n) = ig.dim();
+        let wrapped_phase = ig.mapv(|z| z.arg());
+        let residues = residue::compute(wrapped_phase.view());
+        let g = grid::RectangularGridGraph::new(m + 1, n + 1);
+        let costs_vec = cost_slice.to_vec();
+        let mut net = network::Network::new_reuse_with_mask(&g, residues.view(), &costs_vec, m_view);
+        primal_dual::run(&g, &mut net, 50);
+        if m_view.is_some() {
+            integrate::integrate_with_mask(wrapped_phase.view(), &g, &net, m_view)
+        } else {
+            integrate::integrate(wrapped_phase.view(), &g, &net)
+        }
+    });
+    Ok(out.into_pyarray(py))
+}
+
 /// Goldstein adaptive phase filter (Goldstein & Werner 1998).
 ///
 /// Block-parallel Rust port of the Python helper. See
@@ -614,6 +697,8 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_crlb, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_crlb_grounded, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_reuse, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_linear, m)?)?;
+    m.add_function(wrap_pyfunction!(unwrap_linear_ext_costs, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_native, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;
@@ -625,5 +710,6 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(quality_map, m)?)?;
     m.add_function(wrap_pyfunction!(quality_triangles, m)?)?;
     m.add_function(wrap_pyfunction!(goldstein, m)?)?;
+    m.add_function(wrap_pyfunction!(_unwrap_with_costs, m)?)?;
     Ok(())
 }

@@ -72,6 +72,23 @@ impl ShortestPaths {
     }
 }
 
+/// Run multi-source Dijkstra to FULL COMPLETION — every reachable node is
+/// popped and gets an exact finalized distance. Matches Python ww-orig's
+/// `dijkstra_pd` which runs `while (!dijkstra.done())`.
+///
+/// Use in primal-dual iterations when potential accuracy matters: exact `d[v]`
+/// for all nodes makes the potential update `π[v] -= d[v]` produce tight
+/// reduced costs, matching Python's MCF routing.
+pub fn dijkstra_multi_source_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
+    // Full completion only implemented for Dial serial; fall back to early-exit
+    // heap for convex mode (marginal costs can be large → Dial bucket count
+    // would explode).
+    if net.convex_mode {
+        return heap::run(g, net);
+    }
+    dial::run_full(g, net)
+}
+
 /// Run multi-source Dijkstra over the residual graph using reduced costs.
 /// Sources are nodes with positive excess; distance 0 at each.
 ///

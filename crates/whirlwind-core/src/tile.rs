@@ -249,7 +249,19 @@ fn assemble_and_refine(
     if std::env::var("WHIRLWIND_NO_ANCHOR").is_ok() {
         coarse_refine(&mut out, conf, mask, 8, None);
     } else {
-        let anchor = compute_coarse_anchor(igram, conf, 1.0, mask, 8);
+        let lk = anchor_lk(igram.dim());
+        // Cross-validated dual anchor: lk_fine (current adaptive) + lk_coarse
+        // (2× more multilook, ~128px coarse, well below the runaway threshold).
+        // Regions where lk_fine runs away are detected via integer-cycle
+        // disagreement vs lk_coarse and overwritten with the more-reliable
+        // lk_coarse value. In well-behaved frames both anchors agree and the
+        // fine anchor is used throughout (no regression vs lk_fine-only).
+        let lk_coarse = (lk * 2).min(32);
+        let anchor = if lk_coarse > lk {
+            compute_dual_anchor(igram, conf, mask, lk, lk_coarse)
+        } else {
+            compute_coarse_anchor(igram, conf, 1.0, mask, lk)
+        };
         let av = anchor.as_ref().map(|a| a.view());
         for &f in &[16usize, 8, 4] {
             coarse_refine(&mut out, conf, mask, f, av);
@@ -1234,6 +1246,39 @@ fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Arr
     out
 }
 
+/// Adaptive multilook factor for the global coarse anchor (issue #65).
+///
+/// The anchor is a whole-image solve on the `lk×`-multilooked image. A whole-
+/// image MCF solve "runs away" once the domain exceeds ~256 px (the per-arc cost
+/// optimum drifts to a wrong large-scale winding; see
+/// `paper/why_whole_image_runs_away.md`). The historical hardcoded `lk = 8` left
+/// the coarse solve at e.g. 522 px on a 4176-px NISAR frame — so the *anchor
+/// itself ran away* (D_077 tiled: 48 → 63 % once the coarse image is pushed
+/// below ~256 px). We therefore size `lk` so the coarse image lands just under
+/// ~256 px: large enough that the coarse solve doesn't run away, but no coarser
+/// — over-multilooking smooths away real winding and regresses gentler frames
+/// (A_030 held at lk≤16 / coarse≥266 px but lost 2.6 pts by lk=20 / coarse
+/// 213 px in the 13-frame sweep). Floor at 8 (the historical value) for small
+/// frames where the whole-image solve is already well-posed.
+/// `WHIRLWIND_ANCHOR_LK` overrides for A/B testing.
+fn anchor_lk((m, n): (usize, usize)) -> usize {
+    if let Ok(v) = std::env::var("WHIRLWIND_ANCHOR_LK") {
+        if let Ok(k) = v.parse::<usize>() {
+            return k.max(1);
+        }
+    }
+    // Coarse image ~256-288 px: large enough the coarse solve doesn't run away,
+    // not so coarse it over-smooths real winding. The sweet spot is narrow and
+    // mildly content-dependent (gentler frames over-smooth sooner), so we clamp
+    // lk to [8, 16]: lk=16 was good for BOTH the runaway-prone D-frames (D_077
+    // +15 pts) AND the gentle A_030 (no regression) in the 13-frame sweep, while
+    // lk>=18 (coarse < ~256 px) regressed A_030. floor(maxdim/256) reaches the
+    // cap of 16 for all ~4200-4600 px NISAR GUNW frames.
+    const TARGET_COARSE_PX: usize = 256;
+    let maxdim = m.max(n);
+    (maxdim / TARGET_COARSE_PX).clamp(8, 16)
+}
+
 fn compute_coarse_anchor(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -1258,6 +1303,80 @@ fn compute_coarse_anchor(
     .ok()?;
     // Block-replicate to full res (we only consume round((anchor−unw)/2π)).
     Some(upsample_blockrep(&cunw, lk, m, n))
+}
+
+/// Cross-validated dual-scale anchor.
+///
+/// `lk_fine` (primary, e.g. 16) and `lk_coarse` (safety net, e.g. 32) must
+/// satisfy `lk_coarse > lk_fine` and `lk_coarse` divisible by `lk_fine`.
+///
+/// For each `lk_coarse`-sized cell of the image: if ALL `lk_fine` sub-cells
+/// within it agree with the `lk_coarse` value to within one integer cycle, the
+/// fine anchor is used (better resolution). If any sub-cell disagrees, the fine
+/// anchor has a runaway sign there — the entire coarse cell is overwritten with
+/// the more-reliable `lk_coarse` value.
+///
+/// Why this works: at lk_fine=16 NISAR frames produce a ~262px coarse image —
+/// right at the runaway edge (~256px). Runaway shows up as an integer-cycle
+/// disagreement vs the lk_coarse=32 anchor (~131px, safely below threshold).
+/// In frames without runaway (gentle A-frames) both anchors agree everywhere
+/// and the fine anchor is returned unchanged — no regression.
+fn compute_dual_anchor(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    lk_fine: usize,
+    lk_coarse: usize,
+) -> Option<Array2<f32>> {
+    assert!(lk_coarse > lk_fine && lk_coarse % lk_fine == 0);
+    let fine = compute_coarse_anchor(igram, corr, 1.0, mask, lk_fine)?;
+    let coarse = compute_coarse_anchor(igram, corr, 1.0, mask, lk_coarse)?;
+    let (m, n) = fine.dim();
+    let tau = TAU;
+    let mut out = fine.clone();
+
+    let cm = m / lk_coarse;
+    let cn = n / lk_coarse;
+    let n_sub = lk_coarse / lk_fine;
+
+    for ci in 0..cm {
+        for cj in 0..cn {
+            let p0 = ci * lk_coarse;
+            let q0 = cj * lk_coarse;
+            let ac = coarse[(p0, q0)];
+            if !ac.is_finite() {
+                continue;
+            }
+            // Check each lk_fine sub-cell for integer-cycle disagreement.
+            let mut runaway = false;
+            'check: for si in 0..n_sub {
+                for sj in 0..n_sub {
+                    let pi = p0 + si * lk_fine;
+                    let qj = q0 + sj * lk_fine;
+                    if pi >= m || qj >= n {
+                        continue;
+                    }
+                    let af = fine[(pi, qj)];
+                    if !af.is_finite() {
+                        continue;
+                    }
+                    if ((af - ac) / tau).round() as i32 != 0 {
+                        runaway = true;
+                        break 'check;
+                    }
+                }
+            }
+            if runaway {
+                // Replace the whole coarse cell with the reliable coarse value.
+                for pi in p0..(p0 + lk_coarse).min(m) {
+                    for qj in q0..(q0 + lk_coarse).min(n) {
+                        out[(pi, qj)] = ac;
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 fn coarse_refine(
