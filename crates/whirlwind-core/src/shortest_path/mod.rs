@@ -64,6 +64,20 @@ impl ShortestPaths {
         }
     }
 
+    /// Clear the buffers for another Dijkstra run, preserving allocations when
+    /// the graph size is unchanged.
+    pub fn reset(&mut self, n_nodes: usize) {
+        if self.dist.len() != n_nodes {
+            *self = Self::new(n_nodes);
+            return;
+        }
+        self.dist.fill(i64::MAX);
+        self.pred_arc.fill(-1);
+        self.pred_node.fill(-1);
+        self.source.fill(-1);
+        self.popped.fill(false);
+    }
+
     /// True iff this node was finalized by the Dijkstra (i.e. popped).
     /// Distinct from "merely relaxed" — with early-exit on, some relaxed
     /// nodes never get popped.
@@ -80,13 +94,25 @@ impl ShortestPaths {
 /// for all nodes makes the potential update `π[v] -= d[v]` produce tight
 /// reduced costs, matching Python's MCF routing.
 pub fn dijkstra_multi_source_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
+    let mut sp = ShortestPaths::new(net.num_nodes());
+    dijkstra_multi_source_full_into(g, net, &mut sp);
+    sp
+}
+
+/// Reusable-buffer variant of [`dijkstra_multi_source_full`].
+pub fn dijkstra_multi_source_full_into<G: ResidualGraph>(
+    g: &G,
+    net: &Network,
+    sp: &mut ShortestPaths,
+) {
     // Full completion only implemented for Dial serial; fall back to early-exit
     // heap for convex mode (marginal costs can be large → Dial bucket count
     // would explode).
     if net.convex_mode {
-        return heap::run(g, net);
+        heap::run_into(g, net, sp);
+    } else {
+        dial::run_full_into(g, net, sp);
     }
-    dial::run_full(g, net)
 }
 
 /// Run multi-source Dijkstra over the residual graph using reduced costs.
@@ -95,17 +121,29 @@ pub fn dijkstra_multi_source_full<G: ResidualGraph>(g: &G, net: &Network) -> Sho
 /// Backend is selected once per process via `backend()` (env-var
 /// `WHIRLWIND_DIJKSTRA`).
 pub fn dijkstra_multi_source<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
+    let mut sp = ShortestPaths::new(net.num_nodes());
+    dijkstra_multi_source_into(g, net, &mut sp);
+    sp
+}
+
+/// Reusable-buffer variant of [`dijkstra_multi_source`].
+pub fn dijkstra_multi_source_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) {
     // Convex mode produces marginal costs up to ~weight · 200 · nshortcycle²
     // (1e6+ for typical high-coherence arcs); Dial's bucket vec would need
     // that many entries. Route convex networks to the binary-heap backend,
     // which scales O(E log V) without the bucket-count blow-up. The env-var
     // backend selector still controls the linear / reuse paths.
     if net.convex_mode {
-        return heap::run(g, net);
+        heap::run_into(g, net, sp);
+        return;
     }
     match backend() {
-        DijkstraBackend::Heap => heap::run(g, net),
-        DijkstraBackend::DialSerial => dial::run(g, net),
-        DijkstraBackend::DialParallel => dial::run_parallel(g, net),
+        DijkstraBackend::Heap => heap::run_into(g, net, sp),
+        DijkstraBackend::DialSerial => dial::run_into(g, net, sp),
+        DijkstraBackend::DialParallel => {
+            // The experimental parallel Dial backend still owns its buffers;
+            // keep the default serial path allocation-free.
+            *sp = dial::run_parallel(g, net);
+        }
     }
 }

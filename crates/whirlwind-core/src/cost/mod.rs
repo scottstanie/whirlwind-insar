@@ -407,9 +407,11 @@ pub fn compute_carballo_costs(
 /// * Cost zeroed only where **both** endpoint pixels are invalid
 ///   (Python passes `mask=~valid_mask`; zeros where `mask[a] && mask[b]` =
 ///   both-invalid; boundary arcs with one valid pixel retain a nonzero cost)
+/// * p0/p1 probabilities loaded from the embedded ww-orig tables, or from
+///   `WHIRLWIND_CARBALLO_LUT_DIR` when explicitly overridden for experiments.
 ///
-/// The underlying LLR formula is the same analytical Lee 1994 CDF as
-/// `compute_carballo_costs`; only the scale and mask zeroing semantics differ.
+/// This is intentionally separate from `compute_carballo_costs`, which keeps
+/// the faster analytical LUT used by the tiled/reuse production path.
 pub fn compute_carballo_costs_parity(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -472,7 +474,8 @@ pub fn compute_carballo_costs_parity(
         out
     });
 
-    // Use the embedded ww-orig spline tables for p0/p1, matching Python exactly.
+    // Use the embedded ww-orig spline tables for p0/p1 by default; experiments
+    // may override them with WHIRLWIND_CARBALLO_LUT_DIR.
     let sp_lut = spline_lut::get_or_load();
 
     let mut cost = vec![0_i32; g.num_forward];
@@ -501,11 +504,17 @@ pub fn compute_carballo_costs_parity(
             for j in 0..n_phase {
                 let alpha = phase_dy_s_v[(i, j)];
                 let gamma = cor_dy_v[(i, j)];
-                let both_invalid = mask_dy_bi_ref.as_ref().map(|mm| mm[(i, j)]).unwrap_or(false);
+                let both_invalid = mask_dy_bi_ref
+                    .as_ref()
+                    .map(|mm| mm[(i, j)])
+                    .unwrap_or(false);
                 let (c_rt, c_lt) = if both_invalid {
                     (0, 0)
                 } else {
-                    (sp_lut.cost(-alpha, gamma, nlooks), sp_lut.cost(alpha, gamma, nlooks))
+                    (
+                        sp_lut.cost(-alpha, gamma, nlooks),
+                        sp_lut.cost(alpha, gamma, nlooks),
+                    )
                 };
                 right_row[j] = c_rt;
                 left_row[j] = c_lt;
@@ -521,11 +530,17 @@ pub fn compute_carballo_costs_parity(
             for j in 0..n_phase - 1 {
                 let alpha = phase_dx_s_v[(i, j)];
                 let gamma = cor_dx_v[(i, j)];
-                let both_invalid = mask_dx_bi_ref.as_ref().map(|mm| mm[(i, j)]).unwrap_or(false);
+                let both_invalid = mask_dx_bi_ref
+                    .as_ref()
+                    .map(|mm| mm[(i, j)])
+                    .unwrap_or(false);
                 let (c_dn, c_up) = if both_invalid {
                     (0, 0)
                 } else {
-                    (sp_lut.cost(alpha, gamma, nlooks), sp_lut.cost(-alpha, gamma, nlooks))
+                    (
+                        sp_lut.cost(alpha, gamma, nlooks),
+                        sp_lut.cost(-alpha, gamma, nlooks),
+                    )
                 };
                 let col = j + 1;
                 down_row[col] = c_dn;

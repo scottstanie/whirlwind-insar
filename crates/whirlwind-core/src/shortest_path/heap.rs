@@ -11,8 +11,15 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
+    let mut sp = ShortestPaths::new(net.num_nodes());
+    run_into(g, net, &mut sp);
+    sp
+}
+
+/// Reusable-buffer variant of [`run`].
+pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) {
     let n_nodes = net.num_nodes();
-    let mut sp = ShortestPaths::new(n_nodes);
+    sp.reset(n_nodes);
     let mut heap: BinaryHeap<Reverse<(i64, usize)>> = BinaryHeap::new();
 
     // Count sinks for early-exit.
@@ -33,7 +40,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
         heap.push(Reverse((0, s)));
     }
     if sinks_left == 0 {
-        return sp;
+        return;
     }
 
     let mut buf: Vec<(usize, usize)> = Vec::with_capacity(8);
@@ -48,7 +55,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
         if is_sink[u] {
             sinks_left -= 1;
             if sinks_left == 0 {
-                return sp;
+                return;
             }
         }
         // sp.source[u] is already coherent with pred_node[u]: either u was a
@@ -87,5 +94,4 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             }
         }
     }
-    sp
 }

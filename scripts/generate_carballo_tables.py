@@ -44,6 +44,17 @@ To emit raw little-endian f32 blobs compatible with the current Rust
 
     python scripts/generate_carballo_tables.py \\
         --out-dir /tmp/carballo_tables --write-rust-bins
+
+Then test those blobs without rebuilding by setting:
+
+    WHIRLWIND_CARBALLO_LUT_DIR=/tmp/carballo_tables
+
+To replace the embedded Rust blobs intentionally:
+
+    python scripts/generate_carballo_tables.py \\
+        --out-dir /tmp/carballo_tables \\
+        --write-rust-bins \\
+        --rust-bin-dir crates/whirlwind-core/src/cost
 """
 
 from __future__ import annotations
@@ -408,6 +419,14 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing saved ww-orig carballo-pdf-*-spline.npz tables.",
     )
     parser.add_argument("--write-rust-bins", action="store_true")
+    parser.add_argument(
+        "--rust-bin-dir",
+        type=Path,
+        help=(
+            "Directory for Rust .bin files. Defaults to --out-dir when "
+            "--write-rust-bins is set."
+        ),
+    )
     parser.add_argument("--phase-count", type=int, default=31)
     parser.add_argument("--corr-count", type=int, default=11)
     parser.add_argument("--nlooks-count", type=int, default=11)
@@ -435,7 +454,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-slope-marginalization", action="store_true")
     parser.add_argument("--no-compare", action="store_true")
     parser.add_argument("--verbose", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.rust_bin_dir is not None and not args.write_rust_bins:
+        parser.error("--rust-bin-dir requires --write-rust-bins")
+    return args
 
 
 def main() -> None:
@@ -447,9 +469,12 @@ def main() -> None:
     save_rgi_npz(args.out_dir / "carballo-pdf-0-spline.npz", grid, p0)
     save_rgi_npz(args.out_dir / "carballo-pdf-1-spline.npz", grid, p1)
     if args.write_rust_bins:
-        write_rust_bins(args.out_dir, phase, corr, nlooks, p0, p1)
+        rust_bin_dir = args.rust_bin_dir or args.out_dir
+        write_rust_bins(rust_bin_dir, phase, corr, nlooks, p0, p1)
 
     print(f"Wrote tables to {args.out_dir} in {time.time() - started:.1f}s")
+    if args.write_rust_bins:
+        print(f"Wrote Rust LUT blobs to {rust_bin_dir}")
     print(f"  p0 range [{p0.min():.6g}, {p0.max():.6g}]")
     print(f"  p1 range [{p1.min():.6g}, {p1.max():.6g}]")
 

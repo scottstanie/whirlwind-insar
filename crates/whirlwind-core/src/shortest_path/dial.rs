@@ -69,9 +69,15 @@ fn collect_sinks(net: &Network) -> (Vec<bool>, usize) {
 /// sinks cluster (real interferograms) this trims a large tail off late
 /// primal-dual iterations.
 pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
-    let n_nodes = net.num_nodes();
-    let mut sp = ShortestPaths::new(n_nodes);
+    let mut sp = ShortestPaths::new(net.num_nodes());
+    run_into(g, net, &mut sp);
+    sp
+}
 
+/// Reusable-buffer variant of [`run`].
+pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) {
+    let n_nodes = net.num_nodes();
+    sp.reset(n_nodes);
     let max_rc = max_reduced_cost_par(g, net);
     let k = (max_rc as usize).saturating_add(1).max(1);
 
@@ -92,7 +98,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
         pending += 1;
     }
     if pending == 0 || total_sinks == 0 {
-        return sp;
+        return;
     }
 
     let mut cur_bucket = 0_usize;
@@ -108,7 +114,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             cur_dist += 1;
             bucket_advances += 1;
             if bucket_advances > k {
-                return sp;
+                return;
             }
         }
         bucket_advances = 0;
@@ -129,7 +135,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             if sinks_left == 0 {
                 // All sinks finalized — any further relaxation only affects
                 // non-sinks and is wasted work for the augment phase.
-                return sp;
+                return;
             }
         }
 
@@ -169,13 +175,12 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             g.outgoing(u, &mut out_buf);
         }
         for &(arc, v) in out_buf.iter() {
-            relax(arc, v, &mut sp, &mut pending);
+            relax(arc, v, &mut *sp, &mut pending);
         }
         for &(arc, v) in net.extra_outgoing(u).iter() {
-            relax(arc, v, &mut sp, &mut pending);
+            relax(arc, v, &mut *sp, &mut pending);
         }
     }
-    sp
 }
 
 /// Multi-source Dijkstra over the residual graph using Dial's bucket queue.
@@ -188,15 +193,25 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
 /// `d[v]` for all nodes lets `update_potential_pd` compute tight reduced costs,
 /// matching Python's MCF routing and closing the early-exit quality gap.
 pub fn run_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
+    let mut sp = ShortestPaths::new(net.num_nodes());
+    run_full_into(g, net, &mut sp);
+    sp
+}
+
+/// Reusable-buffer variant of [`run_full`].
+pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) {
     let dbg = crate::primal_dual::debug_enabled();
     let n_nodes = net.num_nodes();
-    let mut sp = ShortestPaths::new(n_nodes);
+    sp.reset(n_nodes);
 
     let t_rc = std::time::Instant::now();
     let max_rc = max_reduced_cost_par(g, net);
     let k = (max_rc as usize).saturating_add(1).max(1);
     if dbg {
-        eprintln!("[run_full] max_rc={max_rc} k={k} t={:.3}s", t_rc.elapsed().as_secs_f64());
+        eprintln!(
+            "[run_full] max_rc={max_rc} k={k} t={:.3}s",
+            t_rc.elapsed().as_secs_f64()
+        );
     }
 
     let mut buckets: Vec<Vec<(usize, i64)>> = vec![Vec::new(); k];
@@ -209,7 +224,7 @@ pub fn run_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
         pending += 1;
     }
     if pending == 0 {
-        return sp;
+        return;
     }
 
     let mut cur_bucket = 0_usize;
@@ -228,9 +243,11 @@ pub fn run_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             total_bucket_advances += 1;
             if bucket_advances > k {
                 if dbg {
-                    eprintln!("[run_full] k-advance exit: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} total_ba={total_bucket_advances}");
+                    eprintln!(
+                        "[run_full] k-advance exit: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} total_ba={total_bucket_advances}"
+                    );
                 }
-                return sp;
+                return;
             }
         }
         bucket_advances = 0;
@@ -280,17 +297,18 @@ pub fn run_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             g.outgoing(u, &mut out_buf);
         }
         for &(arc, v) in out_buf.iter() {
-            relax(arc, v, &mut sp, &mut pending);
+            relax(arc, v, &mut *sp, &mut pending);
         }
         for &(arc, v) in net.extra_outgoing(u).iter() {
-            relax(arc, v, &mut sp, &mut pending);
+            relax(arc, v, &mut *sp, &mut pending);
         }
     }
     if dbg {
         let popped_count = sp.popped.iter().filter(|&&p| p).count();
-        eprintln!("[run_full] done: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} total_ba={total_bucket_advances} popped={popped_count}/{n_nodes}");
+        eprintln!(
+            "[run_full] done: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} total_ba={total_bucket_advances} popped={popped_count}/{n_nodes}"
+        );
     }
-    sp
 }
 
 /// Below this bucket size, parallel relaxation costs more in fork/join overhead
