@@ -5,12 +5,13 @@
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
-use crate::shortest_path::dijkstra_multi_source;
+use crate::shortest_path::{ShortestPaths, dijkstra_multi_source_into};
 
 pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
     let dbg = crate::primal_dual::debug_enabled();
     let mut safety = 0;
     let safety_limit = 4 * net.num_nodes();
+    let mut sp = ShortestPaths::new(net.num_nodes());
     while net.excess_nodes().next().is_some() {
         if dbg && safety % 50 == 0 {
             let ex: i64 = net
@@ -28,7 +29,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
             eprintln!("[ssp] iter={safety} excess={ex} deficit={df}");
         }
         crate::primal_dual::record_ssp_iter();
-        let sp = dijkstra_multi_source(g, net);
+        dijkstra_multi_source_into(g, net, &mut sp);
         let nearest_deficit = net
             .deficit_nodes()
             .filter(|&d| sp.was_reached(d))

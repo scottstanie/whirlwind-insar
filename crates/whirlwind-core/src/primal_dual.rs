@@ -3,7 +3,9 @@
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
-use crate::shortest_path::{dijkstra_multi_source, dijkstra_multi_source_full};
+use crate::shortest_path::{
+    ShortestPaths, dijkstra_multi_source_full_into, dijkstra_multi_source_into,
+};
 use crate::ssp;
 use rayon::prelude::*;
 use std::sync::OnceLock;
@@ -88,6 +90,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     let mut source_used: Vec<bool> = vec![false; n_nodes];
     let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
     let mut deficits: Vec<usize> = Vec::new();
+    let mut sp = ShortestPaths::new(n_nodes);
     // Epoch counter persists across PD iterations too — wrap-on-zero handles
     // the (vanishingly rare) ~4B-walk overflow.
     let mut epoch: u32 = 0;
@@ -127,11 +130,11 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
             eprintln!("[{tag}] iter={iter} running dijkstra");
         }
         let t0 = std::time::Instant::now();
-        let sp = if full_dijkstra {
-            dijkstra_multi_source_full(g, net)
+        if full_dijkstra {
+            dijkstra_multi_source_full_into(g, net, &mut sp);
         } else {
-            dijkstra_multi_source(g, net)
-        };
+            dijkstra_multi_source_into(g, net, &mut sp);
+        }
         let dt = t0.elapsed().as_secs_f64();
         record_dijkstra(dt * 1000.0);
         record_iter();
@@ -279,6 +282,7 @@ pub fn run_no_ssp<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     let mut source_used: Vec<bool> = vec![false; n_nodes];
     let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
     let mut deficits: Vec<usize> = Vec::new();
+    let mut sp = ShortestPaths::new(n_nodes);
     let mut epoch: u32 = 0;
     let mut iter = 0;
     let mut last_excess_total = i64::MAX;
@@ -309,7 +313,7 @@ pub fn run_no_ssp<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
         }
         last_excess_total = excess_total;
         let t0 = std::time::Instant::now();
-        let sp = dijkstra_multi_source(g, net);
+        dijkstra_multi_source_into(g, net, &mut sp);
         record_dijkstra(t0.elapsed().as_secs_f64() * 1000.0);
         record_iter();
         let t_aug = std::time::Instant::now();
