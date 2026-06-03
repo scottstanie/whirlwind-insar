@@ -753,15 +753,19 @@ fallback's runtime therefore dominates, and it depends critically on the SSP
   D_077 whole-image graph this costs ≈1472 s.
 - A **single-source** SSP (early-exit per source) routes the same flow in ≈158 s.
 
-The fast 158 s figure above is with the single-source SSP. **Planned fix
-(dual SSP):** keep the multi-source `ssp::run` for the early-exit/tiled path
-(where it is fast — it is catastrophic only on large *whole-image* graphs), and
-add a `ssp::run_single_source` used only by `run_full_dijkstra` (single-tile).
-Acceptance bar: D_077 158 s / 99.49 %, convex + tiled tests unchanged, and
-`debug_assert!(reduced_cost >= 0)` **on (no clamp)** must never fire during
-single-source SSP — the single-source potential update must keep the invariant
-after every early-exit Dijkstra (popped nodes get exact distance; unpopped are
-implicitly ≥ the sink distance by Dijkstra pop order), not merely at SSP entry.
+The fast figure above is with the single-source SSP. **Dual-SSP fix
+(implemented):** the multi-source `ssp::run` is kept for the early-exit/tiled
+path (where it is fast — it is catastrophic only on large *whole-image* graphs),
+and `ssp::run_single_source` is used only by `run_full_dijkstra` (single-tile),
+restoring D_077 from ≈1472 s back to **≈162 s / 99.49 %** (verified post-fix).
+The single-source potential update keeps reduced costs non-negative after every
+early-exit Dijkstra — popped nodes get their exact distance; unpopped nodes keep
+a zero shift, which is exactly "cap at the sink distance" since any unpopped node
+has `dist ≥ d_sink` by Dijkstra pop order — so `debug_assert!(rc >= 0)` holds
+with **no clamp**. The invariant is guarded by the debug test
+`single_source_ssp_keeps_nonnegative_reduced_costs` (a steep noisy ramp that
+reaches the SSP fallback); the tiled/default path is byte-unchanged (only
+`run_full_dijkstra`'s fall-through branches to the single-source variant).
 
 > **Tiling is not yet validated** on fragmented NISAR scenes (see §9.5 item 4).
 > The single-tile kernel is the trustworthy reference to measure tiling against.

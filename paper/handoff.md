@@ -69,17 +69,18 @@ RSS **6.4 GB**. Merged: PR #66 (parity), #67 (LUT override + buffer reuse).
    Since the **product is single-tile**, reverting the single-source SSP was a 9×
    regression there. Don't pick one globally.
 
-**Open / next: dual-SSP.** Keep multi-source `ssp::run` for the early-exit
-(`run`, tiled/default) path; add `ssp::run_single_source` used only by
-`run_full_dijkstra` (single-tile). Correctness caveat (the trap behind the
-earlier clamp): the single-source potential update must keep reduced costs
-non-negative *after every early-exit Dijkstra*, not just at SSP entry — popped
-nodes get exact distance, unpopped are implicitly ≥ the sink distance by Dijkstra
-pop order. Acceptance bar: D_077 **158 s / 99.49 %**, convex + tiled tests
-unchanged, and `debug_assert!(rc ≥ 0)` **on — no clamp** — must never fire during
-single-source SSP. (Validate the assertion via a focused *debug* test on a
-moderate noisy ramp through `run_full_dijkstra`; a debug full-frame D_077 is too
-slow.)
+**DONE: dual-SSP.** Multi-source `ssp::run` kept for the early-exit (`run`,
+tiled/default) path; `ssp::run_single_source` added and used only by
+`run_full_dijkstra` (single-tile). Restored D_077 to **≈162 s / 99.49 %**
+(from ≈1472 s), 0 swaps, 6.6 GB. Acceptance bar met: convex + tiled tests
+unchanged (tiled path byte-identical — only the full-completion fall-through
+branches), and `debug_assert!(rc ≥ 0)` **on, no clamp** never fires — guarded by
+the debug test `single_source_ssp_keeps_nonnegative_reduced_costs` (steep noisy
+ramp that reaches the SSP fallback). The correctness key (the trap behind the
+earlier clamp): the per-source potential update caps unpopped nodes at the sink
+distance — valid because any unpopped node has `dist ≥ d_sink` by Dijkstra pop
+order — so updating popped nodes only preserves the invariant across iterations.
+Also fixed the stale "single-source" module doc on the multi-source `ssp::run`.
 
 **Also note:** `ssp.rs` module doc-comment still says "single-source" but the
 code is multi-source-seeded (`dijkstra_multi_source_into`) + one augmentation —

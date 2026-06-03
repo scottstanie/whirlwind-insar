@@ -261,9 +261,18 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         }
     }
 
-    // Fall through to SSP for any remaining excess.
+    // Fall through to SSP for any remaining excess. Pick the variant that is
+    // fast for this path's graph shape (ATBD §9.6): the full-completion path is
+    // the single-tile whole-image solve, where the multi-source SSP is
+    // catastrophic (a near-graph-wide Dijkstra per unit) — use single-source
+    // there. The early-exit path is tiled / small-graph, where multi-source is
+    // fast and robust to its d_max-capped potentials.
     record_ssp_call();
-    ssp::run(g, net);
+    if full_dijkstra {
+        ssp::run_single_source(g, net);
+    } else {
+        ssp::run(g, net);
+    }
 }
 
 /// Like [`run`] but stops after the primal-dual loop without SSP fallback.
