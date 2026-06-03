@@ -71,6 +71,55 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
 /// On D_077 full-frame this closes a ~5.5% quality gap (94% → ~99%).
 pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     run_impl(g, net, max_iter, true);
+
+    // GUARDED ADAPTIVE FALLBACK. ww-orig does PD(8)+SSP and its SSP completes;
+    // ours can STRAND residues (the single-source SSP greedily fragments the
+    // residual graph on heavily-masked frames → excess nodes trapped in tiny
+    // residual components with no deficit). When that leaves the network
+    // unbalanced, resume the multi-source PD (which converges to ww-orig's flow
+    // on D_074/A_035 — it doesn't fragment the same way) in chunks, retrying SSP
+    // each round, up to a cap. This is a robustness lever, NOT literal ww-orig
+    // parity (ww-orig fixes it in one 8-PD + SSP pass; the remaining trajectory
+    // mismatch is still open). The final imbalance is always reported.
+    let dbg = debug_enabled();
+    let excess_now = |net: &Network| -> i64 {
+        net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum()
+    };
+    if excess_now(net) > 0 {
+        let cap: usize = std::env::var("WHIRLWIND_LINEAR_PD_CAP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512);
+        let mut total = max_iter;
+        while excess_now(net) > 0 && total < cap {
+            let before = excess_now(net);
+            let chunk = 16usize.min(cap - total);
+            run_no_ssp(g, net, chunk);
+            total += chunk;
+            let after = excess_now(net);
+            if dbg {
+                eprintln!("[pd_full] adaptive resume: total_pd={total} excess {before}->{after}");
+            }
+            if after == 0 {
+                break;
+            }
+            // SSP cleanup each round (drains anything PD's reached but didn't pair).
+            record_ssp_call();
+            ssp::run_single_source(g, net);
+            if excess_now(net) == 0 {
+                break;
+            }
+            if after >= before {
+                // PD made no progress this round AND SSP couldn't finish — the
+                // residual is genuinely trapped; stop and report rather than spin.
+                break;
+            }
+        }
+    }
+    if dbg {
+        let rem: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        eprintln!("[pd_full] ADAPTIVE FINAL remaining_excess={rem}");
+    }
 }
 
 fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_dijkstra: bool) {
@@ -196,11 +245,25 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
                 path_info.push((sink, cur, arcs));
             }
         }
-        // Sort by source then hop count to sink. Sorting by Dijkstra distance
-        // instead breaks the SSP non-negativity invariant for the convex solver
-        // (the convex probe finds a negative residual cycle → non-optimal flow)
-        // and has zero effect on D_077 linear quality, so we keep hop count.
-        path_info.sort_by_key(|item| (item.1, item.2.len()));
+        // Augment order = which deficit each source serves. Match ww-orig's
+        // `augment_flow_pd`: sort sinks by (source, key), keep the FIRST per
+        // source (via `source_used` below) = the source's chosen deficit.
+        //   * full-completion (parity) path: key = Dijkstra DISTANCE, exactly
+        //     ww-orig (`distance_to_vertex(sink)`). With the FIFO Dial above,
+        //     distances are true min-hop shortest-path distances, so "nearest by
+        //     distance" pairs each residue with its nearest partner — the short
+        //     branch cut that is the correct unwrap on masked frames. (Distance
+        //     here is meaningful ONLY because the Dijkstra is FIFO; the two are a
+        //     pair — hop-count sort or LIFO distances both diverge from ww-orig.)
+        //   * early-exit path (default/convex/reuse production): keep hop count —
+        //     distance there breaks the convex probe's SSP non-negativity
+        //     invariant, and that path is not a parity path. (item.0 = sink,
+        //     item.1 = source.)
+        if full_dijkstra {
+            path_info.sort_by_key(|item| (item.1, sp.dist[item.0]));
+        } else {
+            path_info.sort_by_key(|item| (item.1, item.2.len()));
+        }
         // Reset the source_used scratch buffer in place; allocation is reused.
         source_used.iter_mut().for_each(|x| *x = false);
         let mut augmented = 0;
@@ -272,6 +335,21 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         ssp::run_single_source(g, net);
     } else {
         ssp::run(g, net);
+    }
+
+    if dbg {
+        // FINAL MCF objective + leftover imbalance. total_cost is directly
+        // comparable to ww-orig's `Network::total_cost()` (same Σ cost·flow over
+        // forward arcs). If Rust's total_cost == ww-orig's but the unwrap
+        // differs → equal-cost DEGENERATE optima (tie-break only); if Rust's is
+        // HIGHER → Rust is sub-optimal (a real solver bug). remaining != 0 means
+        // the flow never balanced (incomplete).
+        let nf = net.num_forward();
+        let total_cost: i64 = (0..nf)
+            .map(|a| net.arc_flow(g, a) as i64 * net.arc_cost(g, a) as i64)
+            .sum();
+        let remaining: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        eprintln!("[{tag}] FINAL total_cost={total_cost} remaining_excess={remaining}");
     }
 }
 

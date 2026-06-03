@@ -4,9 +4,9 @@
 
 Whirlwind is a Bayesian minimum-cost network flow algorithm for 2D phase unwrapping of interferometric synthetic aperture radar (InSAR) data. The algorithm formulates phase unwrapping as a minimum-cost flow problem on a rectangular grid graph, where edge costs are derived from Bayesian probability densities that account for both coherence and local phase gradient statistics. The network flow problem is solved using a primal-dual algorithm, and the final unwrapped phase is obtained by integrating the unwrapped phase gradients.
 
-> **Production architecture note.** The MCF + primal-dual core described in this ATBD (Sections 2–8) is correct and unchanged, but it is the **per-tile** engine, not the top-level method. The shipped default wraps it in a **tiled** pipeline: per-tile MCF → global coarse anchor (multilook the complex igram ×8, solve that tiny image whole — seam-free and runaway-free — upsample, and snap each region's integer 2π level to it by coherence-weighted mode) → multi-scale cascade (`coarse_refine` at f=16,8,4) → feathered seam composite. A whole-image MCF *runs away* on real noisy scenes (NISAR: 80 % K-match, 18 % multi-cycle); the tiled path reaches **99.79 % K-match, 0 % multi-cycle, 3.9 s** vs SNAPHU 9×9's ~17 min — no Goldstein filtering required. Noisy / moderate-coherence scenes (e.g. Sentinel-1) use a `multilook=L` down-look first. See [`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) and [`paper/tiling.md`](paper/tiling.md). (committed e24e0ed / 8aa7a1d)
+> **Default architecture note.** The MCF + primal-dual core described in this ATBD (Sections 2–8) is correct and unchanged, but the public `unwrap` entry point wraps it in a **tiled** pipeline for large frames: per-tile MCF → global coarse anchor (multilook the complex igram ×8, solve that tiny image whole, upsample, and snap each region's integer 2π level to it by coherence-weighted mode) → multi-scale cascade (`coarse_refine` at f=16,8,4) → feathered seam composite. Best observed tiled benchmarks are strong, but that layer is empirical rather than proven; see the verified-vs-WIP note below before treating tiled numbers as product claims. Noisy / moderate-coherence scenes (e.g. Sentinel-1) use a `multilook=L` down-look first. See [`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) and [`paper/tiling.md`](paper/tiling.md). (committed e24e0ed / 8aa7a1d)
 >
-> **Verified-vs-WIP (see §9.6).** The single-tile kernel is the *validated* core: `unwrap_linear` is bit-checked against the Python `ww-orig` reference (99.49 % on D_077) and beats single-tile SNAPHU on **both** speed and accuracy (≈158 s / 99.49 % vs ≈588 s / 99.30 %). The tiled robustness layer above is the production default but is still an **empirically tuned heuristic** — it can produce invalid results on fragmented NISAR scenes and is not yet validated there. Treat §9.6 as the canonical status/benchmark table.
+> **Verified-vs-WIP (see §9.6).** The single-tile kernel is the *validated* core: `unwrap_linear` is checked against the Python `ww-orig` reference (99.49 % on D_077) and beats single-tile SNAPHU on **both** speed and accuracy (≈160 s / 99.49 % vs ≈588 s / 99.30 %). The tiled robustness layer above is the production default but is still an **empirically tuned heuristic** — it can produce invalid results on fragmented NISAR scenes and is not yet validated there. Treat §9.6 as the canonical status/benchmark table.
 
 ## Table of Contents
 
@@ -212,7 +212,7 @@ coherence path is still pending (issue #35).
 ### 3.3 Verified vs. work-in-progress
 
 The single-tile kernel of §3.1 is the validated core: `unwrap_linear` is
-bit-checked against the Python reference, and the whole-image `unwrap_reuse`
+checked against the Python reference, and the whole-image `unwrap_reuse`
 solve reaches its cost optimum (no negative cycles remain). The **tiled
 robustness layer of §3.2 is the production default but is an empirically tuned,
 still-evolving heuristic** — the seam reconciliation, anchor/cascade, multi-shift
@@ -397,12 +397,14 @@ Two distinct mechanisms exist, and which one applies depends on the entry point:
 
 ### 6.4 Minimum-Cost Flow Objective
 
-For the **linear** cost (Carballo / CRLB), the objective minimizes total signed cost subject to flow conservation $b_i$ at every node:
+For the **unit-capacity linear** cost (Carballo / CRLB), the objective minimizes total signed cost subject to flow conservation $b_i$ at every node:
 
 $$
 \min_{f}\ \sum_{e\in\text{forward arcs}} c_e\, f_e,
-\qquad \text{(unit-capacity: } 0 \le f_e \le 1\text{; reuse: } f_e \in \mathbb{Z}\text{).}
+\qquad 0 \le f_e \le 1.
 $$
+
+The **flow-reuse** mode is intentionally not this fixed linear objective. It is a PHASS-style shared-cut heuristic: the first unit placed on an unused arc pays the Carballo cost, then any arc with existing nonzero `flow_count` is relaxed at reduced cost 0 so later demands can reuse the same branch cut for free. This preserves the residue-neutralizing flow constraint while avoiding the capacity-1 boundary-stacking artifact on steep coherent ramps.
 
 For the **convex** cost the per-arc term is parabolic in the integer signed flow $k_e$:
 
@@ -441,7 +443,7 @@ Each iteration:
    - Run **multi-source Dijkstra** from all excess nodes using reduced costs.
    - **Augment** unit flow along shortest paths from sources to sinks.
    - **Update potentials** to keep reduced costs non-negative.
-3. **Fallback**: after `max_iter` iterations, or on no-progress, route any remaining excess with successive shortest paths. (A separate `run_no_ssp` variant omits this fallback for NISAR-scale problems where SSP on residual residues is prohibitively slow.)
+3. **Fallback**: after `max_iter` iterations, or on no-progress, route any remaining excess with successive shortest paths. The fallback variant depends on the PD mode: early-exit PD uses multi-source SSP; full-completion PD (`unwrap_linear`) uses single-source SSP. A separate `run_no_ssp` variant exists only as a diagnostic to measure how much routing the fallback contributes.
 
 ### 7.2 Reduced Costs
 
@@ -485,26 +487,34 @@ This cap keeps the potentials valid (Ahuja, Magnanti & Orlin §9): without it, r
 
 ### 7.6 Fallback to Successive Shortest Paths
 
-After the primal-dual loop terminates — either on hitting `max_iter` (default 8) or on a no-progress stall — any remaining excess is drained by a **successive shortest paths (SSP)** fallback (`ssp::run`). This fall-through is unconditional inside the shared primal-dual driver, so it is reached from *both* the early-exit (`run`) and full-completion (`run_full_dijkstra`) entry points. (The `run_no_ssp` variant exists precisely to *skip* this fallback when matching Python ww-orig behavior; see §7.7.)
+After the primal-dual loop terminates — either on hitting `max_iter` or on a no-progress stall — any remaining excess is drained by a **successive shortest paths (SSP)** fallback. The shared driver chooses the fallback by PD mode: early-exit `run` falls through to multi-source `ssp::run`, while full-completion `run_full_dijkstra` falls through to single-source `ssp::run_single_source`.
 
-Each SSP iteration:
+Each **multi-source SSP** iteration:
 
-1. Runs a **full multi-source Dijkstra** over the residual graph — every positive-excess node is seeded at distance 0 (the same routine the primal-dual phase uses), relaxing the entire reachable graph.
+1. Runs an early-exit multi-source Dijkstra over the residual graph — every positive-excess node is seeded at distance 0, and the search stops after all currently reachable deficits are finalized.
 2. Selects the single reached deficit node with the smallest distance, and traces predecessor arcs back to its source seed.
 3. Augments **one unit** of flow along that **one** source→deficit path, adjusting the two endpoints' excess.
 4. Applies the same potential update as the primal-dual phase, $\pi_i \gets \pi_i - d_i$ (capped at $d_{\max}$ for nodes not finalized by an early-exit Dijkstra), keeping reduced costs non-negative.
 
 A safety counter caps the loop at $4|V|$ iterations and asserts convergence (panicking with `"SSP did not converge"` otherwise).
 
-Because a full graph-wide Dijkstra is re-run for *every single unit* of augmentation, SSP is correct but expensive: its cost scales with the residual flow $F$ left after the primal-dual phase. On whole-image, NISAR-scale graphs (tens of millions of arcs) this is prohibitively slow, which is why production paths rely on the primal-dual phase to route essentially all flow and treat SSP only as a small-residue safety net.
+The **single-source SSP** variant instead snapshots the current source list, skips any source already drained by an earlier augmentation, runs Dijkstra from that one source only, stops when the first deficit is popped, and augments that one path. Its potential update is written in the equivalent capped form `π += d_sink - dist[v]` for popped nodes while unpopped nodes keep a zero shift. This is valid only when the entry potentials already have non-negative reduced costs, which the full-completion PD path provides.
+
+Because one Dijkstra search is re-run for *every single unit* of augmentation, SSP is correct but expensive: its cost scales with the residual flow $F$ left after the primal-dual phase. The multi-source variant is appropriate for tiled/small graphs but can approach a near-whole-image search per unit on NISAR-scale single-tile graphs. The single-source variant avoids that case by searching from one source only and stopping at the first popped deficit; it is used only after full-completion PD.
+
+#### 7.6.1 Masked-frame stranding and the guarded adaptive fallback
+
+On **heavily-masked** frames (e.g. NISAR D_074 at ~6 % valid), the masked "sea" is a vast cost-0 region (both-invalid arcs cost 0 and are not forbidden, matching ww-orig). The single-source SSP processes its source list once and augments greedily one source at a time; on such frames this can **fragment the residual graph** so that a few remaining excess nodes end up trapped in tiny residual components that contain no deficit. Those sources are then **stranded** — the network never reaches balance, and the leftover ±2π discontinuities corrupt large regions of the integrated phase. (The single-tile parity path bisects cleanly to this: residues and costs are byte-identical to ww-orig — feeding ww-orig's exact costs through the Rust solver reproduces the Rust output exactly — so the divergence is purely in the flow the solver builds.) Python `ww-orig` does **not** hit this: it runs `primal_dual(maxiter=8)` and its SSP completes; the Rust single-source SSP's greedy one-pass does not, on these frames.
+
+The fix is a **guarded adaptive fallback** in `run_full_dijkstra` (used only by `unwrap_linear`): run the usual PD(8) + SSP; if any excess remains, **resume the multi-source primal-dual** (which does not fragment the residual graph the way the single-source SSP does) in chunks, retrying the SSP each round, up to a cap (`WHIRLWIND_LINEAR_PD_CAP`, default 512 iterations). Because the first SSP already drains the easy residues, the resume typically finishes in ~16 more PD iterations. The final imbalance is always reported. Crucially the order matters: SSP-first-then-resume-PD converges far faster than running many PD iterations up front (which on D_075 left the network unbalanced after 300 iterations / 415 s, whereas PD(8)+SSP+resume balances in ~90 s). This is a **robustness lever, not literal ww-orig parity** — ww-orig fixes the same frames in a single PD(8)+SSP pass; the remaining trajectory difference (why the Rust single-source SSP strands where ww-orig's completes) is documented but not yet closed. The change is confined to the parity path; the production reuse/tiled solvers are untouched.
 
 ### 7.7 Complexity
 
 - **Primal-dual phase**: $O(k \cdot (|E| + |V| \log |V|))$ where $k$ is the number of iterations
-- **SSP fallback**: $O(F \cdot (|E| + |V| \log |V|))$, where $F$ is the residual flow remaining after the primal-dual phase — one full multi-source Dijkstra per unit augmented. This dominates if much flow reaches SSP.
+- **SSP fallback**: $O(F \cdot \text{Dijkstra search})$, where $F$ is the residual flow remaining after the primal-dual phase. Multi-source SSP can approach one near-global search per unit on large graphs; single-source SSP usually explores only the neighborhood from one source to its nearest deficit.
 - **Space**: $O(|V| + |E|)$
 
-In practice the primal-dual phase routes essentially all flow, leaving SSP a small residue; on very large graphs the SSP fallback is bypassed entirely (`run_no_ssp`) because a per-unit Dijkstra is catastrophically slow at NISAR scale.
+In practice the runtime depends on how much flow reaches SSP. On D_077, SSP does the bulk of the final routing, so the single-source fallback is the runtime lever for the verified single-tile path. `run_no_ssp` is useful for diagnostics, not for parity or production quality.
 
 ---
 
@@ -691,8 +701,9 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
 
 - **Bottleneck**: the Dijkstra shortest-path computations in the MCF solve. On a
   single-tile whole-image solve of a NISAR-scale frame the exact MCF dominates
-  end-to-end runtime (the SSP fallback's per-unit Dijkstra is the sharpest cost;
-  see §9.6).
+  end-to-end runtime. The SSP fallback is the sharpest cost if it uses the
+  multi-source search; the full-Dijkstra single-tile path therefore uses
+  single-source SSP (see §9.6).
 - **Memory**: `O(pixels)`; a whole-image solve of a 4176×4257 NISAR frame peaks
   at ≈6.4 GB RSS (the ≈72 M-arc residual network). Tiling bounds peak memory to
   tile scale.
@@ -722,9 +733,9 @@ baseline.
 
 | Public fn | Network | Cost | Dijkstra | Mask | Status |
 |---|---|---|---|---|---|
-| `unwrap` (default, tiled >512 px) | reuse (per tile) | `compute_carballo_costs` | early-exit, 50 it | forbid (tiled) | **WIP heuristic** |
+| `unwrap` (default, tiled >512 px) | reuse (per tile) | `compute_carballo_costs` | early-exit, 50 it + multi-source SSP | forbid (tiled) | **WIP heuristic** |
 | `unwrap_reuse` (whole-image default) | reuse | `compute_carballo_costs` | early-exit, 50 it | cost-zero + NaN | reaches its cost optimum |
-| `unwrap_linear` (single-tile) | unit-capacity | `compute_carballo_costs_parity` | full-completion, 8 it | cost-zero + NaN | **verified (Python parity)** |
+| `unwrap_linear` (single-tile) | unit-capacity | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)**; masked frames balanced via adaptive fallback |
 | `unwrap_convex` | convex | `compute_snaphu_smooth_costs` | heap | forbid | research prototype (#65) |
 | `components_only` | unit-capacity | `compute_carballo_costs` | forbid | no MCF solve | — |
 
@@ -733,7 +744,7 @@ single-tile kernel is both faster and more accurate than single-tile SNAPHU:
 
 | Unwrapper (single tile) | Runtime | per-component match vs production |
 |---|---|---|
-| **whirlwind `unwrap_linear`** | **≈158 s** | **99.49 %** (bit-matches Python `ww-orig`) |
+| **whirlwind `unwrap_linear`** | **≈160 s** | **99.49 %** (matches Python `ww-orig`) |
 | SNAPHU (`cost=smooth, init=mcf`) | ≈588 s | 99.30 % |
 | PHASS | ≈19.6 s | 94.7 % |
 
@@ -741,23 +752,48 @@ Peak RSS ≈6.4 GB (no swap). Reference SNAPHU/PHASS timings are in
 `snaphu_ref/D_077.log` / `phass_ref.log`. Benchmark the verified path with
 `scripts/bench_nisar_gunw_whirlwind.py --solver linear --nlooks 16`.
 
+**Masked / fragmented NISAR frames (single-tile, the guarded adaptive fallback of §7.6.1).**
+A single-tile sweep first showed `unwrap_linear` failing badly on five frames
+(per-component 0.14–0.59), which a stage-by-stage bisection traced **not** to cost
+or residues (both byte-identical to ww-orig) but to the single-source SSP
+**stranding** residues — the network never balanced. The adaptive fallback
+(resume PD after a stranding SSP) recovers four of the five to match ww-orig
+exactly, all fully balanced (`remaining_excess = 0`):
+
+| frame | valid % | before (PD8+SSP) | **adaptive** | ww-orig | time |
+|---|---|---|---|---|---|
+| D_074 | 5.8 % | 0.552 | **0.988** | 0.988 | ≈18 s |
+| A_035 | — | 0.585 | **1.000** | 1.000 | ≈22 s |
+| D_075 | — | 0.142 | **0.882** | 0.882 | ≈81 s |
+| A_016 | — | 0.547 | **1.000** | 1.000 | ≈20 s |
+| D_077 | high | 0.995 | **0.995** | 0.987 | ≈61 s |
+| A_025 | 49.9 % | 0.255 | 0.580 (balanced) | 0.703 | ≈31 s |
+
+A_025 is the one residual case: it now *balances* but only reaches 0.580 — and
+ww-orig itself only reaches 0.703 (PHASS ≈0.67) on it, because a low-coherence
+river splits the scene and the relative 2π offset across the banks is
+under-determined (a **bridging** problem, separate from the stranding bug). The
+diagnostic reproducers are `scripts/diag_divergence.py` (stage bisection),
+`scripts/diag_cost_compare.py` (MCF objective + balance), and
+`scripts/diag_pd_only.py` (PD-vs-SSP split via ww-orig `maxiter=0`).
+
 **SSP-fallback cost (a known sharp edge).** `unwrap_linear` runs 8 full-Dijkstra
 PD iterations *then falls through to SSP* — and on D_077 it does reach SSP (the
 PD iterations alone reach only ≈11 %; the SSP fallback routes the bulk). The SSP
 fallback's runtime therefore dominates, and it depends critically on the SSP
 *algorithm*:
 
-- The committed `ssp::run` is a **multi-source** Dijkstra (seeds every excess
-  node, runs to all-deficits-popped) that augments **one** path per iteration —
+- The multi-source `ssp::run` seeds every excess node, runs to
+  all-deficits-popped, and augments **one** path per iteration —
   i.e. effectively a near-whole-image Dijkstra *per single unit of flow*. On the
   D_077 whole-image graph this costs ≈1472 s.
-- A **single-source** SSP (early-exit per source) routes the same flow in ≈158 s.
+- A **single-source** SSP (early-exit per source) routes the same flow in ≈160 s.
 
 The fast figure above is with the single-source SSP. **Dual-SSP fix
 (implemented):** the multi-source `ssp::run` is kept for the early-exit/tiled
 path (where it is fast — it is catastrophic only on large *whole-image* graphs),
 and `ssp::run_single_source` is used only by `run_full_dijkstra` (single-tile),
-restoring D_077 from ≈1472 s back to **≈162 s / 99.49 %** (verified post-fix).
+restoring D_077 from ≈1472 s back to **≈160 s / 99.49 %** (verified post-fix).
 The single-source potential update keeps reduced costs non-negative after every
 early-exit Dijkstra — popped nodes get their exact distance; unpopped nodes keep
 a zero shift, which is exactly "cap at the sink distance" since any unpopped node
@@ -820,9 +856,9 @@ reaches the SSP fallback); the tiled/default path is byte-unchanged (only
 ## Appendix B: Algorithm Pseudocode
 
 ```python
-def unwrap(igram, corr, nlooks, mask=None):
+def unwrap_linear_parity(igram, corr, nlooks, mask=None):
     """
-    Whirlwind phase unwrapping algorithm.
+    Verified single-tile parity path (`unwrap_linear`).
 
     Parameters
     ----------
@@ -843,22 +879,29 @@ def unwrap(igram, corr, nlooks, mask=None):
     # Stage 1: Extract wrapped phase
     phase = angle(igram)  # [-π, π]
 
-    # Stage 2: Compute residues
-    residue = compute_residues(phase)  # (m+1) × (n+1)
+    # Stage 2: Compute residues, then match Python ww-orig boundary semantics
+    residue = compute_residues_unmasked(phase)  # (m+1) × (n+1)
+    zero_boundary_frame(residue)
 
-    # Stage 3: Compute Bayesian costs
-    cost = compute_carballo_costs(igram, corr, nlooks, mask)
+    # Stage 3: Compute ww-orig parity costs
+    cost = compute_carballo_costs_parity(igram, corr, nlooks, mask)
 
     # Stage 4: Formulate and solve network flow
     graph = RectangularGridGraph(residue.shape)
     network = Network(graph, residue.flatten(), cost, capacity=1)
-    primal_dual(network, maxiter=8)
+    run_full_dijkstra(network, maxiter=8)  # includes single-source SSP fallback
 
     # Stage 5: Integrate unwrapped gradients
     unwrapped_phase = integrate_unwrapped_gradients(phase, network)
+    if mask is not None:
+        unwrapped_phase[~mask] = NaN
 
     return unwrapped_phase
 ```
+
+The public production `unwrap` adds the tiled/anchor/cascade layer described in
+§3.2 around the per-tile reuse solver; the pseudocode above is the smaller
+validated whole-image kernel used for parity and benchmarking.
 
 ---
 

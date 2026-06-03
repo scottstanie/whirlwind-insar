@@ -354,7 +354,18 @@ pub fn unwrap_linear(
     // unpopped nodes with conservative d_max potentials instead of exact
     // distances, causing looser reduced costs and ~5.5% quality loss over
     // 8 PD iterations on masked NISAR scenes.
-    primal_dual::run_full_dijkstra(&graph, &mut net, 8);
+    //
+    // PD iteration count: default 8 (matches ww-orig `primal_dual(maxiter=8)`).
+    // DIAGNOSTIC knob `WHIRLWIND_LINEAR_PD_ITERS`: ww-orig's PD ALONE (maxiter=0)
+    // converges to the correct balanced flow, while Rust's single-source SSP
+    // strands a few residues after only 8 PD iters. Bumping this lets us test
+    // whether running PD to convergence (before the SSP fallback) reaches the
+    // balanced ww-orig flow — isolating PD-correctness from the SSP stranding.
+    let pd_iters: usize = std::env::var("WHIRLWIND_LINEAR_PD_ITERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8);
+    primal_dual::run_full_dijkstra(&graph, &mut net, pd_iters);
     let mut unw = integrate::integrate(wrapped_phase.view(), &graph, &net);
     if let Some(mm) = mask {
         unw.zip_mut_with(&mm, |u, &v| {

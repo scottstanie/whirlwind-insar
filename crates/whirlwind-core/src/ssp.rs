@@ -19,6 +19,7 @@ use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
 use crate::shortest_path::dial::max_reduced_cost_par;
 use crate::shortest_path::{ShortestPaths, dijkstra_multi_source_into};
+use std::collections::VecDeque;
 
 pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
     let dbg = crate::primal_dual::debug_enabled();
@@ -130,14 +131,28 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
     // Dial buckets, reused across sources (grown to the largest k seen, cleared
     // between sources). Buckets store (node, queued_dist) so stale entries are
-    // detected on pop.
-    let mut buckets: Vec<Vec<(usize, i64)>> = Vec::new();
+    // detected on pop. FIFO (`VecDeque`, pop FRONT) to match ww-orig's
+    // `std::queue` Dial buckets: equal-distance ties across the cost-0 masked
+    // sea must resolve BFS/fewest-hops first (short cuts), not LIFO/DFS (long
+    // cuts) — see `shortest_path::dial::run_full_into` decl comment.
+    let mut buckets: Vec<VecDeque<(usize, i64)>> = Vec::new();
 
     let sources: Vec<usize> = net.excess_nodes().collect();
     let total = sources.len();
     if dbg {
-        eprintln!("[ssp1] single-source SSP (Dial): {total} sources");
+        let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
+        let df: i64 = net.excess.iter().filter(|&&e| e < 0).map(|&e| -e as i64).sum();
+        eprintln!(
+            "[ssp1] single-source SSP (Dial): {total} sources; excess={ex} deficit={df} balanced={}",
+            ex == df
+        );
     }
+    // Count of sources that exhausted their Dijkstra WITHOUT reaching any
+    // deficit. In a BALANCED, connected residual graph every remaining excess
+    // node provably has an augmenting path to some deficit (residual reverse
+    // arcs included), so a stranded source is a REACHABILITY/SSP BUG, not
+    // expected control flow — surfaced here instead of being silently skipped.
+    let mut stranded = 0_usize;
 
     for (idx, src) in sources.into_iter().enumerate() {
         if net.excess[src] <= 0 {
@@ -154,12 +169,12 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         let max_rc = max_reduced_cost_par(g, net);
         let k = (max_rc as usize).saturating_add(1).max(1);
         if buckets.len() < k {
-            buckets.resize_with(k, Vec::new);
+            buckets.resize_with(k, VecDeque::new);
         }
 
         dist[src] = 0;
         touched.push(src);
-        buckets[0].push((src, 0));
+        buckets[0].push_back((src, 0));
         let mut pending = 1_usize;
         let mut cur_bucket = 0_usize;
         let mut cur_dist = 0_i64;
@@ -178,7 +193,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             if buckets[cur_bucket].is_empty() {
                 break;
             }
-            let (u, qd) = buckets[cur_bucket].pop().unwrap();
+            let (u, qd) = buckets[cur_bucket].pop_front().unwrap(); // FIFO (see decl)
             pending -= 1;
             if popped[u] {
                 continue;
@@ -219,7 +234,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                     dist[v] = nd;
                     pred_arc[v] = arc as i32;
                     pred_node[v] = u as i32;
-                    buckets[(nd as usize) % k].push((v, nd));
+                    buckets[(nd as usize) % k].push_back((v, nd));
                     pending += 1;
                 }
             }
@@ -245,6 +260,27 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                     net.potential[v] += d_sink - dist[v];
                 }
             }
+        } else {
+            // No deficit reachable from this source — in a balanced problem this
+            // is a reachability/SSP bug. Dump the first few so we can see WHY:
+            // how much of the graph the source's Dijkstra reached, and whether
+            // any deficit still exists globally (i.e. is it unreached, hence a
+            // disconnect/traversal bug, vs genuinely none left).
+            stranded += 1;
+            if dbg && stranded <= 5 {
+                let reached = touched.iter().filter(|&&v| popped[v]).count();
+                let n_def = net.excess.iter().filter(|&&e| e < 0).count();
+                let reached_def = touched
+                    .iter()
+                    .filter(|&&v| popped[v] && net.excess[v] < 0)
+                    .count();
+                eprintln!(
+                    "[ssp1] STRANDED src={src} (idx {idx}): reached={reached} nodes, \
+                     touched={}, global_deficit_nodes={n_def}, reached_deficits={reached_def}, \
+                     last_cur_dist={cur_dist} k={k}",
+                    touched.len()
+                );
+            }
         }
 
         // Reset scratch over touched only, then clear the buckets used this
@@ -259,5 +295,9 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         for b in buckets.iter_mut() {
             b.clear();
         }
+    }
+    if dbg {
+        let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
+        eprintln!("[ssp1] DONE: stranded_sources={stranded} remaining_excess={ex}");
     }
 }
