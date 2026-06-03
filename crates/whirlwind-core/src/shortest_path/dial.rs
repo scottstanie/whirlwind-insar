@@ -178,6 +178,121 @@ pub fn run<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
     sp
 }
 
+/// Multi-source Dijkstra over the residual graph using Dial's bucket queue.
+///
+/// Full-completion variant: runs until the heap is empty — every reachable node
+/// is popped and gets an exact finalized distance. Matches Python ww-orig's
+/// `dijkstra_pd` which runs `while (!dijkstra.done())` with no early-exit.
+///
+/// Use this for the primal-dual loop when potential accuracy matters: the exact
+/// `d[v]` for all nodes lets `update_potential_pd` compute tight reduced costs,
+/// matching Python's MCF routing and closing the early-exit quality gap.
+pub fn run_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
+    let dbg = crate::primal_dual::debug_enabled();
+    let n_nodes = net.num_nodes();
+    let mut sp = ShortestPaths::new(n_nodes);
+
+    let t_rc = std::time::Instant::now();
+    let max_rc = max_reduced_cost_par(g, net);
+    let k = (max_rc as usize).saturating_add(1).max(1);
+    if dbg {
+        eprintln!("[run_full] max_rc={max_rc} k={k} t={:.3}s", t_rc.elapsed().as_secs_f64());
+    }
+
+    let mut buckets: Vec<Vec<(usize, i64)>> = vec![Vec::new(); k];
+    let mut pending: usize = 0;
+
+    for s in net.excess_nodes() {
+        sp.dist[s] = 0;
+        sp.source[s] = s as i32;
+        buckets[0].push((s, 0));
+        pending += 1;
+    }
+    if pending == 0 {
+        return sp;
+    }
+
+    let mut cur_bucket = 0_usize;
+    let mut cur_dist: i64 = 0;
+    let mut bucket_advances: usize = 0;
+    let mut total_bucket_advances: usize = 0;
+    let mut real_pops: usize = 0;
+    let mut stale_pops: usize = 0;
+    let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
+
+    while pending > 0 {
+        while buckets[cur_bucket].is_empty() {
+            cur_bucket = (cur_bucket + 1) % k;
+            cur_dist += 1;
+            bucket_advances += 1;
+            total_bucket_advances += 1;
+            if bucket_advances > k {
+                if dbg {
+                    eprintln!("[run_full] k-advance exit: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} total_ba={total_bucket_advances}");
+                }
+                return sp;
+            }
+        }
+        bucket_advances = 0;
+
+        let (u, qd) = buckets[cur_bucket].pop().unwrap();
+        pending -= 1;
+        if sp.popped[u] {
+            stale_pops += 1;
+            continue;
+        }
+        if sp.dist[u] != qd || qd != cur_dist {
+            stale_pops += 1;
+            continue;
+        }
+        sp.popped[u] = true;
+        real_pops += 1;
+        // No early-exit — keep going until all reachable nodes are finalized.
+
+        let pot_u = net.potential[u];
+        let src_u = sp.source[u];
+        let u_i32 = u as i32;
+        let mut relax = |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
+            if net.is_arc_saturated(arc) {
+                return;
+            }
+            let rc = if net.is_used(arc) {
+                0
+            } else if net.convex_mode {
+                net.marginal_cost(arc) - pot_u + net.potential[v]
+            } else {
+                net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
+            };
+            debug_assert!(rc >= 0, "negative reduced cost on arc {arc}: {rc}");
+            let nd = cur_dist + rc;
+            if nd < sp.dist[v] {
+                sp.dist[v] = nd;
+                sp.pred_arc[v] = arc as i32;
+                sp.pred_node[v] = u_i32;
+                sp.source[v] = src_u;
+                let b = (nd as usize) % k;
+                buckets[b].push((v, nd));
+                *pending += 1;
+            }
+        };
+        out_buf.clear();
+        if u < g.num_nodes() {
+            g.outgoing(u, &mut out_buf);
+        }
+        for &(arc, v) in out_buf.iter() {
+            relax(arc, v, &mut sp, &mut pending);
+        }
+        for &(arc, v) in net.extra_outgoing(u).iter() {
+            relax(arc, v, &mut sp, &mut pending);
+        }
+    }
+    if dbg {
+        let popped_count = sp.popped.iter().filter(|&&p| p).count();
+        eprintln!("[run_full] done: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} total_ba={total_bucket_advances} popped={popped_count}/{n_nodes}");
+    }
+    sp
+}
+
 /// Below this bucket size, parallel relaxation costs more in fork/join overhead
 /// than it saves. (Set empirically; rayon overhead is ~10 µs/spawn on M-series.)
 const PAR_THRESHOLD: usize = 256;

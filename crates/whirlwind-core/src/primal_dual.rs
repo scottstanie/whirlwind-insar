@@ -3,7 +3,7 @@
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
-use crate::shortest_path::dijkstra_multi_source;
+use crate::shortest_path::{dijkstra_multi_source, dijkstra_multi_source_full};
 use crate::ssp;
 use rayon::prelude::*;
 use std::sync::OnceLock;
@@ -57,8 +57,24 @@ fn reset_timings() {
 }
 
 pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
+    run_impl(g, net, max_iter, false);
+}
+
+/// Primal-dual loop using full-completion Dijkstra — matches Python ww-orig.
+///
+/// Python's `dijkstra_pd` runs until the heap is empty: every reachable node
+/// is popped and gets an exact finalized distance. The subsequent potential
+/// update `π[v] -= d[v]` for ALL nodes produces tight reduced costs, causing
+/// each PD iteration to route significantly more flow than early-exit Dijkstra.
+/// On D_077 full-frame this closes a ~5.5% quality gap (94% → ~99%).
+pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
+    run_impl(g, net, max_iter, true);
+}
+
+fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_dijkstra: bool) {
     reset_timings();
     let dbg = debug_enabled();
+    let tag = if full_dijkstra { "pd_full" } else { "pd" };
     // Note: we do NOT require `net.is_balanced()` here. The boundary-zeroing
     // pass in `residue::compute` can leave a small charge imbalance for real
     // noisy data; the algorithm will route as much flow as it can and stop
@@ -92,7 +108,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
             .map(|&e| -e as i64)
             .sum();
         if dbg {
-            eprintln!("[pd] iter={iter} excess={excess_total} deficit={deficit_total}");
+            eprintln!("[{tag}] iter={iter} excess={excess_total} deficit={deficit_total}");
         }
         if excess_total == 0 || deficit_total == 0 {
             // Either fully balanced, or no remaining deficit to flow toward.
@@ -100,7 +116,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
         }
         if excess_total >= last_excess_total {
             if dbg {
-                eprintln!("[pd] no progress, falling to SSP");
+                eprintln!("[{tag}] no progress, falling to SSP");
             }
             // No progress this iter — give up to avoid spinning.
             break;
@@ -108,15 +124,19 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
         last_excess_total = excess_total;
 
         if dbg {
-            eprintln!("[pd] iter={iter} running dijkstra");
+            eprintln!("[{tag}] iter={iter} running dijkstra");
         }
         let t0 = std::time::Instant::now();
-        let sp = dijkstra_multi_source(g, net);
+        let sp = if full_dijkstra {
+            dijkstra_multi_source_full(g, net)
+        } else {
+            dijkstra_multi_source(g, net)
+        };
         let dt = t0.elapsed().as_secs_f64();
         record_dijkstra(dt * 1000.0);
         record_iter();
         if dbg {
-            eprintln!("[pd] iter={iter} dijkstra took {:.3}s", dt);
+            eprintln!("[{tag}] iter={iter} dijkstra took {:.3}s", dt);
         }
 
         // Augment: each deficit node gets +1 from the *actual* source at the
@@ -159,7 +179,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
                 if visited_epoch[cur] == epoch {
                     if dbg && arcs.len() < 30 {
                         eprintln!(
-                            "[pd] CYCLE in pred-chain from sink={sink}, revisits cur={cur} after {} hops, dist={}",
+                            "[{tag}] CYCLE in pred-chain from sink={sink}, revisits cur={cur} after {} hops, dist={}",
                             arcs.len(),
                             sp.dist[cur]
                         );
@@ -173,8 +193,11 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
                 path_info.push((sink, cur, arcs));
             }
         }
-        // Sort by source then path length so closest paths win.
-        path_info.sort_by_key(|(_, src, arcs)| (*src, arcs.len()));
+        // Sort by source then hop count to sink. Sorting by Dijkstra distance
+        // instead breaks the SSP non-negativity invariant for the convex solver
+        // (the convex probe finds a negative residual cycle → non-optimal flow)
+        // and has zero effect on D_077 linear quality, so we keep hop count.
+        path_info.sort_by_key(|item| (item.1, item.2.len()));
         // Reset the source_used scratch buffer in place; allocation is reused.
         source_used.iter_mut().for_each(|x| *x = false);
         let mut augmented = 0;
@@ -193,7 +216,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
         }
         record_augment(t_aug.elapsed().as_secs_f64() * 1000.0);
         if dbg {
-            eprintln!("[pd] iter={iter} augmented {augmented}");
+            eprintln!("[{tag}] iter={iter} augmented {augmented}");
         }
 
         let t_pot = std::time::Instant::now();
@@ -205,8 +228,10 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
         // cost on the next iteration → Dijkstra produces cyclic predecessor
         // chains. (Ahuja, Magnanti, Orlin §9: "valid potentials".)
         //
-        // Note: we key off `popped`, not `dist == MAX`, because early-exit
-        // Dijkstra can leave nodes with finite-but-non-final dist values.
+        // With full_dijkstra=true all nodes are popped so d_max is unused;
+        // the `if popped { d } else { d_max }` always takes the `d` branch
+        // and each node gets its exact shortest-path distance subtracted —
+        // matching Python's `update_potential_pd`.
         let d_max = sp
             .dist
             .par_iter()
@@ -227,7 +252,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
         iter += 1;
         if iter >= max_iter {
             if dbg {
-                eprintln!("[pd] hit max_iter, falling to SSP");
+                eprintln!("[{tag}] hit max_iter, falling to SSP");
             }
             break;
         }
@@ -236,4 +261,110 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     // Fall through to SSP for any remaining excess.
     record_ssp_call();
     ssp::run(g, net);
+}
+
+/// Like [`run`] but stops after the primal-dual loop without SSP fallback.
+///
+/// Python `whirlwind_orig` does `primal_dual(network, maxiter=8)` and then
+/// integrates immediately — it never calls SSP. On NISAR-scale problems
+/// (71M arcs) SSP on remaining residues is catastrophically slow. Use this
+/// when matching Python ww-orig behavior: run PD for a fixed number of
+/// iterations, leave any unmatched residues as-is, and let the integration
+/// absorb the small residual error.
+pub fn run_no_ssp<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
+    reset_timings();
+    let dbg = debug_enabled();
+    let n_nodes = net.num_nodes();
+    let mut visited_epoch: Vec<u32> = vec![0; n_nodes];
+    let mut source_used: Vec<bool> = vec![false; n_nodes];
+    let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    let mut deficits: Vec<usize> = Vec::new();
+    let mut epoch: u32 = 0;
+    let mut iter = 0;
+    let mut last_excess_total = i64::MAX;
+    loop {
+        let excess_total: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e > 0)
+            .map(|&e| e as i64)
+            .sum();
+        let deficit_total: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e < 0)
+            .map(|&e| -e as i64)
+            .sum();
+        if dbg {
+            eprintln!("[pd_no_ssp] iter={iter} excess={excess_total} deficit={deficit_total}");
+        }
+        if excess_total == 0 || deficit_total == 0 {
+            return;
+        }
+        if excess_total >= last_excess_total {
+            if dbg {
+                eprintln!("[pd_no_ssp] no progress, stopping (no SSP fallback)");
+            }
+            return; // stop here — no SSP
+        }
+        last_excess_total = excess_total;
+        let t0 = std::time::Instant::now();
+        let sp = dijkstra_multi_source(g, net);
+        record_dijkstra(t0.elapsed().as_secs_f64() * 1000.0);
+        record_iter();
+        let t_aug = std::time::Instant::now();
+        deficits.clear();
+        deficits.extend(net.deficit_nodes());
+        path_info.clear();
+        for &sink in &deficits {
+            if !sp.was_reached(sink) {
+                continue;
+            }
+            epoch = epoch.wrapping_add(1);
+            if epoch == 0 {
+                visited_epoch.fill(0);
+                epoch = 1;
+            }
+            let mut arcs = Vec::new();
+            let mut cur = sink;
+            visited_epoch[cur] = epoch;
+            loop {
+                let parc = sp.pred_arc[cur];
+                if parc < 0 {
+                    break;
+                }
+                arcs.push(parc as usize);
+                cur = sp.pred_node[cur] as usize;
+                if visited_epoch[cur] == epoch {
+                    arcs.clear();
+                    break;
+                }
+                visited_epoch[cur] = epoch;
+            }
+            if !arcs.is_empty() {
+                path_info.push((sink, cur, arcs));
+            }
+        }
+        path_info.sort_by_key(|item| (item.1, item.2.len()));
+        source_used.iter_mut().for_each(|x| *x = false);
+        for (sink, src, arcs) in path_info.drain(..) {
+            if source_used[src] {
+                continue;
+            }
+            source_used[src] = true;
+            for arc in arcs {
+                net.push_unit(g, arc);
+            }
+            net.increase_excess(sink, 1);
+            net.decrease_excess(src, 1);
+        }
+        record_augment(t_aug.elapsed().as_secs_f64() * 1000.0);
+        iter += 1;
+        if iter >= max_iter {
+            if dbg {
+                eprintln!("[pd_no_ssp] hit max_iter, stopping (no SSP fallback)");
+            }
+            return; // stop here — no SSP
+        }
+    }
 }

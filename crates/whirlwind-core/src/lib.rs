@@ -301,6 +301,110 @@ pub fn unwrap_convex(
     Ok(unw)
 }
 
+/// Capacity-1 (linear) MCF solver — exact replica of Python `whirlwind_orig`.
+///
+/// Uses standard unit-capacity arcs (no reuse, no multi-unit) and only 8
+/// primal-dual iterations (matching `primal_dual(network, maxiter=8)` in
+/// Python). Residues are computed from the full phase array (not mask-gated),
+/// matching `ww_orig._unwrap.unwrap`. This is a diagnostic function to
+/// validate Rust/Python parity; use [`unwrap_reuse`] for production.
+pub fn unwrap_linear(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let mut residues = residue::compute(wrapped_phase.view());
+    // Match Python ww-orig: zero the boundary frame of the residue grid.
+    // Python's `_unwrap.py` does exactly:
+    //   residue[0, :] = 0; residue[-1, :] = 0
+    //   residue[:, 0] = 0; residue[:, -1] = 0
+    // These are "artifacts of the finite image where wrap lines cross the
+    // boundary, not actual phase singularities" (Python comment). Without
+    // this, Rust routes interior residues to boundary frame nodes while
+    // Python routes them only to other interior nodes — completely different
+    // MCF solutions and ~45% quality loss on masked scenes.
+    {
+        let (rm, rn) = residues.dim();
+        residues.row_mut(0).fill(0);
+        residues.row_mut(rm - 1).fill(0);
+        residues.column_mut(0).fill(0);
+        residues.column_mut(rn - 1).fill(0);
+    }
+    // Python ww-orig does NOT forbid masked arcs — it only sets their cost to 0.
+    // Rust's new_with_mask explicitly forbids them, isolating residues in masked
+    // regions and degrading quality on ~50%-masked NISAR scenes. Use new() here
+    // (no mask forbidding) to match Python. Masked arcs have cost=0 so MCF
+    // routes through them freely, then we NaN masked pixels post-integration.
+    // Parity cost mode: 100× scale + zero only where both endpoints are
+    // invalid — matches Python _cost.compute_carballo_costs exactly.
+    let costs = cost::compute_carballo_costs_parity(igram, corr, nlooks, mask);
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    let mut net = network::Network::new(&graph, residues.view(), &costs);
+    // Use full-completion Dijkstra to match Python ww-orig's `dijkstra_pd`
+    // which runs `while (!dijkstra.done())`. Early-exit Dijkstra leaves
+    // unpopped nodes with conservative d_max potentials instead of exact
+    // distances, causing looser reduced costs and ~5.5% quality loss over
+    // 8 PD iterations on masked NISAR scenes.
+    primal_dual::run_full_dijkstra(&graph, &mut net, 8);
+    let mut unw = integrate::integrate(wrapped_phase.view(), &graph, &net);
+    if let Some(mm) = mask {
+        unw.zip_mut_with(&mm, |u, &v| {
+            if !v {
+                *u = f32::NAN;
+            }
+        });
+    }
+    Ok(unw)
+}
+
+/// Diagnostic: capacity-1 MCF with externally-supplied arc costs.
+///
+/// Accepts precomputed costs in Rust arc order: [DOWN(n_v), UP(n_v), RIGHT(n_h), LEFT(n_h)].
+/// Convert from Python `_cost.compute_carballo_costs` layout [UP, LEFT, DOWN, RIGHT] as:
+///   rust_costs = concat([py[n_v+n_h:2n_v+n_h], py[0:n_v], py[2n_v+n_h:], py[n_v:n_v+n_h]])
+/// where n_v = m*(n+1), n_h = (m+1)*n for an (m,n) phase image.
+pub fn unwrap_linear_ext_costs(
+    igram: ArrayView2<Complex32>,
+    mask: Option<ArrayView2<bool>>,
+    ext_costs: &[i32],
+) -> Result<Array2<f32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    let wrapped_phase = igram.mapv(|z| z.arg());
+    let mut residues = residue::compute(wrapped_phase.view());
+    {
+        let (rm, rn) = residues.dim();
+        residues.row_mut(0).fill(0);
+        residues.row_mut(rm - 1).fill(0);
+        residues.column_mut(0).fill(0);
+        residues.column_mut(rn - 1).fill(0);
+    }
+    let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
+    assert_eq!(ext_costs.len(), graph.num_forward, "cost length must equal num_forward arcs");
+    let mut net = network::Network::new(&graph, residues.view(), ext_costs);
+    primal_dual::run_full_dijkstra(&graph, &mut net, 8);
+    let mut unw = integrate::integrate(wrapped_phase.view(), &graph, &net);
+    if let Some(mm) = mask {
+        unw.zip_mut_with(&mm, |u, &v| {
+            if !v {
+                *u = f32::NAN;
+            }
+        });
+    }
+    Ok(unw)
+}
+
 /// PHASS-style flow-reuse solver — the default whole-image coherence solver
 /// (and the per-tile default; see [`tile`]). The corner-safe replacement for
 /// the removed capacity-1 solver.

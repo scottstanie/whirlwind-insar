@@ -1381,6 +1381,7 @@ bench = [
 ]
 dev = [
     { name = "memory-profiler" },
+    { name = "whirlwind-orig" },
 ]
 docs = [
     { name = "mkdocs" },
@@ -1405,7 +1406,10 @@ bench = [
     { name = "matplotlib", specifier = ">=3.7" },
     { name = "snaphu", specifier = ">=0.4" },
 ]
-dev = [{ name = "memory-profiler", specifier = ">=0.61.0" }]
+dev = [
+    { name = "memory-profiler", specifier = ">=0.61.0" },
+    { name = "whirlwind-orig", directory = "../whirlwind" },
+]
 docs = [
     { name = "mkdocs", specifier = ">=1.6" },
     { name = "mkdocs-material", specifier = ">=9.5" },
@@ -1416,3 +1420,21 @@ test = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-randomly", specifier = ">=3" },
 ]
+
+[[package]]
+name = "whirlwind-orig"
+source = { directory = "../whirlwind" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.21" },
+    { name = "pre-commit", marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=6" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=3" },
+    { name = "scipy", specifier = ">=1.8" },
+]
+provides-extras = ["dev", "test"]

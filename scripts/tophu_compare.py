@@ -68,6 +68,7 @@ def main():
     ap.add_argument("--nlooks", type=float, default=16.0)
     ap.add_argument("--unwrappers", nargs="+", default=["snaphu", "phass", "icu"],
                     choices=["snaphu", "phass", "icu"])
+    ap.add_argument("--save-dir", default=None, help="save each unwrapper's unw+cc (+prod/wrapped/mask) as npz for plotting")
     args = ap.parse_args()
 
     import tophu
@@ -97,10 +98,20 @@ def main():
                 unw, cc = cb(ig, coh_in, args.nlooks, Path(sd))
                 dt = time.perf_counter() - t0
             unw = np.asarray(unw, np.float32)
+            cc = np.asarray(cc).astype(np.int32)
             valid = mask & np.isfinite(unw)
             pc = percomp_match(unw, prod_unw, wrapped, prod_cc, valid)
             print(f"{frame}: {name:7s} {dt:6.1f}s  per-comp-match-vs-prod={pc * 100:5.1f}%  "
-                  f"ncc={int(np.asarray(cc).max())}  shape={ig.shape}", flush=True)
+                  f"ncc={int(cc.max())}  shape={ig.shape}", flush=True)
+            if args.save_dir:
+                sd = Path(args.save_dir)
+                sd.mkdir(parents=True, exist_ok=True)
+                np.savez_compressed(
+                    sd / f"{frame}_{name}.npz",
+                    unw=unw, cc=cc, prod_unw=prod_unw.astype(np.float32),
+                    prod_cc=prod_cc.astype(np.int32), wrapped=wrapped,
+                    mask=mask, coh=np.nan_to_num(coh).astype(np.float32),
+                )
 
 
 if __name__ == "__main__":

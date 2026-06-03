@@ -23,7 +23,7 @@ from ._native import (
     unwrap_sparse,
     wrap_phase,
 )
-from ._native import _unwrap_native
+from ._native import _unwrap_native, _unwrap_with_costs
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
