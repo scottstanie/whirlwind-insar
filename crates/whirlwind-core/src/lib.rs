@@ -62,6 +62,23 @@ pub enum UnwrapError {
 /// multi-scale cascade + seam-repair); frames that fit one tile use the
 /// corner-safe reuse solver. This is the phase engine behind the public
 /// `unwrap`.
+/// Whole-image default phase kernel, read once from `WHIRLWIND_UNWRAP_SOLVER`
+/// ∈ {`linear` (default), `tiled`, `reuse`, `convex`}.
+///
+/// **`linear` is the default** — the verified ww-orig-parity single-tile solver
+/// (`unwrap_linear`; its adaptive PD/SSP fallback drains heavily-masked frames,
+/// see §7.6.1). It is the default *until the tiled / reuse paths are validated
+/// across the full NISAR frame set*: the tiled robustness layer can produce
+/// artifacts on fragmented scenes and the reuse (PHASS) whole-image solver is
+/// not yet validated either, so neither is trusted as the default. Override with
+/// `WHIRLWIND_UNWRAP_SOLVER=tiled` (old behavior), `=reuse`, or `=convex`.
+fn unwrap_solver() -> String {
+    use std::sync::OnceLock;
+    static S: OnceLock<String> = OnceLock::new();
+    S.get_or_init(|| std::env::var("WHIRLWIND_UNWRAP_SOLVER").unwrap_or_else(|_| "linear".into()))
+        .clone()
+}
+
 pub fn unwrap_coherence(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -71,25 +88,23 @@ pub fn unwrap_coherence(
     tile_overlap: usize,
     multilook: usize,
 ) -> Result<Array2<f32>, UnwrapError> {
-    let (m, n) = igram.dim();
-    let (ts, to) = if tile_size == 0 && multilook <= 1 {
-        if m > 512 || n > 512 {
-            (512, 64)
-        } else {
-            (0, 0)
-        }
-    } else {
-        (tile_size, tile_overlap)
-    };
-    let use_tiling = multilook > 1 || (ts >= 4 && to >= 2 && to < ts);
-    if use_tiling {
-        tile::unwrap_tiled_robust(igram, corr, nlooks, mask, ts, to, multilook)
-    } else if std::env::var("WHIRLWIND_TILE_SOLVER").as_deref() == Ok("convex") {
-        // Whole-image (no-tiling) path honors the solver, for the convex
-        // cost-model experiment: a clean single convex solve, no tile/multi-shift.
-        unwrap_convex(igram, corr, nlooks, mask)
-    } else {
-        unwrap_reuse(igram, corr, nlooks, mask)
+    let solver = unwrap_solver();
+    let explicit_tile = tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size;
+    // Tiled path is now OPT-IN: an explicit tile request, a multilook downlook
+    // (noisy / moderate-coherence scenes coherently down-look then unwrap the
+    // coarse frame), or `WHIRLWIND_UNWRAP_SOLVER=tiled`. The tiled robustness
+    // layer is still empirically tuned and not validated across all NISAR
+    // frames, so it is no longer the silent default for large frames.
+    if multilook > 1 || explicit_tile || solver == "tiled" {
+        let (ts, to) = if tile_size == 0 { (512, 64) } else { (tile_size, tile_overlap) };
+        return tile::unwrap_tiled_robust(igram, corr, nlooks, mask, ts, to, multilook);
+    }
+    // Whole-image default kernel.
+    match solver.as_str() {
+        "reuse" => unwrap_reuse(igram, corr, nlooks, mask),
+        "convex" => unwrap_convex(igram, corr, nlooks, mask),
+        // DEFAULT: the verified single-tile ww-orig-parity linear solver.
+        _ => unwrap_linear(igram, corr, nlooks, mask),
     }
 }
 

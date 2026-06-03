@@ -124,10 +124,17 @@ def unwrap(
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
     """MCF unwrap returning ``(unwrapped_phase, conn_components)``.
 
-    The main entry point. Runs the robust tiled pipeline for the phase
-    (auto-tile large frames at 512, gated multi-shift re-solve, global
-    coarse anchor, multi-scale cascade, seam-repair) and grows SNAPHU-style
-    connected components globally from the same Carballo coherence cost.
+    The main entry point. By default the phase is solved with the **verified
+    single-tile linear solver** (``unwrap_linear``: ww-orig-parity Carballo cost,
+    capacity-1 MCF, adaptive PD/SSP fallback that drains heavily-masked frames),
+    which matches Python ``ww-orig`` across the validated NISAR frame set. The
+    older tiled robustness pipeline (auto-tile, multi-shift re-solve, coarse
+    anchor + cascade, seam-repair) is **opt-in** — it is not yet validated on all
+    NISAR frames (it can produce artifacts on fragmented scenes) — selected by
+    ``multilook > 1``, an explicit ``tile_size``, or ``WHIRLWIND_UNWRAP_SOLVER=
+    tiled``. The reuse (PHASS) whole-image solver (``=reuse``) is likewise opt-in
+    and not yet validated. Connected components are grown SNAPHU-style globally
+    from the Carballo coherence cost, independent of the phase solver.
 
     Optionally pre-filters with the Goldstein adaptive filter (off by
     default; set ``goldstein_alpha > 0`` to enable). When enabled, Goldstein
@@ -151,9 +158,10 @@ def unwrap(
         > 1 coherently down-looks first (noisy / moderate-coherence scenes),
         unwraps the coarse frame, then upsamples.
     tile_size, tile_overlap : int
-        ``tile_size=0`` (default) auto-tiles frames larger than 512 px at
-        512 / overlap-64. Set ``tile_size`` ≥ 4 (with ``tile_overlap`` ≥ 2)
-        to force a tile size.
+        ``tile_size=0`` (default) uses the single-tile linear solver (whole
+        image). Set ``tile_size`` ≥ 4 (with ``tile_overlap`` ≥ 2) to opt into
+        the tiled pipeline at that tile size (auto-512/overlap-64 if a tiled
+        path is otherwise requested, e.g. via ``multilook`` or the env knob).
     cost_threshold, min_size_px, max_ncomps :
         Connected-component growing parameters (see
         :class:`whirlwind_core::conncomp::ConnCompParams`).
