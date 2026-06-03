@@ -24,6 +24,7 @@ single Python process has no effect after the first unwrap.
 | `WHIRLWIND_NO_HEAL` | unset | If set, disables the bounded thin-sliver healing pass in the tiled coherence path. Diagnostic before/after only. |
 | `WHIRLWIND_TILE_SOLVER` | `reuse` | Per-tile / whole-image base solver: `reuse` (PHASS flow-reuse, corner-safe, default) or `convex` (SNAPHU-style quadratic, research-only). Any other value falls through to `reuse`. The old `linear` unit-capacity solver was removed in #50 (capacity-1 boundary-stacking bug on steep ramps). |
 | `WHIRLWIND_TILE_CONVEX` | unset | Legacy alias selecting the convex (quadratic) solver. Research-only — sound but not a general win (Atlanta +4%, regresses NISAR, ~20× slower); see [`convex_cost_design.md`](https://github.com/scottstanie/whirlwind-insar/blob/main/paper/convex_cost_design.md). |
+| `WHIRLWIND_CARBALLO_LUT_DIR` | unset | If set, `unwrap_linear` loads Carballo probability-table blobs from this directory instead of the embedded `ww-orig` parity tables. The directory must contain `carballo_grid_phase.bin`, `carballo_grid_corr.bin`, `carballo_grid_nlooks.bin`, `carballo_p0.bin`, and `carballo_p1.bin`, as written by `scripts/generate_carballo_tables.py --write-rust-bins`. Read once via `OnceLock`; start a fresh process between A/B runs. |
 
 Note: there is no env var for the noisy-scene multilook path or for tiling —
 those are proper function arguments: `unwrap(..., tile_size=512,
