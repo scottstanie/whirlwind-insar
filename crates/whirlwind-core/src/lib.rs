@@ -430,16 +430,27 @@ pub fn unwrap_reuse(
         return Err(UnwrapError::TooSmall((m, n)));
     }
     let wrapped_phase = igram.mapv(|z| z.arg());
-    let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
+    let residues = residue::compute(wrapped_phase.view());
+    // Pass mask=None to network construction: Python ww-orig does NOT forbid
+    // masked arcs — it only sets their cost to 0. Forbidding masked arcs
+    // isolates residues inside masked regions, preventing cross-mask routing
+    // and degrading quality from ~99% to ~42% on ~50%-masked NISAR scenes.
+    // Masked arcs have cost=0 so MCF routes through them freely; post-integration
+    // we NaN masked pixels.
     let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_reuse_with_mask(&graph, residues.view(), &costs, mask);
+    let mut net = network::Network::new_reuse_with_mask(&graph, residues.view(), &costs, None);
     primal_dual::run(&graph, &mut net, 50);
-    let unw = if mask.is_some() {
-        integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
-    } else {
-        integrate::integrate(wrapped_phase.view(), &graph, &net)
-    };
+    // Full integration (through masked areas) so all valid pixels are reached
+    // even those adjacent to masked regions; NaN masked pixels afterward.
+    let mut unw = integrate::integrate(wrapped_phase.view(), &graph, &net);
+    if let Some(mm) = mask {
+        unw.zip_mut_with(&mm, |u, &v| {
+            if !v {
+                *u = f32::NAN;
+            }
+        });
+    }
     Ok(unw)
 }
 

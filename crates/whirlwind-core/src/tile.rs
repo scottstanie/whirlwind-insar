@@ -250,7 +250,18 @@ fn assemble_and_refine(
         coarse_refine(&mut out, conf, mask, 8, None);
     } else {
         let lk = anchor_lk(igram.dim());
-        let anchor = compute_coarse_anchor(igram, conf, 1.0, mask, lk);
+        // Cross-validated dual anchor: lk_fine (current adaptive) + lk_coarse
+        // (2× more multilook, ~128px coarse, well below the runaway threshold).
+        // Regions where lk_fine runs away are detected via integer-cycle
+        // disagreement vs lk_coarse and overwritten with the more-reliable
+        // lk_coarse value. In well-behaved frames both anchors agree and the
+        // fine anchor is used throughout (no regression vs lk_fine-only).
+        let lk_coarse = (lk * 2).min(32);
+        let anchor = if lk_coarse > lk {
+            compute_dual_anchor(igram, conf, mask, lk, lk_coarse)
+        } else {
+            compute_coarse_anchor(igram, conf, 1.0, mask, lk)
+        };
         let av = anchor.as_ref().map(|a| a.view());
         for &f in &[16usize, 8, 4] {
             coarse_refine(&mut out, conf, mask, f, av);
@@ -1292,6 +1303,80 @@ fn compute_coarse_anchor(
     .ok()?;
     // Block-replicate to full res (we only consume round((anchor−unw)/2π)).
     Some(upsample_blockrep(&cunw, lk, m, n))
+}
+
+/// Cross-validated dual-scale anchor.
+///
+/// `lk_fine` (primary, e.g. 16) and `lk_coarse` (safety net, e.g. 32) must
+/// satisfy `lk_coarse > lk_fine` and `lk_coarse` divisible by `lk_fine`.
+///
+/// For each `lk_coarse`-sized cell of the image: if ALL `lk_fine` sub-cells
+/// within it agree with the `lk_coarse` value to within one integer cycle, the
+/// fine anchor is used (better resolution). If any sub-cell disagrees, the fine
+/// anchor has a runaway sign there — the entire coarse cell is overwritten with
+/// the more-reliable `lk_coarse` value.
+///
+/// Why this works: at lk_fine=16 NISAR frames produce a ~262px coarse image —
+/// right at the runaway edge (~256px). Runaway shows up as an integer-cycle
+/// disagreement vs the lk_coarse=32 anchor (~131px, safely below threshold).
+/// In frames without runaway (gentle A-frames) both anchors agree everywhere
+/// and the fine anchor is returned unchanged — no regression.
+fn compute_dual_anchor(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    lk_fine: usize,
+    lk_coarse: usize,
+) -> Option<Array2<f32>> {
+    assert!(lk_coarse > lk_fine && lk_coarse % lk_fine == 0);
+    let fine = compute_coarse_anchor(igram, corr, 1.0, mask, lk_fine)?;
+    let coarse = compute_coarse_anchor(igram, corr, 1.0, mask, lk_coarse)?;
+    let (m, n) = fine.dim();
+    let tau = TAU;
+    let mut out = fine.clone();
+
+    let cm = m / lk_coarse;
+    let cn = n / lk_coarse;
+    let n_sub = lk_coarse / lk_fine;
+
+    for ci in 0..cm {
+        for cj in 0..cn {
+            let p0 = ci * lk_coarse;
+            let q0 = cj * lk_coarse;
+            let ac = coarse[(p0, q0)];
+            if !ac.is_finite() {
+                continue;
+            }
+            // Check each lk_fine sub-cell for integer-cycle disagreement.
+            let mut runaway = false;
+            'check: for si in 0..n_sub {
+                for sj in 0..n_sub {
+                    let pi = p0 + si * lk_fine;
+                    let qj = q0 + sj * lk_fine;
+                    if pi >= m || qj >= n {
+                        continue;
+                    }
+                    let af = fine[(pi, qj)];
+                    if !af.is_finite() {
+                        continue;
+                    }
+                    if ((af - ac) / tau).round() as i32 != 0 {
+                        runaway = true;
+                        break 'check;
+                    }
+                }
+            }
+            if runaway {
+                // Replace the whole coarse cell with the reliable coarse value.
+                for pi in p0..(p0 + lk_coarse).min(m) {
+                    for qj in q0..(q0 + lk_coarse).min(n) {
+                        out[(pi, qj)] = ac;
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
 }
 
 fn coarse_refine(
