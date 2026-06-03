@@ -124,3 +124,39 @@ fn gaussian_bump_noisy() {
         "max error {err} > 2π — unwrapping diverged on noisy bump"
     );
 }
+
+/// Single-tile `unwrap_linear` uses `run_full_dijkstra`, which falls through to
+/// the SINGLE-source SSP (`ssp::run_single_source`). This guards the correctness
+/// bar for that path: on a steep, noisy ramp that leaves residue after the 8 PD
+/// iterations (so the SSP fallback is actually exercised), the
+/// `debug_assert!(rc >= 0)` inside single-source SSP must never fire — i.e. the
+/// per-source capped potential update keeps reduced costs non-negative after
+/// every early-exit Dijkstra, not just at SSP entry. `cargo test` is a debug
+/// build, so the assertion is live; a regression panics here.
+#[test]
+fn single_source_ssp_keeps_nonnegative_reduced_costs() {
+    use rand::SeedableRng;
+    let (m, n) = (160usize, 160usize);
+    let cycles = 4.0_f32;
+    let truth = Array2::from_shape_fn((m, n), |(i, j)| {
+        2.0 * std::f32::consts::PI * cycles * (i as f32 + j as f32) / (m as f32)
+    });
+    let gamma = Array2::<f32>::from_elem((m, n), 0.3);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(5);
+    let (igram, corr) = simulate::simulate_ifg(&truth, &gamma, 4, &mut rng);
+
+    // run_full_dijkstra(8) → ssp::run_single_source; debug_assert is active.
+    let unw = whirlwind_core::unwrap_linear(igram.view(), corr.view(), 4.0, None).unwrap();
+
+    // Confirm the single-source SSP fallback was actually reached (else the
+    // assertion above guards nothing on this input).
+    let t = whirlwind_core::primal_dual::last_timings();
+    assert!(
+        t.ssp_iters > 0,
+        "test did not exercise the SSP fallback (ssp_iters=0); make the ramp steeper/noisier"
+    );
+    assert!(
+        unw.iter().all(|v| v.is_finite()),
+        "unwrap_linear produced non-finite output"
+    );
+}
