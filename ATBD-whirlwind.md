@@ -753,29 +753,49 @@ Peak RSS ≈6.4 GB (no swap). Reference SNAPHU/PHASS timings are in
 `snaphu_ref/D_077.log` / `phass_ref.log`. Benchmark the verified path with
 `scripts/bench_nisar_gunw_whirlwind.py --solver linear --nlooks 16`.
 
-**Masked / fragmented NISAR frames (single-tile, the guarded adaptive fallback of §7.6.1).**
-A single-tile sweep first showed `unwrap_linear` failing badly on five frames
-(per-component 0.14–0.59), which a stage-by-stage bisection traced **not** to cost
-or residues (both byte-identical to ww-orig) but to the single-source SSP
-**stranding** residues — the network never balanced. The adaptive fallback
-(resume PD after a stranding SSP) recovers four of the five to match ww-orig
-exactly, all fully balanced (`remaining_excess = 0`):
+**Full 13-frame NISAR GUNW sweep — whirlwind vs ww-orig vs PHASS vs ICU (2026-06-03).**
+Per-component match vs the production GUNW unwrap (= snaphu), runtime, and peak
+RSS, single-tile, one heavy unwrap at a time. `whirlwind` = the public `unwrap`
+default (single-tile linear + the adaptive PD/SSP fallback of §7.6.1).
+Reproduce with `scripts/sweep_all_unwrappers.sh` (→ `results.csv` + `SUMMARY.md`);
+it drives `scripts/run_native_one.py` (whirlwind / ww-orig, in the whirlwind env)
+and `scripts/tophu_compare.py` (PHASS / ICU / snaphu, in an isce3+tophu env).
 
-| frame | valid % | before (PD8+SSP) | **adaptive** | ww-orig | time |
-|---|---|---|---|---|---|
-| D_074 | 5.8 % | 0.552 | **0.988** | 0.988 | ≈18 s |
-| A_035 | — | 0.585 | **1.000** | 1.000 | ≈22 s |
-| D_075 | — | 0.142 | **0.882** | 0.882 | ≈81 s |
-| A_016 | — | 0.547 | **1.000** | 1.000 | ≈20 s |
-| D_077 | high | 0.995 | **0.995** | 0.987 | ≈61 s |
-| A_025 | 49.9 % | 0.255 | 0.580 (balanced) | 0.703 | ≈31 s |
+| frame | ww % | ww s | ww GB | ww-orig % | orig s | PHASS % | ph s | ICU %/s |
+|---|---|---|---|---|---|---|---|---|
+| A_013 | 100.0 | 13.5 | 3.2 | 100.0 | 35.5 | 99.3 | 6.3 | 100.0 / 525 |
+| A_016 | 100.0 | 19.8 | 3.6 | 100.0 | 44.0 | 99.6 | 12.5 | — |
+| A_018 | 100.0 | 18.0 | 3.4 | 100.0 | 39.6 | 85.7 | 4.7 | — |
+| A_020 | 99.8 | 27.6 | 3.7 | 99.8 | 52.0 | 99.4 | 7.3 | — |
+| A_022 | 100.0 | 25.3 | 3.7 | 100.0 | 48.3 | 99.4 | 6.4 | — |
+| A_025 | 58.0 | 30.2 | 3.8 | **70.3** | 54.5 | 67.0 | 5.6 | — |
+| A_028 | 100.0 | 33.4 | 3.6 | 100.0 | 55.3 | 92.9 | 11.5 | — |
+| A_030 | 100.0 | 35.5 | 4.1 | 100.0 | 63.1 | 75.4 | 6.1 | — |
+| D_074 | 98.8 | 18.5 | 3.5 | 98.8 | 37.4 | 91.2 | 5.7 | 86.3 / 0.6 |
+| D_075 | 88.2 | 82.4 | 3.9 | 88.2 | 106.3 | 48.4 | 15.4 | — |
+| D_077 | 99.5 | 61.9 | 3.5 | 99.5 | 85.7 | 94.7 | 16.8 | — |
+| D_078 | 99.8 | 37.9 | 3.5 | 99.9 | 59.1 | 96.9 | 10.5 | — |
+| A_035 | 100.0 | 22.5 | 3.2 | 100.0 | 46.7 | 94.6 | 8.5 | — |
 
-A_025 is the one residual case: it now *balances* but only reaches 0.580 — and
-ww-orig itself only reaches 0.703 (PHASS ≈0.67) on it, because a low-coherence
-river splits the scene and the relative 2π offset across the banks is
-under-determined (a **bridging** problem, separate from the stranding bug). The
-diagnostic reproducers are `scripts/diag_divergence.py` (stage bisection),
-`scripts/diag_cost_compare.py` (MCF objective + balance), and
+Findings:
+- **Parity: whirlwind ≡ ww-orig on 12 of 13 frames** (identical to ±0.1 %). The
+  lone exception is **A_025** (58.0 vs 70.3), the low-coherence river frame.
+- whirlwind is **~1.5–2× faster than Python ww-orig** (Rust) at ~3–4 GB vs 4–5 GB,
+  and single-tile snaphu is ~588 s — so whirlwind is **~7–45× faster than snaphu**
+  while matching/beating its per-comp.
+- whirlwind **beats PHASS on quality** on most frames, sometimes by a lot
+  (D_075 88.2 vs 48.4; A_030 100 vs 75.4; A_028 100 vs 92.9; A_018 100 vs 85.7),
+  though PHASS is ~2–4× faster (5–17 s) at ~2 GB.
+- **ICU is impractical** — 525 s on the *easy* frame (the 0.6 s on D_074 is an
+  artefact of its 94 %-masked tiny valid region); sampled, not swept.
+
+**A_025 — the one residual gap (a *minimum-jumpy* / bridging problem).** It now
+*balances* (`remaining_excess = 0`) but reaches only 0.580, and ww-orig itself
+only reaches 0.703 (PHASS ≈ 0.67): a low-coherence river splits the scene and the
+relative 2π offset across the banks is under-determined. This is the next
+algorithm item, separate from the (now-fixed) stranding bug. Divergence
+reproducers: `scripts/diag_divergence.py` (stage bisection),
+`scripts/diag_cost_compare.py` (MCF objective + balance),
 `scripts/diag_pd_only.py` (PD-vs-SSP split via ww-orig `maxiter=0`).
 
 **SSP-fallback cost (a known sharp edge).** `unwrap_linear` runs 8 full-Dijkstra
