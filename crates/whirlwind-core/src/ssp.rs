@@ -7,16 +7,18 @@
 //!   whole-image graph (a near-graph-wide Dijkstra per single unit of flow).
 //!   Used by the early-exit primal-dual path (`primal_dual::run`).
 //! * [`run_single_source`] — SINGLE-source: one source at a time, early-exiting
-//!   Dijkstra at the first popped deficit. ~10× faster on whole-image graphs
-//!   (single-tile D_077 ≈1472 s → ≈158 s, same result). Used by the full-
-//!   completion path (`primal_dual::run_full_dijkstra`), which leaves the valid
+//!   at the first popped deficit, using **Dial's bucket queue** (not a binary
+//!   heap). ~10× faster on whole-image graphs (single-tile D_077 ≈1472 s →
+//!   ≈158 s) AND robust to the zero-cost masked "sea" on heavily-masked frames,
+//!   which makes a binary heap balloon (millions of equal-distance entries) but
+//!   which Dial processes in O(nodes) per bucket. Used by the full-completion
+//!   path (`primal_dual::run_full_dijkstra`), which leaves the valid
 //!   (all-nodes-popped) potentials it requires. See ATBD §9.6.
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
+use crate::shortest_path::dial::max_reduced_cost_par;
 use crate::shortest_path::{ShortestPaths, dijkstra_multi_source_into};
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 
 pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
     let dbg = crate::primal_dual::debug_enabled();
@@ -91,37 +93,50 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
     }
 }
 
-/// Single-source SSP for the FULL-completion path (`primal_dual::run_full_dijkstra`).
+/// Single-source SSP for the FULL-completion path (`primal_dual::run_full_dijkstra`),
+/// using **Dial's bucket queue** (not a binary heap).
 ///
-/// One source at a time: a single-source Dijkstra that early-exits when the first
-/// deficit (sink) is popped, augment one unit along that path, update potentials,
-/// repeat over a fixed source list. ~10× faster than the multi-source [`run`] on
-/// a whole-image graph because each search explores only the neighbourhood up to
-/// the nearest sink instead of re-exploring the whole reachable graph per unit.
+/// One source at a time: a single-source Dial shortest-path that early-exits when
+/// the first deficit (sink) is popped, augment one unit along that path, update
+/// potentials, repeat over a fixed source list. On a small masked region this
+/// early-exits in a tiny neighbourhood (D_077 ≈158 s vs ≈1472 s for the
+/// multi-source [`run`]); on a heavily-masked frame the **zero-cost masked sea**
+/// (masked arcs have cost 0, never forbidden) is traversed in O(nodes) via the
+/// distance-0 bucket — a binary heap instead balloons to millions of equal-
+/// distance entries and blows up memory.
+///
+/// Scratch (`dist`/`pred`/`popped`, the touched list, and the reusable bucket
+/// vectors) is allocated once and reset per source only over `touched`. The Dial
+/// bucket count `k = max_edge_reduced_cost + 1` is recomputed per source because
+/// the potentials drift as we augment.
 ///
 /// CORRECTNESS — requires non-negative reduced costs at entry, which the full-
 /// completion PD path provides (all reachable nodes popped → exact potentials).
 /// The per-source potential update preserves the invariant: popped nodes get
 /// their exact distance (`π += d_sink − dist[v]`); non-popped nodes keep a zero
 /// shift, which is exactly "cap at `d_sink`" in that frame — valid because any
-/// unpopped node has `dist ≥ d_sink` by Dijkstra pop order. The `debug_assert`
-/// proves it: it must NEVER fire on the full path. Do **not** use this after the
-/// early-exit `run` (its `d_max`-capped potentials can be negative on frontier
-/// arcs); use the multi-source [`run`] there.
+/// unpopped node has `dist ≥ d_sink` by pop order. The `debug_assert` proves it:
+/// it must NEVER fire on the full path. Do **not** use this after the early-exit
+/// `run` (its `d_max`-capped potentials can be negative on frontier arcs); use
+/// the multi-source [`run`] there.
 pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     let dbg = crate::primal_dual::debug_enabled();
     let n_nodes = net.num_nodes();
     let mut dist = vec![i64::MAX; n_nodes];
     let mut pred_arc: Vec<i32> = vec![-1; n_nodes];
     let mut pred_node: Vec<i32> = vec![-1; n_nodes];
-    let mut visited = vec![false; n_nodes]; // popped (finalized)
+    let mut popped = vec![false; n_nodes];
     let mut touched: Vec<usize> = Vec::new();
-    let mut out_buf: Vec<(usize, usize)> = Vec::new();
+    let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
+    // Dial buckets, reused across sources (grown to the largest k seen, cleared
+    // between sources). Buckets store (node, queued_dist) so stale entries are
+    // detected on pop.
+    let mut buckets: Vec<Vec<(usize, i64)>> = Vec::new();
 
     let sources: Vec<usize> = net.excess_nodes().collect();
     let total = sources.len();
     if dbg {
-        eprintln!("[ssp1] single-source SSP: {total} sources");
+        eprintln!("[ssp1] single-source SSP (Dial): {total} sources");
     }
 
     for (idx, src) in sources.into_iter().enumerate() {
@@ -134,20 +149,47 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         }
         crate::primal_dual::record_ssp_iter();
 
-        // --- single-source Dijkstra, early-exit when first deficit popped ---
+        // Dial circular-bucket count: max edge reduced cost + 1. Recomputed per
+        // source because the potential update below shifts potentials.
+        let max_rc = max_reduced_cost_par(g, net);
+        let k = (max_rc as usize).saturating_add(1).max(1);
+        if buckets.len() < k {
+            buckets.resize_with(k, Vec::new);
+        }
+
         dist[src] = 0;
         touched.push(src);
-        let mut heap: BinaryHeap<Reverse<(i64, usize)>> = BinaryHeap::new();
-        heap.push(Reverse((0, src)));
+        buckets[0].push((src, 0));
+        let mut pending = 1_usize;
+        let mut cur_bucket = 0_usize;
+        let mut cur_dist = 0_i64;
+        let mut bucket_advances = 0_usize;
         let mut sink_found: Option<(usize, i64)> = None;
 
-        while let Some(Reverse((d, u))) = heap.pop() {
-            if visited[u] || dist[u] != d {
-                continue; // stale heap entry
+        while pending > 0 {
+            while buckets[cur_bucket].is_empty() {
+                cur_bucket = (cur_bucket + 1) % k;
+                cur_dist += 1;
+                bucket_advances += 1;
+                if bucket_advances > k {
+                    break; // nothing reachable remains (shouldn't happen w/ pending>0)
+                }
             }
-            visited[u] = true;
+            if buckets[cur_bucket].is_empty() {
+                break;
+            }
+            let (u, qd) = buckets[cur_bucket].pop().unwrap();
+            pending -= 1;
+            if popped[u] {
+                continue;
+            }
+            // Stale: re-relaxed to a smaller dist since this entry was queued.
+            if dist[u] != qd || qd != cur_dist {
+                continue;
+            }
+            popped[u] = true;
             if net.excess[u] < 0 {
-                sink_found = Some((u, d));
+                sink_found = Some((u, cur_dist));
                 break;
             }
             let pot_u = net.potential[u];
@@ -155,6 +197,8 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             if u < g.num_nodes() {
                 g.outgoing(u, &mut out_buf);
             }
+            // extra_outgoing is empty when there is no ground node (the
+            // unwrap_linear case), so it does not allocate on the hot path.
             for &(arc, v) in out_buf.iter().chain(net.extra_outgoing(u).iter()) {
                 if net.is_arc_saturated(arc) {
                     continue;
@@ -165,9 +209,9 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                 // invariant broke and must be fixed, not papered over.
                 debug_assert!(
                     rc >= 0,
-                    "negative rc={rc} on arc {arc} in single-source SSP (src idx {idx})"
+                    "negative rc={rc} on arc {arc} in single-source Dial SSP (src idx {idx})"
                 );
-                let nd = d + rc;
+                let nd = cur_dist + rc;
                 if nd < dist[v] {
                     if dist[v] == i64::MAX {
                         touched.push(v);
@@ -175,7 +219,8 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                     dist[v] = nd;
                     pred_arc[v] = arc as i32;
                     pred_node[v] = u as i32;
-                    heap.push(Reverse((nd, v)));
+                    buckets[(nd as usize) % k].push((v, nd));
+                    pending += 1;
                 }
             }
         }
@@ -196,19 +241,23 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             // Potential update (see CORRECTNESS above): popped nodes get exact;
             // non-popped keep a zero shift = capped at d_sink.
             for &v in &touched {
-                if visited[v] {
+                if popped[v] {
                     net.potential[v] += d_sink - dist[v];
                 }
             }
         }
 
-        // Reset scratch for the next source (reuse allocations).
+        // Reset scratch over touched only, then clear the buckets used this
+        // source (early-exit can leave queued entries behind).
         for &v in &touched {
             dist[v] = i64::MAX;
             pred_arc[v] = -1;
             pred_node[v] = -1;
-            visited[v] = false;
+            popped[v] = false;
         }
         touched.clear();
+        for b in buckets.iter_mut() {
+            b.clear();
+        }
     }
 }
