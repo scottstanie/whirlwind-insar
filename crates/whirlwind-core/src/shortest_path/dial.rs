@@ -18,6 +18,7 @@ use super::ShortestPaths;
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
 use rayon::prelude::*;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Compute the per-arc bucket count `k = max_unsaturated_reduced_cost + 1`.
@@ -214,13 +215,23 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
         );
     }
 
-    let mut buckets: Vec<Vec<(usize, i64)>> = vec![Vec::new(); k];
+    // FIFO buckets (`VecDeque`, pop FRONT) — matches ww-orig's C++ Dial
+    // (`std::queue` per bucket, pops `front()`). Equal-distance ties — which
+    // dominate the cost-0 masked "sea" on heavily-masked frames — must resolve
+    // BFS/fewest-hops first (pairing nearby residues, short branch cuts), NOT
+    // LIFO/DFS (long snaking cuts that pair distant residues). Both are equally
+    // cost-optimal, but only the FIFO one matches ww-orig / the correct unwrap;
+    // it is scale-free (a tie-break, not a cost change). See ww
+    // `ext/libwhirlwind/.../graph/dial.hpp`. NOTE: only this full-completion
+    // (parity) Dijkstra is FIFO; the early-exit `run_into` (production reuse /
+    // tiled) is intentionally left as-is.
+    let mut buckets: Vec<VecDeque<(usize, i64)>> = vec![VecDeque::new(); k];
     let mut pending: usize = 0;
 
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
         sp.source[s] = s as i32;
-        buckets[0].push((s, 0));
+        buckets[0].push_back((s, 0));
         pending += 1;
     }
     if pending == 0 {
@@ -252,7 +263,7 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
         }
         bucket_advances = 0;
 
-        let (u, qd) = buckets[cur_bucket].pop().unwrap();
+        let (u, qd) = buckets[cur_bucket].pop_front().unwrap(); // FIFO (see decl)
         pending -= 1;
         if sp.popped[u] {
             stale_pops += 1;
@@ -288,7 +299,7 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
                 sp.pred_node[v] = u_i32;
                 sp.source[v] = src_u;
                 let b = (nd as usize) % k;
-                buckets[b].push((v, nd));
+                buckets[b].push_back((v, nd)); // FIFO (see decl)
                 *pending += 1;
             }
         };
