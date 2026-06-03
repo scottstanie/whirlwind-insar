@@ -1,6 +1,6 @@
 # Handoff: where things stand on the no-Goldstein unwrapping work
 
-Last updated: 2026-05-28 evening.
+Last updated: 2026-06-03 (single-tile Carballo parity + SSP-runtime saga).
 
 This is the entry point for anyone picking up the no-Goldstein
 unwrapping investigation. It's intended to (a) keep someone from
@@ -22,6 +22,68 @@ The two longer-form companion writeups are:
 
 Read those for context. Use this doc to find the *current* status
 of each line of investigation.
+
+## 2026-06-03 update: single-tile Carballo parity + the SSP-runtime saga
+
+Canonical, code-verified status + benchmark table now lives in
+**`ATBD-whirlwind.md` §9.6**. This section is the *don't-repeat* log for the
+several circles we burned getting there.
+
+**What now works (verified).** Single-tile `unwrap_linear` matches Python
+`ww-orig` at **99.49 %** on full D_077, via embedded ww-orig Carballo spline
+tables (trilinear, `cost/spline_lut.rs`, `WHIRLWIND_CARBALLO_LUT_DIR` override)
++ full-completion Dijkstra. On D_077 it beats single-tile SNAPHU on *both* axes:
+**158 s / 99.49 %** vs SNAPHU **588 s / 99.30 %** (PHASS 19.6 s / 94.7 %). Peak
+RSS **6.4 GB**. Merged: PR #66 (parity), #67 (LUT override + buffer reuse).
+
+**Red herrings — do NOT re-run / re-conclude these:**
+
+1. **"Single-tile is slow because it swaps / OOMs." FALSE.** `/usr/bin/time -l`
+   on the 6.4 GB D_077 run reported **0 swaps, 565 page faults** — it does not
+   swap. A 1472 s wall-time was misread as swap twice; it was (a) CPU contention
+   from running `cargo`/`maturin` *concurrently* with the measurement (starved
+   rayon → ~1.4× parallelism instead of ~13×), and (b) the SSP algorithm (below).
+   *Lesson:* measure peak RSS with `/usr/bin/time -l` (default in benches), use
+   `mprof` only to chase spikes, and never run other heavy jobs during a timing
+   run.
+
+2. **"unwrap_linear's runtime is fine / 158 s on `main`." FALSE as committed.**
+   The 158 s used the *single-source* SSP that was later reverted; `main`'s
+   *multi-source* `ssp::run` makes single-tile D_077 ≈**1472 s** (slower than
+   SNAPHU). See item 4.
+
+3. **"`run_full_dijkstra_no_ssp` = Python parity (8 PD then integrate)." FALSE.**
+   No-SSP scores **11.19 %** on D_077: the 8 PD iterations alone route only ~11 %
+   of the flow; the **SSP fallback does the bulk**. `unwrap_linear` *requires*
+   SSP. (Our PD under-routes vs Python's per-iteration; SSP makes up the rest.)
+   A `run_full_dijkstra_no_ssp` variant was added and then reverted as useless.
+
+4. **"The single-source SSP rewrite was a perf regression — revert it globally."
+   WRONG (this was the biggest circle).** The two SSP algorithms have *opposite*
+   tradeoffs by scenario:
+   * old **multi-source** `ssp::run`: fast on tiled many-small-leftover
+     (A_016 1.7 s) but **catastrophic on whole-image** (D_077 1472 s — a
+     near-whole-image Dijkstra *per single unit*);
+   * new **single-source** SSP: fast on whole-image (D_077 158 s) but slow on
+     tiled (A_016 145 s).
+   Since the **product is single-tile**, reverting the single-source SSP was a 9×
+   regression there. Don't pick one globally.
+
+**Open / next: dual-SSP.** Keep multi-source `ssp::run` for the early-exit
+(`run`, tiled/default) path; add `ssp::run_single_source` used only by
+`run_full_dijkstra` (single-tile). Correctness caveat (the trap behind the
+earlier clamp): the single-source potential update must keep reduced costs
+non-negative *after every early-exit Dijkstra*, not just at SSP entry — popped
+nodes get exact distance, unpopped are implicitly ≥ the sink distance by Dijkstra
+pop order. Acceptance bar: D_077 **158 s / 99.49 %**, convex + tiled tests
+unchanged, and `debug_assert!(rc ≥ 0)` **on — no clamp** — must never fire during
+single-source SSP. (Validate the assertion via a focused *debug* test on a
+moderate noisy ramp through `run_full_dijkstra`; a debug full-frame D_077 is too
+slow.)
+
+**Also note:** `ssp.rs` module doc-comment still says "single-source" but the
+code is multi-source-seeded (`dijkstra_multi_source_into`) + one augmentation —
+fix that comment as part of the dual-SSP work.
 
 ## tl;dr — what works today, α=0 (no Goldstein)
 
