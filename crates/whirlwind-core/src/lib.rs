@@ -25,6 +25,7 @@ pub mod cycle_cancel;
 pub mod goldstein;
 pub mod grid;
 pub mod integrate;
+pub mod interpolate;
 pub mod network;
 pub mod primal_dual;
 pub mod residual_graph;

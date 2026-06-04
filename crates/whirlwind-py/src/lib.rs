@@ -96,6 +96,39 @@ fn label_components<'py>(
     (labels.into_pyarray(py), next as usize)
 }
 
+/// Spiral persistent-scatterer phase interpolator — the Rust port of dolphin's
+/// ``interpolation.interpolate``.
+///
+/// For each valid pixel (``ifg != 0``) with ``weights < weight_cutoff``, replaces
+/// the phase with a Gaussian-distance-weighted average of the nearest
+/// ``num_neighbors`` high-weight pixels' unit phasors (searched in concentric
+/// circles out to ``max_radius``); the amplitude is preserved. High-weight and
+/// masked pixels pass through. Returns a complex64 ``(m, n)`` array.
+#[pyfunction]
+#[pyo3(signature = (
+    ifg, weights, weight_cutoff = 0.5, num_neighbors = 20,
+    max_radius = 51, min_radius = 0, alpha = 0.75,
+))]
+fn interpolate<'py>(
+    py: Python<'py>,
+    ifg: PyReadonlyArray2<'py, Complex32>,
+    weights: PyReadonlyArray2<'py, f32>,
+    weight_cutoff: f32,
+    num_neighbors: usize,
+    max_radius: usize,
+    min_radius: usize,
+    alpha: f64,
+) -> Bound<'py, PyArray2<Complex32>> {
+    let ig = ifg.as_array();
+    let w = weights.as_array();
+    let out = py.detach(|| {
+        whirlwind_core::interpolate::interpolate(
+            ig, w, weight_cutoff, num_neighbors, max_radius, min_radius, alpha,
+        )
+    });
+    out.into_pyarray(py)
+}
+
 /// Simulate a multilook complex interferogram + sample coherence.
 ///
 /// Draws Lee-PDF phase noise around ``truth`` at per-pixel coherence
@@ -760,6 +793,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diagonal_ramp, m)?)?;
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;
     m.add_function(wrap_pyfunction!(label_components, m)?)?;
+    m.add_function(wrap_pyfunction!(interpolate, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_ifg, m)?)?;
     m.add_function(wrap_pyfunction!(closure_correct, m)?)?;
     m.add_function(wrap_pyfunction!(closure_refine_mcf, m)?)?;

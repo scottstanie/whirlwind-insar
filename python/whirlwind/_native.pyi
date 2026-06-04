@@ -133,6 +133,21 @@ def wrap_phase(unw: NDArray[np.float32]) -> NDArray[np.float32]: ...
 def label_components(mask: NDArray[np.bool_]) -> tuple[NDArray[np.int32], int]:
     """4-connected component labels of a boolean mask -> ``(labels, n)``."""
 
+def interpolate(
+    ifg: NDArray[np.complex64],
+    weights: NDArray[np.float32],
+    weight_cutoff: float = ...,
+    num_neighbors: int = ...,
+    max_radius: int = ...,
+    min_radius: int = ...,
+    alpha: float = ...,
+) -> NDArray[np.complex64]:
+    """Spiral PS phase interpolator — Rust port of dolphin ``interpolation.interpolate``.
+
+    Replaces low-weight pixels' phase with a Gaussian-distance-weighted average of
+    the nearest ``num_neighbors`` high-weight pixels; amplitude preserved.
+    """
+
 def simulate_ifg(
     truth: NDArray[np.float32],
     gamma: NDArray[np.float32],
