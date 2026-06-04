@@ -779,24 +779,75 @@ and `scripts/tophu_compare.py` (PHASS / ICU / snaphu, in an isce3+tophu env).
 
 Findings:
 - **Parity: whirlwind ≡ ww-orig on 12 of 13 frames** (identical to ±0.1 %). The
-  lone exception is **A_025** (58.0 vs 70.3), the low-coherence river frame.
+  table's lone exception, **A_025** (58.0 here, bridge *off*), is now fixed to
+  **99.99 %** by the default-on bridging pass (`unwrap(bridge=True)`) — so with the
+  default settings whirlwind is at-or-above ww-orig on **all 13** (see the A_025
+  bridging section below).
 - whirlwind is **~1.5–2× faster than Python ww-orig** (Rust) at ~3–4 GB vs 4–5 GB,
   and single-tile snaphu is ~588 s — so whirlwind is **~7–45× faster than snaphu**
   while matching/beating its per-comp.
 - whirlwind **beats PHASS on quality** on most frames, sometimes by a lot
   (D_075 88.2 vs 48.4; A_030 100 vs 75.4; A_028 100 vs 92.9; A_018 100 vs 85.7),
   though PHASS is ~2–4× faster (5–17 s) at ~2 GB.
-- **ICU is impractical** — 525 s on the *easy* frame (the 0.6 s on D_074 is an
-  artefact of its 94 %-masked tiny valid region); sampled, not swept.
+- **The *isce3* ICU (via tophu) is impractical** — 525 s on the *easy* frame
+  (the 0.6 s on D_074 is an artefact of its 94 %-masked tiny valid region);
+  sampled, not swept. The **original *isce2* mroipac ICU** (a different engine)
+  is a very different story — fast and competitive (see below).
 
-**A_025 — the one residual gap (a *minimum-jumpy* / bridging problem).** It now
-*balances* (`remaining_excess = 0`) but reaches only 0.580, and ww-orig itself
-only reaches 0.703 (PHASS ≈ 0.67): a low-coherence river splits the scene and the
-relative 2π offset across the banks is under-determined. This is the next
-algorithm item, separate from the (now-fixed) stranding bug. Divergence
-reproducers: `scripts/diag_divergence.py` (stage bisection),
-`scripts/diag_cost_compare.py` (MCF objective + balance),
-`scripts/diag_pd_only.py` (PD-vs-SSP split via ww-orig `maxiter=0`).
+**The original isce2 ICU (Giangi's `mroipac` C extension).** A separate, much
+older implementation than the isce3/tophu ICU above — and the one most veteran
+InSAR users will recognize. Run single-patch via `scripts/icu_isce2_run.py` in an
+isce2 env, scored with the *same* `percomp_match`. ICU estimates coherence
+internally (phase-sigma), so masked pixels are filled with **random** phase (not
+zeroed — a constant region looks perfectly coherent and corrupts ICU's seeding).
+
+| frame | isce2-ICU %/s | coverage | whirlwind % | note |
+|---|---|---|---|---|
+| A_016 | 100.0 / 120 | 99.6 % | 100.0 | matches |
+| D_074 | 100.0 / 157 | 99.9 % | 98.8 | matches/beats |
+| D_077 | 96.2 / 133 | 80.7 % | 99.5 | ICU drops low-coh land below its growing threshold |
+| A_025 | **73.2** / 122 | 99.9 % | **58.0** | **ICU beats whirlwind on the river** |
+
+So the classic ICU is *not* "just bad": it is fast (~2–3 min), hits 100 % with
+full coverage on clean frames, and on the A_025 river its tree/bootstrap
+referencing recovers the cross-bank integer gauge better than our MCF (73 vs 58,
+≈ ww-orig 70 / PHASS 67). That makes A_025 a *referencing* weakness, not a
+fundamental one — and 73 % is the concrete target for the bridging work below to
+beat. ICU's one weak spot is coverage on lower-coherence land (D_077 at 81 %),
+which the MCF fills.
+
+**A_025 — the residual bridging gap, now SOLVED (`unwrap(bridge=True)`, default on).**
+A low-coherence/masked river split A_025 into disconnected slabs; each slab is
+internally correct but the MCF integrator seeds every disconnected valid region at
+its own arbitrary 2π level, so the *relative* offset across the river was
+under-determined (whirlwind 0.580, ww-orig 0.703, PHASS ≈ 0.67). The fix is a fast
+post-integration pass over the right partition:
+
+- **The free gauge is between INTEGRATION components** — the 4-connected components
+  of the valid mask, which is the partition `integrate_with_mask` seeds — *not* the
+  (strictly finer) conncomp labels. (A_030 has 230 conncomps yet scores 100 %
+  because the integrator already bridged them across low-cost cuts.) Putting a shift
+  variable on conncomps was the old post-hoc dead-end; on integration components a
+  single-region (or coherently connected) frame is a structural no-op.
+- Each region is re-levelled to a coherent ×8 coarse anchor, with the shift taken
+  **relative to the largest region**, gated to regions the coarse scale connects
+  (data-supported) and vetoed unless the offset is cleanly integer.
+- Connected-components labelling is a native binding (`whirlwind.label_components`,
+  the same BFS as `integrate_with_mask`) — **no scipy/scikit-image dependency**.
+
+13-frame validation (`scripts/bench_bridge_all.py`, per-comp before/after + pixels
+moved; bridge cost +0.5–1.0 s/frame):
+
+| | A_025 | the other 12 |
+|---|---|---|
+| per-comp | **58.0 → 99.99 %** | unchanged (0 regressions) |
+| pixels moved | 5.25 M (the offset slab) | 0 on 11/13; D_075 moved 0.1 % (score-neutral) |
+
+So **whirlwind now matches/at-or-above ww-orig on all 13 frames.** Prototype +
+diagnostics: `scripts/proto_bridge_a025.py`, `scripts/diag_bridge_partition.py`.
+Future work: the wider, fully-decorrelated-gap case where ×8 does *not* bridge (the
+offset is then a labelled *convention*, not a measurement) — A_025's river was narrow
+enough to be genuinely data-supported.
 
 **SSP-fallback cost (a known sharp edge).** `unwrap_linear` runs 8 full-Dijkstra
 PD iterations *then falls through to SSP* — and on D_077 it does reach SSP (the

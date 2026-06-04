@@ -126,6 +126,9 @@ def diagonal_ramp(m: int, n: int) -> NDArray[np.float32]: ...
 
 def wrap_phase(unw: NDArray[np.float32]) -> NDArray[np.float32]: ...
 
+def label_components(mask: NDArray[np.bool_]) -> tuple[NDArray[np.int32], int]:
+    """4-connected component labels of a boolean mask -> ``(labels, n)``."""
+
 def simulate_ifg(
     truth: NDArray[np.float32],
     gamma: NDArray[np.float32],

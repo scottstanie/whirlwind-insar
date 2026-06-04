@@ -145,3 +145,60 @@ class TestCrlb:
         assert cc.shape == igram.shape and cc.dtype == np.uint32
         assert cc.max() >= 1
         assert _k_correct(unw, truth) > 0.99, "corner-safe CRLB default must recover steep ramp"
+
+
+class TestBridge:
+    """Integration-component gauge bridging (``unwrap(bridge=)``)."""
+
+    def test_label_components_splits_mask(self):
+        mask = np.ones((6, 9), dtype=np.bool_)
+        mask[:, 4] = False  # a masked column splits the frame in two
+        labels, n = ww.label_components(np.ascontiguousarray(mask))
+        assert n == 2
+        assert labels[mask].min() >= 1 and (labels[~mask] == 0).all()
+        # the two sides carry distinct labels
+        assert labels[0, 0] != labels[0, 8]
+
+    def test_bridge_noop_single_region(self):
+        # One connected valid region -> bridging must be a strict no-op.
+        m = n = 96
+        ii, jj = np.mgrid[0:m, 0:n]
+        phase = (ii + jj).astype(np.float32) / n * (2 * np.pi * 3)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.full((m, n), 0.95, np.float32)
+        off, _ = ww.unwrap(igram, corr, nlooks=1.0, bridge=False)
+        on, _ = ww.unwrap(igram, corr, nlooks=1.0, bridge=True)
+        np.testing.assert_array_equal(off, on)
+
+    def test_bridge_fixes_disconnected_gauge(self):
+        # A gentle ramp split by a thin masked strip: the integrator seeds each
+        # side independently, so the far side picks up an integer-cycle gauge
+        # error. The ×8 coarse anchor bridges the thin strip and the post-pass
+        # re-levels it, while bridge=False leaves the error.
+        m = n = 128
+        tau = 2 * np.pi
+        ii, jj = np.mgrid[0:m, 0:n]
+        truth = (ii + jj).astype(np.float32) / n * (tau * 3)  # ~3 gentle cycles
+        igram = np.exp(1j * truth).astype(np.complex64)
+        corr = np.full((m, n), 0.95, np.float32)
+        mask = np.ones((m, n), dtype=np.bool_)
+        mask[:, 62:65] = False  # 3-px masked river -> two regions
+        igram[~mask] = 0
+
+        off, _ = ww.unwrap(igram, corr, nlooks=1.0, mask=mask, bridge=False)
+        on, _ = ww.unwrap(igram, corr, nlooks=1.0, mask=mask, bridge=True)
+        off = np.asarray(off, np.float32)
+        on = np.asarray(on, np.float32)
+
+        left = mask.copy(); left[:, 62:] = False
+        right = mask.copy(); right[:, :65] = False
+
+        def rel_cycles(u):
+            al = np.median(np.round((u[left] - truth[left]) / tau))
+            ar = np.median(np.round((u[right] - truth[right]) / tau))
+            return ar - al
+
+        assert abs(rel_cycles(off)) >= 1, "expected an unbridged integer gauge error"
+        assert rel_cycles(on) == 0, "bridging must re-level the disconnected region"
+        # masked pixels untouched; valid stays finite
+        assert np.isfinite(on[mask]).all()

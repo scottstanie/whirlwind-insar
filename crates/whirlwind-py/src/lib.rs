@@ -10,6 +10,7 @@ use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonl
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::collections::VecDeque;
 
 /// Compute the integer residue grid from a wrapped-phase array.
 ///
@@ -44,6 +45,55 @@ fn diagonal_ramp<'py>(py: Python<'py>, m: usize, n: usize) -> Bound<'py, PyArray
 fn wrap_phase<'py>(py: Python<'py>, unw: PyReadonlyArray2<'py, f32>) -> Bound<'py, PyArray2<f32>> {
     let arr = unw.as_array().to_owned();
     whirlwind_core::simulate::wrap_phase(&arr).into_pyarray(py)
+}
+
+/// 4-connected connected-component labels of a boolean mask.
+///
+/// Returns ``(labels, n_components)`` where ``labels`` is an ``(m, n)`` int32
+/// array with ``0`` for masked/background pixels and ``1..=n_components`` for
+/// each connected valid region (raster-order seeding — the same partition the
+/// MCF integrator walks in ``integrate_with_mask``). A dependency-free
+/// replacement for ``scipy.ndimage.label`` used by the bridging post-pass.
+#[pyfunction]
+fn label_components<'py>(
+    py: Python<'py>,
+    mask: PyReadonlyArray2<'py, bool>,
+) -> (Bound<'py, PyArray2<i32>>, usize) {
+    let mask = mask.as_array();
+    let (m, n) = mask.dim();
+    let mut labels = Array2::<i32>::zeros((m, n));
+    let mut queue: VecDeque<(usize, usize)> = VecDeque::new();
+    let mut next: i32 = 0;
+    for si in 0..m {
+        for sj in 0..n {
+            if !mask[(si, sj)] || labels[(si, sj)] != 0 {
+                continue;
+            }
+            next += 1;
+            labels[(si, sj)] = next;
+            queue.clear();
+            queue.push_back((si, sj));
+            while let Some((i, j)) = queue.pop_front() {
+                if j + 1 < n && mask[(i, j + 1)] && labels[(i, j + 1)] == 0 {
+                    labels[(i, j + 1)] = next;
+                    queue.push_back((i, j + 1));
+                }
+                if j >= 1 && mask[(i, j - 1)] && labels[(i, j - 1)] == 0 {
+                    labels[(i, j - 1)] = next;
+                    queue.push_back((i, j - 1));
+                }
+                if i + 1 < m && mask[(i + 1, j)] && labels[(i + 1, j)] == 0 {
+                    labels[(i + 1, j)] = next;
+                    queue.push_back((i + 1, j));
+                }
+                if i >= 1 && mask[(i - 1, j)] && labels[(i - 1, j)] == 0 {
+                    labels[(i - 1, j)] = next;
+                    queue.push_back((i - 1, j));
+                }
+            }
+        }
+    }
+    (labels.into_pyarray(py), next as usize)
 }
 
 /// Simulate a multilook complex interferogram + sample coherence.
@@ -704,6 +754,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;
     m.add_function(wrap_pyfunction!(diagonal_ramp, m)?)?;
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;
+    m.add_function(wrap_pyfunction!(label_components, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_ifg, m)?)?;
     m.add_function(wrap_pyfunction!(closure_correct, m)?)?;
     m.add_function(wrap_pyfunction!(closure_refine_mcf, m)?)?;
