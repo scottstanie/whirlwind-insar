@@ -109,6 +109,30 @@ def unwrap_crlb_stack(
     return unw_out, cc_out
 
 
+# The coherence connected-component cost is round(CONNCOMP_COST_SCALE · Carballo
+# LLR), where the LLR = log(p0/p1) is the log-odds of "one-cycle correction" (p1)
+# vs "no correction" (p0) for an edge under the Lee-1994 multilook phase model.
+CONNCOMP_COST_SCALE = 6
+
+
+def cost_threshold_from_cycle_prob(cycle_prob: float) -> int:
+    """Connected-component ``cost_threshold`` for a target per-edge one-cycle
+    probability.
+
+    An edge is cut (a component boundary) when its cost ``<= cost_threshold``,
+    i.e. when its **local one-cycle-correction probability** ``>= cycle_prob``.
+    This is *local edge reliability*, NOT a global residue-pairing probability.
+    Lower ``cycle_prob`` ⇒ higher threshold ⇒ MORE edges cut (stricter). The
+    legacy ``cost_threshold=50`` ≈ ``cycle_prob ≈ 2.4e-4`` (≈ 3.5σ Gaussian-
+    equivalent). Carballo/coherence conncomp only — the CRLB inverse-variance
+    cost path does not use this scaling.
+    """
+    import math
+
+    p = min(max(cycle_prob, 1e-12), 1.0 - 1e-12)
+    return round(CONNCOMP_COST_SCALE * math.log((1.0 - p) / p))
+
+
 def unwrap(
     igram: "NDArray[np.complex64]",
     corr: "NDArray[np.float32]",
@@ -120,6 +144,9 @@ def unwrap(
     tile_size: int = 0,
     tile_overlap: int = 0,
     cost_threshold: int = 50,
+    conncomp_cycle_prob: "float | None" = None,
+    conncomp_sigma: "float | None" = None,
+    conncomp_coh_floor: "float | None" = None,
     min_size_px: int = 100,
     max_ncomps: int = 1024,
     goldstein_alpha: float = 0.0,
@@ -191,6 +218,12 @@ def unwrap(
     conncomp : uint32, shape ``(m, n)``
         Component labels; 0 = background / dropped.
     """
+    if conncomp_sigma is not None:
+        import math
+        conncomp_cycle_prob = 0.5 * math.erfc(conncomp_sigma / math.sqrt(2.0))
+    if conncomp_cycle_prob is not None:
+        cost_threshold = cost_threshold_from_cycle_prob(conncomp_cycle_prob)
+
     if goldstein_alpha <= 0:
         unw, cc = _unwrap_native(
             igram, corr, nlooks,
@@ -222,6 +255,12 @@ def unwrap(
 
     if bridge and os.environ.get("WHIRLWIND_NO_BRIDGE", "") not in ("1", "true", "True"):
         unw = _bridge_components(unw, igram, corr, nlooks, mask)
+    if conncomp_coh_floor:
+        # Drop low-coherence pixels from their components (a quality floor):
+        # noisy percolation goes to background predictably, since a coherence
+        # floor — unlike cost_threshold — cuts regardless of the local gradient.
+        cc = np.asarray(cc).copy()
+        cc[np.clip(np.nan_to_num(corr), 0.0, 1.0) < conncomp_coh_floor] = 0
     return unw, cc
 
 
@@ -318,6 +357,7 @@ __all__ = [
     "closure_correct",
     "closure_refine_mcf",
     "compute_residues",
+    "cost_threshold_from_cycle_prob",
     "diagonal_ramp",
     "goldstein",
     "interpolate",
