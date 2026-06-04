@@ -1,12 +1,56 @@
-# PHASS vs whirlwind: why PHASS's single tile is faster, and what we did about it
+# Whirlwind performance: why it's ~15–40× faster than SNAPHU (and ~2–4× slower than PHASS)
 
-isce3's **PHASS** single-tile unwrap runs ~2–4× faster than whirlwind's
-single-tile linear MCF (e.g. D_077 ≈ 20 s vs ≈ 60 s, before the fix below). This
-note explains the difference and the speed win it led to. (Note: a tiled or
-reoptimize warm-start can cut runtime but **not** full-frame memory — the final
-single-tile solve still allocates the whole-image network.)
+Two questions come up on the benchmark: **why is whirlwind so much faster than
+SNAPHU** (the headline ~15–40× on single-tile NISAR frames), and **why is isce3
+PHASS still ~2–4× faster than whirlwind** (e.g. D_077 ≈ 20 s vs ≈ 37 s). This note
+answers both. (Aside: a tiled or reoptimize warm-start can cut runtime but **not**
+full-frame memory — the final single-tile solve still allocates the whole-image
+network.)
 
-## It is an algorithm-class difference — but PHASS is *not* "no flow"
+## Why ~15–40× faster than SNAPHU?
+
+On these NISAR frames whirlwind unwraps in ~14–41 s vs single-tile SNAPHU's
+~500–900 s. The honest framing first: **this is the same algorithm class.** SNAPHU
+and whirlwind both reduce 2D unwrapping to a minimum-cost flow on the residue
+network — whirlwind is *not* trading quality for speed here (that is the PHASS story
+below); it matches SNAPHU's per-component quality. So the gap is *how the MCF is
+built and solved*, not a different or weaker problem. Four factors, roughly by
+impact:
+
+1. **A fixed linear cost vs nonlinear statistical costs.** SNAPHU's costs are
+   *statistical* (MAP-derived) and **nonlinear** functions of the per-arc flow — its
+   2001 paper is titled "…statistical models for cost functions in **nonlinear
+   optimization**" (Chen & Zebker, *JOSA A*) — so its network-flow solve carries
+   convex, multi-unit arc costs and is correspondingly heavier. whirlwind uses a
+   **fixed linear** Carballo (Lee-1994) per-arc cost and a capacity-1 MCF, so it
+   solves a single, lighter network. Same residue-pairing problem, a simpler (and
+   so cheaper) cost model — at no measured quality cost on these frames. *(This is
+   the factor I can least precisely quantify without profiling SNAPHU's internals;
+   the implementation and configuration factors below are the surer bets.)*
+
+2. **Parallel Rust vs single-threaded C.** whirlwind builds the cost grid, residues
+   and connected components with rayon across all cores, and solves with a tuned
+   Dial-bucket Dijkstra MCF (plus the recent per-source-rescan fix, ~1.4–2.4×).
+   SNAPHU v2 is mature, portable, largely single-threaded C — on an 8-core machine
+   that alone is a multiple.
+
+3. **Single-tile is SNAPHU's *slow* configuration.** SNAPHU's operational strength
+   is **tiling** — bounded per-tile graphs plus a single-tile reoptimize pass — and
+   that path is fast and battle-tested. A single-tile solve over a full ~18-Mpx
+   NISAR frame is the largest, slowest setup for it: we are benchmarking at SNAPHU's
+   worst case. Which is exactly the result worth stating — **whirlwind reaches
+   SNAPHU-quality on the whole frame in one pass, with no tiling**, so the tile
+   bookkeeping, the seam artifacts, and the reoptimize step drop out of the pipeline.
+
+4. *(minor)* whirlwind grows connected-component labels directly from the cost grid
+   **without** an MCF solve, so conncomps do not add a second global pass.
+
+**Bottom line, fair to SNAPHU:** it is still the quality reference, and its tiled
+path is fast. whirlwind's edge is not a cleverer algorithm — it is that a single
+fixed-cost linear MCF, solved efficiently in parallel, hits SNAPHU's single-tile
+quality far faster, so you do not *need* to tile a NISAR frame to unwrap it quickly.
+
+## Why is PHASS faster than whirlwind? An algorithm-class difference — but PHASS is *not* "no flow"
 
 A common over-simplification is "PHASS just region-grows, it doesn't solve a
 flow." That is wrong. PHASS **builds residues and a cost graph and runs a
