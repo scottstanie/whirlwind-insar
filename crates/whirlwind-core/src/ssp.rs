@@ -153,6 +153,16 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     // arcs included), so a stranded source is a REACHABILITY/SSP BUG, not
     // expected control flow — surfaced here instead of being silently skipped.
     let mut stranded = 0_usize;
+    let mut scan_ns: u128 = 0; // time in max_reduced_cost_par (now only on k-overflow)
+    // Maintained ACROSS sources (was rescanned every source — ~half of D_077's
+    // runtime). A valid upper bound on every arc's reduced cost; grows lazily (a
+    // source that hits rc >= k recomputes it tight + retries). One tight scan here.
+    let mut max_rc = {
+        let _scan_t = std::time::Instant::now();
+        let v = max_reduced_cost_par(g, net);
+        scan_ns += _scan_t.elapsed().as_nanos();
+        v
+    };
 
     for (idx, src) in sources.into_iter().enumerate() {
         if net.excess[src] <= 0 {
@@ -164,80 +174,125 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         }
         crate::primal_dual::record_ssp_iter();
 
-        // Dial circular-bucket count: max edge reduced cost + 1. Recomputed per
-        // source because the potential update below shifts potentials.
-        let max_rc = max_reduced_cost_par(g, net);
-        let k = (max_rc as usize).saturating_add(1).max(1);
-        if buckets.len() < k {
-            buckets.resize_with(k, VecDeque::new);
-        }
-
-        dist[src] = 0;
-        touched.push(src);
-        buckets[0].push_back((src, 0));
-        let mut pending = 1_usize;
-        let mut cur_bucket = 0_usize;
-        let mut cur_dist = 0_i64;
-        let mut bucket_advances = 0_usize;
+        // Dial circular-bucket count k = max edge reduced cost + 1. max_rc is
+        // carried across sources (not rescanned each one). If a relaxation finds
+        // rc >= k, potentials grew past the bound: discard this source's partial
+        // Dijkstra, recompute max_rc tight (the ONLY O(E) rescan), and retry — so
+        // an under-estimated k can never commit an aliased (wrong) path.
         let mut sink_found: Option<(usize, i64)> = None;
+        // Captured at loop exit (the only exit is the success `break`) for the
+        // STRANDED diagnostic, since k/cur_dist are now scoped to the retry loop.
+        let dbg_cur_dist: i64;
+        let dbg_k: usize;
+        loop {
+            let k = (max_rc as usize).saturating_add(1).max(1);
+            if buckets.len() < k {
+                buckets.resize_with(k, VecDeque::new);
+            }
 
-        while pending > 0 {
-            while buckets[cur_bucket].is_empty() {
-                cur_bucket = (cur_bucket + 1) % k;
-                cur_dist += 1;
-                bucket_advances += 1;
-                if bucket_advances > k {
-                    break; // nothing reachable remains (shouldn't happen w/ pending>0)
+            dist[src] = 0;
+            touched.push(src);
+            buckets[0].push_back((src, 0));
+            let mut pending = 1_usize;
+            let mut cur_bucket = 0_usize;
+            let mut cur_dist = 0_i64;
+            let mut bucket_advances = 0_usize;
+            let mut overflow = false;
+            let mut max_rc_seen = 0_i64;
+
+            while pending > 0 {
+                while buckets[cur_bucket].is_empty() {
+                    cur_bucket = (cur_bucket + 1) % k;
+                    cur_dist += 1;
+                    bucket_advances += 1;
+                    if bucket_advances > k {
+                        break; // nothing reachable remains (shouldn't happen w/ pending>0)
+                    }
                 }
-            }
-            if buckets[cur_bucket].is_empty() {
-                break;
-            }
-            let (u, qd) = buckets[cur_bucket].pop_front().unwrap(); // FIFO (see decl)
-            pending -= 1;
-            if popped[u] {
-                continue;
-            }
-            // Stale: re-relaxed to a smaller dist since this entry was queued.
-            if dist[u] != qd || qd != cur_dist {
-                continue;
-            }
-            popped[u] = true;
-            if net.excess[u] < 0 {
-                sink_found = Some((u, cur_dist));
-                break;
-            }
-            let pot_u = net.potential[u];
-            out_buf.clear();
-            if u < g.num_nodes() {
-                g.outgoing(u, &mut out_buf);
-            }
-            // extra_outgoing is empty when there is no ground node (the
-            // unwrap_linear case), so it does not allocate on the hot path.
-            for &(arc, v) in out_buf.iter().chain(net.extra_outgoing(u).iter()) {
-                if net.is_arc_saturated(arc) {
+                if buckets[cur_bucket].is_empty() {
+                    break;
+                }
+                let (u, qd) = buckets[cur_bucket].pop_front().unwrap(); // FIFO (see decl)
+                pending -= 1;
+                if popped[u] {
                     continue;
                 }
-                let rc = (net.arc_cost(g, arc) as i64) - pot_u + net.potential[v];
-                // Must hold on the full-completion path (valid entry potentials +
-                // the capped update below). NOT clamped: a fire means the
-                // invariant broke and must be fixed, not papered over.
-                debug_assert!(
-                    rc >= 0,
-                    "negative rc={rc} on arc {arc} in single-source Dial SSP (src idx {idx})"
-                );
-                let nd = cur_dist + rc;
-                if nd < dist[v] {
-                    if dist[v] == i64::MAX {
-                        touched.push(v);
+                // Stale: re-relaxed to a smaller dist since this entry was queued.
+                if dist[u] != qd || qd != cur_dist {
+                    continue;
+                }
+                popped[u] = true;
+                if net.excess[u] < 0 {
+                    sink_found = Some((u, cur_dist));
+                    break;
+                }
+                let pot_u = net.potential[u];
+                out_buf.clear();
+                if u < g.num_nodes() {
+                    g.outgoing(u, &mut out_buf);
+                }
+                // extra_outgoing is empty when there is no ground node (the
+                // unwrap_linear case), so it does not allocate on the hot path.
+                for &(arc, v) in out_buf.iter().chain(net.extra_outgoing(u).iter()) {
+                    if net.is_arc_saturated(arc) {
+                        continue;
                     }
-                    dist[v] = nd;
-                    pred_arc[v] = arc as i32;
-                    pred_node[v] = u as i32;
-                    buckets[(nd as usize) % k].push_back((v, nd));
-                    pending += 1;
+                    let rc = (net.arc_cost(g, arc) as i64) - pot_u + net.potential[v];
+                    // Must hold on the full-completion path (valid entry potentials +
+                    // the capped update below). NOT clamped: a fire means the
+                    // invariant broke and must be fixed, not papered over.
+                    debug_assert!(
+                        rc >= 0,
+                        "negative rc={rc} on arc {arc} in single-source Dial SSP (src idx {idx})"
+                    );
+                    if rc >= k as i64 {
+                        overflow = true; // k too small (potentials grew) -> recompute + retry
+                        break;
+                    }
+                    if rc > max_rc_seen {
+                        max_rc_seen = rc;
+                    }
+                    let nd = cur_dist + rc;
+                    if nd < dist[v] {
+                        if dist[v] == i64::MAX {
+                            touched.push(v);
+                        }
+                        dist[v] = nd;
+                        pred_arc[v] = arc as i32;
+                        pred_node[v] = u as i32;
+                        buckets[(nd as usize) % k].push_back((v, nd));
+                        pending += 1;
+                    }
+                }
+                if overflow {
+                    break;
                 }
             }
+
+            if overflow {
+                // Discard the partial Dijkstra, recompute a tight max_rc, retry.
+                for &v in &touched {
+                    dist[v] = i64::MAX;
+                    pred_arc[v] = -1;
+                    pred_node[v] = -1;
+                    popped[v] = false;
+                }
+                touched.clear();
+                for b in buckets.iter_mut() {
+                    b.clear();
+                }
+                let _scan_t = std::time::Instant::now();
+                max_rc = max_reduced_cost_par(g, net);
+                scan_ns += _scan_t.elapsed().as_nanos();
+                continue;
+            }
+            // Track potential growth cheaply so the next source rarely overflows.
+            if max_rc_seen > max_rc {
+                max_rc = max_rc_seen;
+            }
+            dbg_cur_dist = cur_dist;
+            dbg_k = k;
+            break;
         }
 
         if let Some((sink, d_sink)) = sink_found {
@@ -277,7 +332,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                 eprintln!(
                     "[ssp1] STRANDED src={src} (idx {idx}): reached={reached} nodes, \
                      touched={}, global_deficit_nodes={n_def}, reached_deficits={reached_def}, \
-                     last_cur_dist={cur_dist} k={k}",
+                     last_cur_dist={dbg_cur_dist} k={dbg_k}",
                     touched.len()
                 );
             }
@@ -298,6 +353,10 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     }
     if dbg {
         let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
-        eprintln!("[ssp1] DONE: stranded_sources={stranded} remaining_excess={ex}");
+        eprintln!(
+            "[ssp1] DONE: stranded_sources={stranded} remaining_excess={ex} \
+             max_reduced_cost_scan={:.1}ms",
+            scan_ns as f64 / 1e6
+        );
     }
 }

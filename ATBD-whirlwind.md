@@ -875,6 +875,19 @@ with **no clamp**. The invariant is guarded by the debug test
 reaches the SSP fallback); the tiled/default path is byte-unchanged (only
 `run_full_dijkstra`'s fall-through branches to the single-source variant).
 
+**Per-source Dial-`k` rescan eliminated (2026-06-04, ~1.4–2.4× on residue-heavy
+frames).** `WHIRLWIND_DEBUG` timing revealed the single-source SSP's real cost was
+*not* the Dijkstra traversals but the **`max_reduced_cost_par` rescan it ran once
+per source** to size the Dial buckets — an O(E) scan over ~38 M arcs × ~1k sources
+= **34 s of D_077's 61 s (~52 %)**. A naive hoist is unsafe (the capped potential
+update *grows* potentials, so the max reduced cost rises and a stale `k` would
+alias). Fix: maintain `max_rc` across sources (one tight scan), and if any
+relaxation sees `rc ≥ k`, discard that source's partial Dijkstra, recompute
+`max_rc`, and retry — an under-sized `k` can never commit. **D_077 61→37 s, D_075
+2.4×, others 1.4–1.7×; optimal cost byte-identical, per-comp unchanged on all 13
+frames, 79/79 core tests green.** Profiler: `scripts/prof_pdssp.py`,
+`WHIRLWIND_DEBUG=1` (`max_reduced_cost_scan=…ms`).
+
 > **Tiling is not yet validated** on fragmented NISAR scenes (see §9.5 item 4).
 > The single-tile kernel is the trustworthy reference to measure tiling against.
 
