@@ -522,21 +522,24 @@ fn closure_refine_mcf<'py>(
     Ok(dict)
 }
 
-/// Engine behind the public Python ``unwrap``: robust tiled coherence-cost
+/// Engine behind the public Python ``unwrap``: single-tile linear coherence-cost
 /// unwrap returning ``(unwrapped_phase, conn_components)``.
 ///
-/// Phase uses the robust tiled pipeline (auto-tile + gated multi-shift + global
-/// anchor + multi-scale cascade + seam-repair). Components are grown globally
-/// from the Carballo cost grid: a pixel edge is a *cut* when one underlying arc
-/// is mask-forbidden, or the min raw forward cost across the two underlying arcs
-/// is ≤ ``cost_threshold``; BFS through non-cut edges labels components, those
-/// below ``min_size_px`` are dropped, and the largest ``max_ncomps`` (by size)
-/// are kept and renumbered ``1..=N``. Component labels are solve-independent, so
-/// they compose with the tiled phase. Goldstein pre-filtering + the K-transfer
-/// back onto the original phase live in the Python ``unwrap`` wrapper.
+/// Phase DEFAULTS to the verified single-tile linear MCF solver (ww-orig-parity
+/// Carballo Lee-1994 cost, capacity-1 min-cost-flow with an adaptive PD→SSP
+/// fallback for masked frames). Components are grown globally from the Carballo
+/// cost grid: a pixel edge is a *cut* when one underlying arc is mask-forbidden,
+/// or the min raw forward cost across the two underlying arcs is ≤
+/// ``cost_threshold``; BFS through non-cut edges labels components, those below
+/// ``min_size_px`` are dropped, and the largest ``max_ncomps`` (by size) are
+/// kept and renumbered ``1..=N``. Component labels are solve-independent, so
+/// they compose with the phase. The integration-component gauge "bridge"
+/// post-pass and the K-transfer back onto the original phase live in the Python
+/// ``unwrap`` wrapper (Goldstein pre-filtering is OFF by default there).
 ///
-/// * ``tile_size`` — 0 (default) auto-tiles frames > 512 px at 512/overlap-64;
-///   ``≥ 4`` forces that tile size; otherwise the whole frame is one tile.
+/// * ``tile_size`` — 0 (default) is single-tile linear on the whole frame (NOT
+///   auto-tiled); ``≥ 4`` opts in to the unvalidated tiled pipeline at that
+///   tile size.
 /// * ``multilook`` — > 1 routes through the coherent-downlook-first path.
 /// * ``cost_threshold`` — Carballo units (``COST_SCALE = 100``); ≈ γ̂ 0.3 at 50.
 /// * ``min_size_px`` — absolute component floor in pixels.

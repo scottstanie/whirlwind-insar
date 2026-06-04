@@ -4,16 +4,27 @@ All numbers below from `cargo run --release --example bench_scale -- --huge`
 on an Apple M-series laptop (12 perf cores, 36 GB RAM).
 
 > **What these numbers are (read first).** The tables below benchmark the
-> **whole-image MCF** on synthetic scenes — a valid *baseline*, but **not** the
-> production path. The shipped default is the **tiled** path (per-tile MCF +
-> global coarse anchor + multi-scale cascade); whole-image MCF *runs away* on
-> real noisy scenes (NISAR: 80 % K-match, 18 % multi-cycle) whereas tiled +
-> anchor + cascade reaches **99.79 % K-match / 0 % multi-cycle in 3.9 s** vs
-> SNAPHU 9×9's ~17 min, and stays memory-bounded to tile scale. Tiling is a
-> **correctness necessity**, not just an optimization. Real-scene method,
-> numbers, and figures: [`paper/report_anchor_cascade.md`](https://github.com/scottstanie/whirlwind-insar/blob/main/paper/report_anchor_cascade.md).
+> shipped default — **single-tile linear MCF** (`unwrap_linear`) — on synthetic
+> scenes. The public `whirlwind.unwrap(igram, corr, nlooks, mask=None)` runs
+> this whole-image, capacity-1 min-cost-flow solver (ww-orig-parity Carballo
+> Lee-1994 cost, adaptive PD→SSP fallback for masked frames), then two fast
+> Python post-passes: SNAPHU-style connected components and a default-on
+> integration-component gauge **bridge** (`bridge=True`) that re-levels
+> mask-disconnected regions to a coarse ×8 anchor (`WHIRLWIND_NO_BRIDGE=1`
+> disables it). This default matches Python ww-orig on all 13 validated NISAR
+> GUNW frames (including the A_025 river: 58 %→99.99 %, zero regression) and
+> beats SNAPHU on quality.
+>
+> `tile_size=0` (default) does **not** auto-tile. The **tiled** pipeline
+> (per-tile MCF + coarse anchor + cascade) is **opt-in and not validated** — it
+> fails on most scenes (~65–89 % vs single-tile ~99–100 %) and is selected only
+> by explicit `tile_size>=4`, `multilook>1`, or
+> `WHIRLWIND_UNWRAP_SOLVER=tiled`. Tiling's future role is to reduce **peak
+> memory** for very large frames (WIP). The `reuse`/`convex`/`sparse`/3D-closure
+> solvers are experimental research paths, not production. Solver selector:
+> `WHIRLWIND_UNWRAP_SOLVER=linear|tiled|reuse|convex` (default `linear`).
 > The synthetic baselines and the memory/parallelism analysis below remain
-> accurate for what they measure (the per-tile core).
+> accurate for what they measure (the single-tile core).
 
 ## Methodology
 
@@ -76,6 +87,14 @@ In the residue-dense regime, the cost per Dijkstra grows roughly linearly with t
 residue grid (≈ 360 ms / Dijkstra at 2048²), and the number of PD iterations grows
 slowly with residue density (14 → 31 iters going from 10K to 666K residues — about
 logarithmic).
+
+> **SSP fallback speedup.** The single-source SSP fallback (used to drain any
+> excess the bounded PD phase leaves on masked/fragmented frames) used to redo a
+> full `max_reduced_cost` rescan *per source*; that rescan was eliminated. On a
+> real masked frame this cut the validated D_077 single-tile linear unwrap to
+> **~37 s (was ~61 s)** — a 1.4–2.4× speedup on residue-heavy frames — with a
+> byte-identical optimal cost and per-component result. (Any "~160 s" figure for
+> D_077 elsewhere is stale.)
 
 ## Heavy-scene benchmark
 

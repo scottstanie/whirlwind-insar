@@ -46,9 +46,12 @@ def unwrap(
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """MCF unwrap returning ``(phase, conn_components)``.
 
-    Robust tiled pipeline + global connected components + (by default)
-    Goldstein pre-filtering. The main entry point. See the docstring in
-    ``whirlwind/__init__.py`` for parameter detail.
+    Single-tile linear MCF (ww-orig-parity) + global connected components + a
+    default-on integration-component "bridge" gauge re-level (``bridge=True``;
+    disable with ``WHIRLWIND_NO_BRIDGE=1``). Goldstein pre-filtering is OFF by
+    default (``goldstein_alpha=0``); the tiled pipeline is opt-in/unvalidated.
+    The main entry point. See the docstring in ``whirlwind/__init__.py`` for
+    parameter detail.
     """
 
 def unwrap_crlb_stack(

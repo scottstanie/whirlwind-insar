@@ -1,15 +1,24 @@
-# Tiling design
+# Tiling design (HISTORICAL)
 
-The tiled unwrap is the shipped default for large frames. **The authoritative,
-full account lives in
+> **Status (2026-06-04): HISTORICAL record of a tiling attempt.** Tiling is
+> **NOT** the default and is **NOT** validated. The shipped default of
+> `whirlwind.unwrap(...)` is the single-tile linear MCF path (`tile_size=0` does
+> **not** auto-tile — it runs single-tile linear on the whole image). The tiled
+> pipeline described below is **opt-in and experimental** (selected only by
+> `tile_size>=4`, `multilook>1`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`); it fails on
+> most scenes (~65–89 % vs single-tile ~99–100 %). Getting tiling to parity will
+> probably require **exact overlap / connected-component reconciliation across
+> tile seams**, which has not been built. The text below is preserved as a record
+> of the approach only — do not treat any of it as current/shipped behavior.
+
+**The fuller historical account lives in
 [`paper/tiling.md`](https://github.com/scottstanie/whirlwind-insar/blob/main/paper/tiling.md)**
 — why naive tiling fails, the stitch crux, the secondary-MCF and coarse-anchor
-work, and the Stage-3 warm-start dead-ends. This page is a short summary; that
-file is the source of truth.
+work, and the Stage-3 warm-start dead-ends.
 
-## What ships
+## What was attempted (historical, not shipped)
 
-`whirlwind.unwrap(...)` with `tile_size=0` auto-tiles frames larger than 512 px:
+The opt-in tiled path unwrapped frames as follows:
 
 1. **Per-tile MCF** — each overlapping tile is unwrapped independently with the
    corner-safe reuse solver, bounding peak memory to tile scale.
@@ -20,10 +29,14 @@ file is the source of truth.
    composite**, then a **gated multi-shift re-solve + seam-repair** for
    fragmented scenes (a no-op on clean ones).
 
-On a NISAR frame this matches SNAPHU 9×9 at 99.79 % K-match (0 % multi-cycle) in
-~4 s. Noisy / moderate-coherence scenes (e.g. Sentinel-1) pass `multilook=L`.
+These numbers (e.g. a NISAR frame at 99.79 % K-match, 0 % multi-cycle, in ~4 s)
+were **select-scene only** — the tiled path did not generalize across the
+validated frame set, which is why it is not the default. Noisy /
+moderate-coherence scenes (e.g. Sentinel-1) passed `multilook=L`.
 
-The planned per-region secondary MCF ("Stage 2") and warm-started full-image
-reoptimize ("Stage 3") were **superseded** by the coarse anchor + cascade — see
-`paper/tiling.md` for why, including the Stage-3 warm-start approaches that were
-prototyped and rejected.
+Within this historical attempt, the planned per-region secondary MCF
+("Stage 2") and warm-started full-image reoptimize ("Stage 3") were set aside in
+favor of the coarse anchor + cascade — see `paper/tiling.md` for why, including
+the Stage-3 warm-start approaches that were prototyped and rejected. None of this
+is the current/shipped path; a future tiling effort would likely revisit exact
+overlap / connected-component reconciliation rather than this cascade.

@@ -6,7 +6,7 @@ Whirlwind is a Bayesian minimum-cost network flow algorithm for 2D phase unwrapp
 
 > **Default architecture note (updated 2026-06-03).** The MCF + primal-dual core described in this ATBD (Sections 2–8) is correct and unchanged. The public `unwrap` entry point now **defaults to the verified single-tile linear solver** (`unwrap_linear`: ww-orig-parity Carballo cost, capacity-1 MCF, adaptive PD/SSP fallback for masked frames — §7.6.1), which matches Python `ww-orig` across the validated NISAR frame set. A **tiled** pipeline still exists (per-tile MCF → global coarse anchor → multi-scale cascade → feathered seam composite) and is selected opt-in via `multilook>1`, an explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`, but **it is NOT a validated path** — see the status note below before using it. See [`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) and [`paper/tiling.md`](paper/tiling.md).
 >
-> **Verified-vs-WIP (see §9.6).** The single-tile linear kernel is the *validated* core and the default: `unwrap_linear` is checked against the Python `ww-orig` reference (99.49 % on D_077; matches ww-orig across the masked-frame set, §9.6) and beats single-tile SNAPHU on **both** speed and accuracy (≈160 s / 99.49 % vs ≈588 s / 99.30 %). **The tiled + anchor pipeline is NOT working and NOT validated.** It produced good numbers on *select* scenes but **failed on most**, and there is **no working version at present** — it was not salvageable until ww-original quality was re-matched on the single-tile path (now done); any tiled benchmark elsewhere (e.g. "99.84 % NISAR") is from those select scenes and must not be read as a product claim. Treat §9.6 as the canonical status/benchmark table.
+> **Verified-vs-WIP (see §9.6).** The single-tile linear kernel is the *validated* core and the default: `unwrap_linear` is checked against the Python `ww-orig` reference (99.49 % on D_077; matches ww-orig across the masked-frame set, §9.6) and beats single-tile SNAPHU on **both** speed and accuracy (≈37 s / 99.49 % vs ≈588 s / 99.30 %). **The tiled + anchor pipeline is NOT working and NOT validated.** It produced good numbers on *select* scenes but **failed on most**, and there is **no working version at present** — it was not salvageable until ww-original quality was re-matched on the single-tile path (now done); any tiled benchmark elsewhere (e.g. "99.84 % NISAR") is from those select scenes and must not be read as a product claim. Treat §9.6 as the canonical status/benchmark table.
 
 ## Table of Contents
 
@@ -117,10 +117,11 @@ Residues are topological defects indicating phase inconsistency. For any continu
 
 ## 3. Algorithm Overview
 
-Whirlwind exposes a layered API. The inner kernel is a single whole-image
-minimum-cost-flow (MCF) solve; the production entry point wraps that kernel in
-an auto-tiling, robustness, and connected-component layer. This section
-describes both, and which paths are verified versus still evolving.
+Whirlwind exposes a layered API. The inner kernel — and the public default — is
+a single whole-image minimum-cost-flow (MCF) solve (`unwrap_linear`); the public
+entry point also produces connected-component labels and an opt-in tiling
+robustness layer. This section describes both, and which paths are verified
+versus still evolving.
 
 **Input (all entry points):** complex interferogram `igram`, coherence
 magnitude `corr`, number of effective looks `nlooks`, and (optionally) a
@@ -139,28 +140,30 @@ the whole image:
 [5] Integrate gradients:  ψ = integrate(φ, flow)       # NaN masked pixels
 ```
 
-The default whole-image solver is `unwrap_reuse` (`lib.rs`). Its network runs in
-PHASS *flow-reuse* mode (`Network::new_reuse_with_mask`): arcs are multi-unit
-(no capacity-1 saturation) and the Dial bucket-queue Dijkstra overrides the
-reduced cost to 0 on any arc that already carries flow, so once one wrap-line is
-laid down subsequent demands route along it for free. This fixes the capacity-1
-boundary-stacking failure that the old linear unit-capacity solver had on steep
-clean ramps; that linear solver was removed from production (#50). Masked arcs
-are **not** forbidden — they are given cost 0 so MCF can route through masked
-regions, and masked pixels are set to NaN after integration.
+The default whole-image solver is `unwrap_linear` (`lib.rs`), the verified
+single-tile capacity-1 MCF kernel: a unit-capacity network with the
+ww-orig-parity Carballo cost and `run_full_dijkstra` (8 primal-dual iterations,
+then a single-source SSP and an adaptive PD-resume fallback that re-balances
+masked frames — §7.6.1). It matches the Python `whirlwind_orig` reference across
+the validated NISAR frame set. Masked arcs are **not** forbidden — they are
+given cost 0 so MCF can route through masked regions, and masked pixels are set
+to NaN after integration.
 
-Two diagnostic single-tile variants exist:
+Two other single-tile variants exist (opt-in / non-default):
 
-* `unwrap_linear` — an exact capacity-1 replica of the Python `whirlwind_orig`
-  reference (boundary residue frame zeroed; parity costs at 100× scale;
-  `run_full_dijkstra` for 8 primal-dual iterations). This is the **verified
-  Rust/Python-parity path** and is used for validation, not production.
+* `unwrap_reuse` — a PHASS-style whole-image *flow-reuse* solver
+  (`Network::new_reuse_with_mask`): arcs are multi-unit (no capacity-1
+  saturation) and the Dial bucket-queue Dijkstra overrides the reduced cost to 0
+  on any arc that already carries flow, so once one wrap-line is laid down
+  subsequent demands route along it for free. It reaches its cost optimum (no
+  negative cycles remain) but is **experimental/research, not validated** as the
+  default; selected only by `WHIRLWIND_UNWRAP_SOLVER=reuse`.
 * `unwrap_convex` — a **research prototype** of a SNAPHU-style convex
   (quadratic-in-flow) cost (issue #65). Selected at the whole-image level only
-  by `WHIRLWIND_TILE_SOLVER=convex`; solve backend chosen by
+  by `WHIRLWIND_UNWRAP_SOLVER=convex`; solve backend chosen by
   `WHIRLWIND_CONVEX_SOLVE ∈ {pd (default), ssp, cancel}`.
 
-### 3.2 Production entry point and auto-tiling layer
+### 3.2 Public entry point and opt-in tiling layer
 
 The public unwrap (`unwrap_coherence_with_components`, exposed to Python as
 `_unwrap_native` and consumed by dolphin) returns **both** unwrapped phase and
@@ -179,17 +182,19 @@ arcs and raw arc costs, both fixed at network construction), so it is
 independent of how — or whether — phase was solved, and costs one global cost
 grid in memory (`O(pixels)`).
 
-**Auto-tiling rule** (`unwrap_coherence`): with `tile_size == 0` and
-`multilook ≤ 1`, frames larger than 512 px on either axis are tiled at
-`tile_size = 512`, `overlap = 64` (the empirically best universal size — a
-whole-image solve runs away to ≈80 % on NISAR-scale frames; larger tiles
-regress clean scenes). Frames ≤ 512 px are solved single-tile. Explicit
-`tile_size`/`tile_overlap` (or any `multilook > 1`) override this.
+**Default = single-tile, no auto-tiling** (`unwrap_coherence`): with
+`tile_size == 0` (the default) and `multilook ≤ 1`, the whole image is solved
+single-tile by the verified `unwrap_linear` kernel (§3.1) — there is **no**
+automatic switch to tiling at any frame size. The **tiled** pipeline is opt-in
+and is selected *only* by an explicit `tile_size ≥ 4`, any `multilook > 1`, or
+`WHIRLWIND_UNWRAP_SOLVER=tiled`. It is **NOT a validated path**: it fails on most
+scenes (≈65–89 % per-component match vs ≈99–100 % single-tile) and must never be
+described as the default/shipped/production path.
 
-* **Single-tile** frames go through `unwrap_reuse` (§3.1), or `unwrap_convex`
-  when `WHIRLWIND_TILE_SOLVER=convex`.
-* **Tiled** frames go through `unwrap_tiled_robust`, which is the default
-  production path and adds, on top of the per-tile reuse solves:
+* **Single-tile** frames go through `unwrap_linear` (§3.1), or `unwrap_reuse` /
+  `unwrap_convex` when `WHIRLWIND_UNWRAP_SOLVER=reuse|convex`.
+* **Tiled** frames (opt-in only) go through `unwrap_tiled_robust`, which adds,
+  on top of the per-tile reuse solves:
   1. parallel per-tile MCF solve (each tile uses the §3.1 reuse kernel);
   2. global reconciliation of per-tile integer-2π offsets via an MCF on the
      tile grid;
@@ -211,16 +216,17 @@ coherence path is still pending (issue #35).
 
 ### 3.3 Verified vs. work-in-progress
 
-The single-tile kernel of §3.1 is the validated core: `unwrap_linear` is
-checked against the Python reference, and the whole-image `unwrap_reuse`
-solve reaches its cost optimum (no negative cycles remain). The **tiled
-robustness layer of §3.2 is the production default but is an empirically tuned,
-still-evolving heuristic** — the seam reconciliation, anchor/cascade, multi-shift
-gate, and sliver healing are calibrated against benchmark scenes rather than
-proven optimal, which is why they carry environment escape hatches. Section 9.5
-lists the known limitations of this layer. The detailed mathematics of stages
-[2]–[5] follow in Sections 4–8; the tiling and stitching machinery is detailed
-in Section 9.
+The single-tile `unwrap_linear` kernel of §3.1 is both the validated core **and
+the public default**: it is checked against the Python `ww-orig` reference and
+matches it across the validated NISAR frame set. (The opt-in whole-image
+`unwrap_reuse` solver reaches its cost optimum — no negative cycles remain — but
+is experimental, not the default.) The **tiled robustness layer of §3.2 is
+opt-in and NOT validated** — an empirically tuned, still-evolving heuristic
+whose seam reconciliation, anchor/cascade, multi-shift gate, and sliver healing
+are calibrated against benchmark scenes rather than proven optimal (hence the
+environment escape hatches), and it fails on most scenes. Section 9.5 lists its
+known limitations. The detailed mathematics of stages [2]–[5] follow in
+Sections 4–8; the tiling and stitching machinery is detailed in Section 9.
 
 ---
 
@@ -380,11 +386,11 @@ Phase unwrapping is posed as a **minimum-cost flow (MCF) problem** on a rectangu
 
 ### 6.2 Residual Graph and Capacity Modes
 
-The solver operates on the **residual graph** (forward + reverse arc per direction), letting it "undo" flow on reverse arcs. The `Network` (`network.rs`) supports three capacity/cost modes, selected at construction; the production default is **reuse**, not unit-capacity:
+The solver operates on the **residual graph** (forward + reverse arc per direction), letting it "undo" flow on reverse arcs. The `Network` (`network.rs`) supports three capacity/cost modes, selected at construction; the public default (`unwrap_linear`) is **unit-capacity**:
 
-- **Unit-capacity MCF** (`Network::new` / `new_with_mask`): each forward arc has capacity 1, tracked by a per-arc saturation bit pair. Pushing a unit saturates the forward arc and opens its reverse. Used by the Python-parity diagnostic `unwrap_linear`, by connected-component growth, and by `components_only`.
-- **Flow-reuse mode** (`new_reuse_with_mask`, the default coherence/CRLB network and the default per-tile solver): arcs are **multi-unit** (signed integer `flow_count`, no saturation on push). Once an arc carries any flow, Dial overrides its reduced cost to 0 so later demands reuse the same wrap-line for free (PHASS-style). This removes the capacity-1 boundary-stacking failure on steep clean ramps.
-- **Convex mode** (`new_convex_with_mask`, SNAPHU-style): arcs are multi-unit with a **parabolic per-arc cost** (§6.4). Dial uses the *marginal* cost of one more unit rather than `cost_fwd`. Used by `unwrap_convex` and the `WHIRLWIND_TILE_SOLVER=convex` tile path.
+- **Unit-capacity MCF** (`Network::new` / `new_with_mask`): each forward arc has capacity 1, tracked by a per-arc saturation bit pair. Pushing a unit saturates the forward arc and opens its reverse. Used by the verified public default `unwrap_linear`, by connected-component growth, and by `components_only`.
+- **Flow-reuse mode** (`new_reuse_with_mask`, the network used by the opt-in `unwrap_reuse` solver and the per-tile reuse solves): arcs are **multi-unit** (signed integer `flow_count`, no saturation on push). Once an arc carries any flow, Dial overrides its reduced cost to 0 so later demands reuse the same wrap-line for free (PHASS-style). This removes the capacity-1 boundary-stacking failure on steep clean ramps.
+- **Convex mode** (`new_convex_with_mask`, SNAPHU-style): arcs are multi-unit with a **parabolic per-arc cost** (§6.4). Dial uses the *marginal* cost of one more unit rather than `cost_fwd`. Used by `unwrap_convex` and the `WHIRLWIND_UNWRAP_SOLVER=convex` path.
 
 Masked edges are encoded as a **forbidden** state (both directions saturated, never carrying flow); see §6.3.
 
@@ -393,7 +399,7 @@ Masked edges are encoded as a **forbidden** state (both directions saturated, ne
 Two distinct mechanisms exist, and which one applies depends on the entry point:
 
 - **Arc forbidding** (`forbid_masked_arcs`): when a pixel-grid mask is passed to construction, every arc crossing a pixel-edge with ≥1 invalid endpoint is pre-saturated in **both** directions (the *forbidden* state), removing it from the residual graph. Used by the CRLB-coherence, convex, conncomp, ground, and tiled paths.
-- **Cost-zeroing + post-NaN**: the default coherence solver (`unwrap_reuse`) and `unwrap_linear` deliberately pass **no mask** to construction (no arcs forbidden), rely on the cost stage to zero masked-arc costs so MCF routes through masked regions freely, then mark masked pixels `NaN` after integration. Empirically, forbidding masked arcs *isolates* residues inside masked regions and drops NISAR matching from ~99 % to ~42 %, hence the cost-zeroing default on the coherence path.
+- **Cost-zeroing + post-NaN**: the default coherence solver (`unwrap_linear`) and the opt-in `unwrap_reuse` deliberately pass **no mask** to construction (no arcs forbidden), rely on the cost stage to zero masked-arc costs so MCF routes through masked regions freely, then mark masked pixels `NaN` after integration. Empirically, forbidding masked arcs *isolates* residues inside masked regions and drops NISAR matching from ~99 % to ~42 %, hence the cost-zeroing default on the coherence path.
 
 ### 6.4 Minimum-Cost Flow Objective
 
@@ -431,8 +437,8 @@ An optional **virtual ground node** (`new_with_mask_and_ground`) connects every 
 
 The primal-dual algorithm solves the min-cost flow problem through repeated multi-source shortest-path computations. A single shared loop (`primal_dual::run_impl`) implements two completion modes:
 
-- **Early-exit mode** (`primal_dual::run`, `max_iter = 50`) — the default for the tiled solve and every production entry point (coherence, reuse, convex, conncomp, integration). Dijkstra stops as soon as all sinks are finalized.
-- **Full-completion mode** (`primal_dual::run_full_dijkstra`, `max_iter = 8`) — used only by the single-tile linear-parity paths (`unwrap_linear`, `unwrap_linear_ext_costs`). Dijkstra runs until the queue is empty, matching Python ww-orig's `dijkstra_pd` / `primal_dual(maxiter=8)`.
+- **Early-exit mode** (`primal_dual::run`, `max_iter = 50`) — used by the opt-in tiled solve, the opt-in `unwrap_reuse`/`unwrap_convex` solvers, conncomp, and integration. Dijkstra stops as soon as all sinks are finalized.
+- **Full-completion mode** (`primal_dual::run_full_dijkstra`, `max_iter = 8`) — used by the verified public default `unwrap_linear` (and `unwrap_linear_ext_costs`). Dijkstra runs until the queue is empty, matching Python ww-orig's `dijkstra_pd` / `primal_dual(maxiter=8)`.
 
 Each iteration:
 
@@ -689,7 +695,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
 - **Network construction**: *two* mechanisms (§6.3). Arc-forbidding
   (`forbid_masked_arcs`) pre-saturates both directions of masked-edge arcs —
   used by the CRLB, convex, conncomp, ground and tiled paths. The **default
-  coherence solver `unwrap_reuse` and the parity `unwrap_linear` deliberately do
+  solver `unwrap_linear` and the opt-in `unwrap_reuse` deliberately do
   NOT forbid** masked arcs; they pass `mask = None` to construction, rely on the
   cost stage to zero masked-arc costs, route freely, and NaN masked pixels after
   integration. Forbidding masked arcs *isolates* residues and drops NISAR
@@ -715,11 +721,12 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
 2. **Statistical model**: assumes the Carballo/Lee cost model fits the data, and
    an accurate effective number of looks.
 3. **Filter size**: 7×7 smoothing (Carballo's original used 5×5).
-4. **Tiled robustness layer is heuristic**: the default large-frame path
-   (`unwrap_tiled_robust`) — seam reconciliation, coarse anchor + multi-scale
-   cascade, sliver healing, gated multi-shift re-solve — is empirically tuned
-   against benchmark scenes, **not proven optimal**, and can produce invalid
-   (fast-but-wrong) results on fragmented NISAR scenes. It carries environment
+4. **Tiled robustness layer is heuristic (opt-in, not validated)**: the opt-in
+   tiled path (`unwrap_tiled_robust`) — seam reconciliation, coarse anchor +
+   multi-scale cascade, sliver healing, gated multi-shift re-solve — is
+   empirically tuned against benchmark scenes, **not proven optimal**, and can
+   produce invalid (fast-but-wrong) results on fragmented NISAR scenes. It
+   carries environment
    escape hatches (`WHIRLWIND_NO_ANCHOR`, `WHIRLWIND_NO_HEAL`). Only the
    single-tile kernel (§3.1, §9.6) is verified.
 
@@ -745,7 +752,7 @@ single-tile kernel is both faster and more accurate than single-tile SNAPHU:
 
 | Unwrapper (single tile) | Runtime | per-component match vs production |
 |---|---|---|
-| **whirlwind `unwrap_linear`** | **≈160 s** | **99.49 %** (matches Python `ww-orig`) |
+| **whirlwind `unwrap_linear`** | **≈37 s** | **99.49 %** (matches Python `ww-orig`) |
 | SNAPHU (`cost=smooth, init=mcf`) | ≈588 s | 99.30 % |
 | PHASS | ≈19.6 s | 94.7 % |
 
@@ -859,13 +866,16 @@ fallback's runtime therefore dominates, and it depends critically on the SSP
   all-deficits-popped, and augments **one** path per iteration —
   i.e. effectively a near-whole-image Dijkstra *per single unit of flow*. On the
   D_077 whole-image graph this costs ≈1472 s.
-- A **single-source** SSP (early-exit per source) routes the same flow in ≈160 s.
+- A **single-source** SSP (early-exit per source) routes the same flow far
+  faster (≈61 s before the rescan fix below; ≈37 s after it — see the next
+  block).
 
 The fast figure above is with the single-source SSP. **Dual-SSP fix
 (implemented):** the multi-source `ssp::run` is kept for the early-exit/tiled
 path (where it is fast — it is catastrophic only on large *whole-image* graphs),
 and `ssp::run_single_source` is used only by `run_full_dijkstra` (single-tile),
-restoring D_077 from ≈1472 s back to **≈160 s / 99.49 %** (verified post-fix).
+restoring D_077 from ≈1472 s back to **≈61 s / 99.49 %**, then to **≈37 s** after
+the per-source rescan elimination below (verified post-fix).
 The single-source potential update keeps reduced costs non-negative after every
 early-exit Dijkstra — popped nodes get their exact distance; unpopped nodes keep
 a zero shift, which is exactly "cap at the sink distance" since any unpopped node

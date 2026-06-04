@@ -20,6 +20,9 @@ GitHub:
 
 - [Performance](PERFORMANCE.md) — per-stage timings, scaling, the memory model,
   and mask-acceleration numbers.
-- [Tiling design](TILING_DESIGN.md) — the shipped tiled-unwrap architecture
-  (per-tile MCF + global coarse anchor + multi-scale cascade).
+- [Tiling design](TILING_DESIGN.md) — historical design notes for the
+  experimental, opt-in tiled-unwrap architecture (per-tile MCF + global coarse
+  anchor + multi-scale cascade). The shipped default is single-tile linear MCF
+  (`unwrap_linear`) plus a default-on integration-component "bridge" gauge fix;
+  tiling is not the default and is not validated (see Performance).
 - [Environment variables](ENV_VARS.md) — debug / research environment variables.

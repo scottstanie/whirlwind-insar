@@ -25,23 +25,24 @@ def _unwrap_native(
     min_size_px: int = ...,
     max_ncomps: int = ...,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
-    """Engine behind :func:`whirlwind.unwrap`: robust tiled coherence-cost
+    """Engine behind :func:`whirlwind.unwrap`: single-tile linear coherence-cost
     unwrap returning ``(phase, conn_components)``.
 
-    Prefer the Python :func:`whirlwind.unwrap` wrapper — it adds Goldstein
-    pre-filtering + the K-transfer back onto the original phase. This bare
-    native call does no filtering.
+    Prefer the Python :func:`whirlwind.unwrap` wrapper — it adds the
+    integration-component "bridge" gauge post-pass + the K-transfer back onto the
+    original phase. This bare native call does neither (and no Goldstein, which
+    is OFF by default in the wrapper too).
 
-    Phase: ``tile_size=0`` (default) AUTO-TILES large frames at 512 (overlap 64);
-    frames that fit in one 512 tile are solved whole. 512 is the empirically
-    best universal size (whole-image runs away to ~80% on NISAR, and bigger
-    tiles REGRESS clean scenes — e.g. D_074 98→81% at tile1024). Pass
-    ``tile_size`` (``2<=tile_overlap<tile_size``) to override. The base solver
-    is corner-safe REUSE (:func:`unwrap_reuse`; override ``WHIRLWIND_TILE_SOLVER``). The tiled
-    path = per-tile MCF + global coarse anchor + multi-scale cascade + bounded
-    sliver cleanup + a GATED MULTI-SHIFT re-solve and seam-repair for fragmented
-    scenes (no-op on clean ones). Fixes NISAR-GUNW A_016 (55→97%).
-    ``multilook=L`` (L>1) coherently down-looks ×L first then tiles+anchors.
+    Phase: ``tile_size=0`` (default) is single-tile linear MCF on the WHOLE frame
+    — the verified ww-orig-parity path (Carballo Lee-1994 cost, capacity-1
+    min-cost-flow, adaptive PD→SSP fallback for masked frames); matches ww-orig
+    on all 13 validated NISAR GUNW frames. The TILED pipeline is OPT-IN and NOT
+    VALIDATED (fails on most scenes, ~65-89% vs single-tile ~99-100%): select it
+    only with explicit ``tile_size>=4`` (``2<=tile_overlap<tile_size``),
+    ``multilook>1``, or ``WHIRLWIND_UNWRAP_SOLVER=tiled``. ``WHIRLWIND_UNWRAP_SOLVER``
+    = ``linear|tiled|reuse|convex`` (default ``linear``); reuse/convex are
+    experimental/research, not production. ``multilook=L`` (L>1) coherently
+    down-looks ×L first and routes through the opt-in tiled path.
 
     Components: grown GLOBALLY from the Carballo cost grid, independent of the
     (tiled) phase solve — a pixel edge is a cut when an underlying arc is
@@ -57,7 +58,9 @@ def unwrap_reuse(
     nlooks: float = ...,
     mask: NDArray[np.bool_] | None = ...,
 ) -> NDArray[np.float32]:
-    """PHASS-style flow-reuse solver — the default whole-image tile solver.
+    """PHASS-style flow-reuse solver — experimental/research, NOT the default
+    (the public ``unwrap`` default is single-tile linear; reuse is opt-in via
+    ``WHIRLWIND_UNWRAP_SOLVER=reuse``).
 
     Same Carballo coherence cost as :func:`whirlwind.unwrap`, but arcs carry
     multiple units of flow at zero marginal cost after the first push (the

@@ -2,7 +2,9 @@
 
 isce3's **PHASS** single-tile unwrap runs ~2–4× faster than whirlwind's
 single-tile linear MCF (e.g. D_077 ≈ 20 s vs ≈ 60 s, before the fix below). This
-note explains the difference and the speed win it led to.
+note explains the difference and the speed win it led to. (Note: a tiled or
+reoptimize warm-start can cut runtime but **not** full-frame memory — the final
+single-tile solve still allocates the whole-image network.)
 
 ## It is an algorithm-class difference — but PHASS is *not* "no flow"
 

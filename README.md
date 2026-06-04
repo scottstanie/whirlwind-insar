@@ -10,19 +10,27 @@ Two entry points, sharing the same minimum-cost-flow core:
 - **`whirlwind.unwrap(igram, corr, nlooks, mask=None, *, multilook=1, tile_size=0, tile_overlap=0, goldstein_alpha=0.0) -> (unwrapped, conncomp)`**
   — classical 2D unwrap with the Carballo/SNAPHU-style coherence cost,
   returning the unwrapped phase **and** SNAPHU-style connected-component
-  labels from a single solve. The real-world default is the **robust tiled**
-  path (per-tile MCF + global coarse anchor + multi-scale cascade + a gated
-  multi-shift re-solve and seam-repair for fragmented scenes): it reaches
-  SNAPHU quality, stays memory-bounded, and avoids the whole-image runaway.
-  `tile_size=0` (default) auto-tiles frames larger than 512 px; components are
-  grown globally and are independent of the (tiled) phase solve. On a NISAR
-  frame it matches SNAPHU 9×9 at **99.79% K-match** (cc=1 mainland, 0%
-  multi-cycle) in ~4 s vs SNAPHU's 17 min. For noisy / moderate-coherence
-  scenes (e.g. Sentinel-1) pass **`multilook=8`**: a coherent down-look first
-  suppresses the noise the linear cost can't route through — Atlanta S-1 then
-  unwraps at 97.7% (matching SNAPHU's 97.9%) where the fine solve alone gets
-  26%. Goldstein pre-filtering is available via `goldstein_alpha>0` (off by
-  default; the on-vs-off trade-off is under evaluation).
+  labels from a single solve. The default is the **verified single-tile
+  linear MCF** path (`unwrap_linear`: ww-orig-parity Carballo Lee-1994
+  coherence cost, capacity-1 min-cost flow, adaptive primal-dual → SSP
+  fallback for masked frames) — it matches Python ww-orig on all 13 validated
+  NISAR GUNW frames and beats PHASS on quality. It then runs two fast Python
+  post-passes: SNAPHU-style connected components, and a default-on
+  integration-component gauge "bridge" (`bridge=True`) that re-levels
+  mask-disconnected regions to a coarse ×8 anchor (fixes the A_025 river from
+  58% to 99.99% with zero regression; disable with `WHIRLWIND_NO_BRIDGE=1`).
+  `tile_size=0` (default) does **not** auto-tile — it is single-tile linear on
+  the whole image. The tiled pipeline is **opt-in and not validated** (fails
+  on most scenes, ~65–89% vs single-tile ~99–100%) and is selected only by an
+  explicit `tile_size>=4`, `multilook>1`, or
+  `WHIRLWIND_UNWRAP_SOLVER=tiled`. For noisy / moderate-coherence scenes
+  (e.g. Sentinel-1) pass **`multilook=8`**: a coherent down-look first
+  suppresses the noise the linear cost can't route through. Goldstein
+  pre-filtering is off by default (`goldstein_alpha=0`); enable via
+  `goldstein_alpha>0` (the on-vs-off trade-off is under evaluation).
+  The solver is selectable via `WHIRLWIND_UNWRAP_SOLVER=linear|tiled|reuse|convex`
+  (default `linear`); `reuse` (PHASS-style whole-image), `convex`, `sparse`,
+  and 3D-closure are experimental/research, not production.
 - **`whirlwind.unwrap_crlb(igram, variance, mask=None, tile_size=…)`** —
   CRLB-weighted unwrap for phase-linked interferograms (Dolphin / EVD /
   EMI). The per-pixel CRLB phase variance the phase-linker emits is a
@@ -134,10 +142,12 @@ cargo run --release -p whirlwind-cli -- unwrap \
 import whirlwind as ww
 
 # igram: complex64 (m, n); corr: float32 (m, n) in [0, 1]; mask optional bool.
-# Returns (unwrapped_phase, conncomp). The robust tiled path is the default
-# (per-tile MCF + global anchor + multi-scale cascade + gated multi-shift /
-# seam-repair); tile_size=0 auto-tiles frames > 512 px. Components are grown
-# globally from the same coherence cost. Memory-bounded; no whole-image runaway.
+# Returns (unwrapped_phase, conncomp). The default is the verified single-tile
+# linear MCF path (ww-orig-parity Carballo Lee-1994 cost, capacity-1 min-cost
+# flow, adaptive PD->SSP fallback) plus two fast post-passes: SNAPHU-style
+# connected components and a default-on gauge "bridge" that re-levels
+# mask-disconnected regions to a coarse x8 anchor (WHIRLWIND_NO_BRIDGE=1 off).
+# tile_size=0 (default) does NOT auto-tile; tiling is opt-in and not validated.
 unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)  # float32, uint32
 
 # Noisy / moderate-coherence scene (e.g. Sentinel-1)? Multilook-first:
@@ -184,13 +194,17 @@ per-IG RMS of 2.31 rad (anchored at Dolphin's own reference pixel). See
 full table + figures and `scripts/compare_to_dolphin_unwrapped.py` for
 the validator that produced the numbers.
 
-On a NISAR frame (6811 × 6912) the tiled + anchor + cascade path matches
-SNAPHU 9×9 at **99.79 % K-match** — per-pixel integer-cycle (2π) agreement
-on SNAPHU's cc==1 mainland, with **0 %** multi-cycle (|ΔK|≥2) error — in
-**3.9 s** vs SNAPHU's ~17 min, no Goldstein. On the noisy Atlanta Sentinel-1
-OPERA frame, `multilook=8` reaches **97.7 %** (SNAPHU/OPERA = 97.9 %). See
-[`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) for the
-method, figures, and full progression.
+On the 13 validated NISAR GUNW frames the default single-tile linear MCF path
+(`unwrap_linear`) matches Python ww-orig and beats PHASS on quality (PHASS is
+faster but much more heuristic — hard-cut flow + flood-fill; see
+[`PHASS_SPEED.md`](docs/PHASS_SPEED.md)). The default-on gauge bridge fixes the
+A_025 river from 58% to 99.99% with zero regression. For the noisy Atlanta
+Sentinel-1 OPERA frame, `multilook=8` is the lever (coherent averaging
+suppresses the noise the linear cost can't route through). The older
+tiled + anchor + cascade reports (e.g.
+[`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md)) are
+**historical**: those select-scene 99.xx% / 97.7% numbers were measured on the
+opt-in, unvalidated tiled path and are **not** the shipped default.
 
 The full pipeline is reproducible end-to-end on any Dolphin output
 directory:
@@ -219,8 +233,8 @@ release build):
 
 Single-IG throughput is **~50–105 Mpx/s** on clean / lightly-noisy data
 (cost-build-bound) and **~1 Mpx/s** on uniform-noisy residue-dense
-scenes (Dijkstra-bound). Memory ~115 bytes/pixel working set — a 100 Mpx
-Sentinel-1 IW frame fits in ~11.5 GiB single-piece, or tile to cap. See
+scenes (Dijkstra-bound). Memory is linear in pixels — budget ~0.2 GB per
+megapixel (see the Memory note below). See
 [`PERFORMANCE.md`](docs/PERFORMANCE.md) for the full per-stage
 timing breakdown and the discussion of why we don't ship the
 rayon-parallel Dijkstra backend.
@@ -237,6 +251,23 @@ residues at every mask boundary that dominate the MCF problem.
 On a 4096² γ=0.7 land + 35 % blob-water-mask scene this is **0.54 s with
 mask vs 75 s without (139×)**. See [`PERFORMANCE.md`](docs/PERFORMANCE.md) for details.
 
+### Memory
+
+Peak RAM is **linear in pixel count** — the single-tile solve allocates a fixed
+set of per-pixel / per-arc arrays and nothing that grows with scene content: the
+residue-MCF network (per-node `excess`/`potential`, per-arc `cost`/`flow`/
+saturation), the Dijkstra/Dial working state (`dist`, predecessors, bucket
+queue), and the cost grids. So there is a fixed bytes-per-pixel budget.
+
+**Practical rule: budget ≈ 0.2 GB of RAM per megapixel** (≈ 200 bytes/pixel peak
+RSS). The validated NISAR bench peaks at ~3.5 GB on a 4176 × 4257 (17.8 Mpx)
+frame; a 4400 × 4400 (19.4 Mpx) frame is ~3.8 GB. The core solver arrays alone
+are ~88 bytes/pixel (an ~1.7 GB floor at 19.4 Mpx); observed RSS runs ~2× that
+from allocator / rayon thread-local / `ndarray` capacity reserves, so plan
+against the ~0.2 GB/Mpx figure. Memory is purely image-size-bound — **tiling is
+the only lever that lowers peak RAM** (and is still experimental). See
+[`PERFORMANCE.md`](docs/PERFORMANCE.md) for the per-array breakdown.
+
 ## Status
 
 | Component | State |
@@ -245,7 +276,8 @@ mask vs 75 s without (139×)**. See [`PERFORMANCE.md`](docs/PERFORMANCE.md) for 
 | 2D MCF unwrap (CRLB cost) | done |
 | Mask support, end-to-end | done |
 | Tiled MCF + overlap-median stitch | done (`unwrap_crlb_tiled`) |
-| Tiled coherence path + global coarse anchor + multi-scale cascade | **done, DEFAULT** (`unwrap(…, tile_size, tile_overlap)`, e24e0ed) |
+| Single-tile linear MCF (coherence cost) + gauge bridge | **done, DEFAULT** (`unwrap(…)` / `unwrap_linear`; bridge default-on, `WHIRLWIND_NO_BRIDGE=1` off) |
+| Tiled coherence path + global coarse anchor + multi-scale cascade | opt-in, **not validated** (~65–89% vs single-tile ~99–100%; `tile_size>=4` / `multilook>1` / `WHIRLWIND_UNWRAP_SOLVER=tiled`) |
 | Feathered seam composite + `multilook=` for noisy scenes | done (8aa7a1d) |
 | Virtual ground-node MCF | done (`unwrap_crlb_grounded`) |
 | Temporal closure correction (tree projection) | done, off by default — see [ATBD-3d §10.2](ATBD-3d.md#102-closure-correction-now-hurts-more-than-it-helps) |

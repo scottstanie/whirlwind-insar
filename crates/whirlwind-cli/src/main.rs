@@ -262,8 +262,9 @@ fn cmd_unwrap(
             // keep the conncomp routine from over-fragmenting.
             max_ncomps: 1024,
         };
-        // Robust tiled phase + global (solve-free) conncomp; tile_size=0
-        // auto-tiles frames > 512 px, multilook=1.
+        // Single-tile linear MCF phase + global (solve-free) conncomp;
+        // tile_size=0 means whole-image single-tile (does NOT auto-tile),
+        // multilook=1. Tiling is opt-in and not the default.
         let (u, c) = whirlwind_core::unwrap_coherence_with_components(
             igram_for_unwrap.view(),
             co.view(),

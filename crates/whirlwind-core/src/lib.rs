@@ -52,16 +52,6 @@ pub enum UnwrapError {
     TooSmall((usize, usize)),
 }
 
-/// Robust coherence-cost phase unwrap with auto-tiling.
-///
-/// `tile_size == 0` (and `multilook <= 1`) auto-tiles frames larger than
-/// 512 px at 512 / overlap-64 — the empirically best universal size (a
-/// whole-image solve runs away to ~80% on NISAR; bigger tiles regress clean
-/// scenes). Otherwise the explicit tile params are honored. Tiled frames go
-/// through [`tile::unwrap_tiled_robust`] (gated multi-shift + global anchor +
-/// multi-scale cascade + seam-repair); frames that fit one tile use the
-/// corner-safe reuse solver. This is the phase engine behind the public
-/// `unwrap`.
 /// Whole-image default phase kernel, read once from `WHIRLWIND_UNWRAP_SOLVER`
 /// ∈ {`linear` (default), `tiled`, `reuse`, `convex`}.
 ///
@@ -321,8 +311,8 @@ pub fn unwrap_convex(
 /// Uses standard unit-capacity arcs (no reuse, no multi-unit) and only 8
 /// primal-dual iterations (matching `primal_dual(network, maxiter=8)` in
 /// Python). Residues are computed from the full phase array (not mask-gated),
-/// matching `ww_orig._unwrap.unwrap`. This is a diagnostic function to
-/// validate Rust/Python parity; use [`unwrap_reuse`] for production.
+/// matching `ww_orig._unwrap.unwrap`. This is the verified default kernel; use
+/// the public `whirlwind.unwrap` for conncomp + bridge.
 pub fn unwrap_linear(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
