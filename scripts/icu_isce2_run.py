@@ -114,3 +114,7 @@ pc_strict = percomp_match(icu_unw, valid_strict)
 pc_done = percomp_match(icu_unw, valid_done)
 print(f"{frame}: icu(isce2) {dt:6.1f}s  per-comp(strict mask)={pc_strict*100:5.1f}%  "
       f"per-comp(ICU-connected only)={pc_done*100:5.1f}%  coverage={cov*100:4.1f}%", flush=True)
+# Sweep-compatible line: score ICU like the other engines (per-comp over the
+# pixels it actually connected — gaps excluded, as for PHASS), + coverage note.
+print(f"{frame}: icu        {dt:6.1f}s  per-comp-match-vs-prod={pc_done*100:5.1f}%  "
+      f"ncc=0  shape={prod_unw.shape}  coverage={cov*100:.0f}%", flush=True)

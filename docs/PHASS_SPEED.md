@@ -28,11 +28,15 @@ impact:
    the factor I can least precisely quantify without profiling SNAPHU's internals;
    the implementation and configuration factors below are the surer bets.)*
 
-2. **Parallel Rust vs single-threaded C.** whirlwind builds the cost grid, residues
-   and connected components with rayon across all cores, and solves with a tuned
-   Dial-bucket Dijkstra MCF (plus the recent per-source-rescan fix, ~1.4–2.4×).
-   SNAPHU v2 is mature, portable, largely single-threaded C — on an 8-core machine
-   that alone is a multiple.
+2. **An efficient *serial* solver — not parallelism.** It is tempting to credit
+   rayon, but measured (`scripts/rayon_bench.py`): 1 thread vs 12 is only
+   **~1.2–1.3×** (D_077 43.6 → 37.4 s), because the PD/SSP solver is largely serial
+   and rayon only parallelizes the O(mn) cost/residue/conncomp build. The telling
+   number: **whirlwind on a single thread is still ~13× faster than single-tile
+   SNAPHU.** So the gap is the *solver and cost model*, not core count — a lean
+   per-arc linear cost and a tuned Dial-bucket Dijkstra MCF (with the recent
+   per-source-rescan fix, ~1.4–2.4×). SNAPHU v2 is mature, portable C; parallelism
+   is not where the difference comes from.
 
 3. **Single-tile is SNAPHU's *slow* configuration.** SNAPHU's operational strength
    is **tiling** — bounded per-tile graphs plus a single-tile reoptimize pass — and

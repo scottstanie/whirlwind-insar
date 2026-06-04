@@ -26,16 +26,34 @@ with open(CSV) as f:
             continue
 
 frames = sorted(pc)
-engines = [("whirlwind", "#1f77b4"), ("wworig", "#7f7f7f"), ("phass", "#d62728")]
-labels = {"whirlwind": "whirlwind (default)", "wworig": "ww-orig (ref)", "phass": "PHASS"}
+# Recognizable / published engines on the headline figure. ww-orig stays in
+# results.csv (for readers who know it) but is off the figure by default — set
+# WW_ORIG=1 to include it.
+import os as _os
+engines = [
+    ("whirlwind", "#1f77b4"),
+    ("snaphu", "#2ca02c"),       # SNAPHU single-tile
+    ("snaphu9x9", "#98df8a"),    # SNAPHU 9x9 tiles + reoptimize (production path)
+    ("phass", "#d62728"),
+    ("icu", "#9467bd"),          # isce2 mroipac ICU
+]
+if _os.environ.get("WW_ORIG") == "1":
+    engines.append(("wworig", "#7f7f7f"))
+labels = {"whirlwind": "whirlwind (default)", "snaphu": "SNAPHU (1 tile)",
+          "snaphu9x9": "SNAPHU (9×9+reopt)", "phass": "PHASS", "icu": "ICU (isce2)",
+          "wworig": "ww-orig"}
+# Drop engines with no data yet.
+engines = [(e, c) for (e, c) in engines if any(e in pc[fr] for fr in frames)]
+ne = len(engines)
 x = np.arange(len(frames))
-w = 0.26
+w = 0.8 / max(ne, 1)
 
 fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(13, 8), height_ratios=[2, 1])
 
+off = (np.arange(ne) - (ne - 1) / 2) * w
 for k, (eng, color) in enumerate(engines):
     vals = [pc[fr].get(eng, np.nan) for fr in frames]
-    ax0.bar(x + (k - 1) * w, vals, w, label=labels[eng], color=color)
+    ax0.bar(x + off[k], vals, w, label=labels[eng], color=color)
 ax0.set_ylabel("per-component match vs SNAPHU (%)")
 ax0.set_ylim(0, 105)
 ax0.set_xticks(x); ax0.set_xticklabels(frames, rotation=45, ha="right")

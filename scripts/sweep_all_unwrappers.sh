@@ -16,6 +16,7 @@ OUT=${OUT:-/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_sweep}
 NLOOKS=${NLOOKS:-16}
 MINIFORGE=/Users/staniewi/miniforge3/bin/python
 ISCE3PY=/Users/staniewi/miniforge3/envs/mapping-312/bin/python
+ISCE2PY=/Users/staniewi/miniforge3/envs/test-isce2/bin/python
 REPO=/Users/staniewi/repos/whirlwind-insar
 mkdir -p "$OUT"
 CSV="$OUT/results.csv"
@@ -56,6 +57,16 @@ for h5 in "$H5DIR"/*.h5; do
   run_one "$frame" whirlwind "$MINIFORGE" scripts/run_native_one.py "$h5" whirlwind
   run_one "$frame" wworig    "$MINIFORGE" scripts/run_native_one.py "$h5" wworig
   run_one "$frame" phass     "$ISCE3PY"  scripts/tophu_compare.py --local-h5 "$h5" --nlooks "$NLOOKS" --unwrappers phass
+  # Single-tile SNAPHU is slow (~10 min/frame); opt-in with SNAPHU=1 to record
+  # real per-frame runtimes (per-comp is its self-vs-production-snaphu match).
+  if [[ "${SNAPHU:-0}" == "1" ]]; then
+    run_one "$frame" snaphu     "$MINIFORGE" scripts/snaphu_one.py "$h5" 1
+    run_one "$frame" snaphu9x9  "$MINIFORGE" scripts/snaphu_one.py "$h5" 9
+  fi
+  # isce2 mroipac ICU (the fast published classic) — opt-in with ICU2=1.
+  if [[ "${ICU2:-0}" == "1" ]]; then
+    run_one "$frame" icu        "$ISCE2PY"  scripts/icu_isce2_run.py "$frame"
+  fi
   # ICU is ~35x slower (~9 min on the EASY frame); only run it on a representative
   # subset (`ICU_FRAMES`) rather than all 13 — set ICU_FRAMES="" to skip entirely.
   if [[ " ${ICU_FRAMES:-A_013 D_074} " == *" $frame "* ]]; then
