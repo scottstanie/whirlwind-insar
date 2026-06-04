@@ -7,6 +7,7 @@ Usage: python scripts/snaphu_one.py <h5path>   (base miniforge3 env: has snaphu 
 Wrap in `/usr/bin/time -l` for peak RSS.
 """
 import sys
+import os
 import re
 import time
 
@@ -31,7 +32,10 @@ coh_in = np.where(mask, np.clip(np.nan_to_num(coh), 0, 1), 0.0).astype(np.float3
 # `not single_tile`), so the 1-tile run is a clean single pass; at 9x9 it is
 # SNAPHU's production path (tiled solve + a whole-image reoptimize pass).
 overlap = 0 if ntiles == 1 else 200
-nproc = 1  # serial tiles, for a fair single-process timing vs whirlwind
+# Single-tile is inherently one graph (1 core). The tiled PRODUCTION path
+# parallelizes tiles, so give it the cores it would actually use (whirlwind itself
+# runs 12 threads) — handicapping SNAPHU's production config would be unfair.
+nproc = 1 if ntiles == 1 else (os.cpu_count() or 8)
 t0 = time.perf_counter()
 unw, cc = snaphu.unwrap(
     ig, coh_in, nlooks=16.0, cost="smooth", init="mcf", mask=mask,
