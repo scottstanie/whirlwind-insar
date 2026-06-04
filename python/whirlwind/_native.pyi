@@ -80,12 +80,13 @@ def unwrap_crlb(
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """CRLB-weighted unwrap (phase-linked IGs) → ``(phase, conn_components)``.
 
-    The phase-linked twin of :func:`whirlwind.unwrap`. Phase uses the robust
-    tiled CRLB pipeline (``tile_size=0`` auto-tiles frames > 512 px + a gated
-    multi-shift winding fix, gated on a pseudo-coherence derived from the
-    variance); components are grown globally from the CRLB cost grid. The global
-    anchor + multi-scale cascade of the coherence path are not yet ported to the
-    CRLB tiler (issue #35).
+    The phase-linked twin of :func:`whirlwind.unwrap`. **EXPERIMENTAL / WIP — not
+    validated.** This CRLB path rides the same TILED pipeline that was never
+    brought to useful results (neither the coherence nor the CRLB tiling was
+    validated): ``tile_size=0`` tiles frames > 512 px + a gated multi-shift
+    winding fix on a variance-derived pseudo-coherence; components are grown
+    globally from the CRLB cost grid. A verified single-tile CRLB path (reusing
+    the coherence default kernel) is future work (issue #35).
     """
 
 def unwrap_crlb_grounded(

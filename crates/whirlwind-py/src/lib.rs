@@ -125,10 +125,12 @@ fn simulate_ifg<'py>(
 /// CRLB-weighted unwrap returning ``(unwrapped_phase, conn_components)`` — the
 /// phase-linked (Dolphin/EVD/EMI) twin of :func:`unwrap`.
 ///
-/// Phase uses the robust tiled CRLB pipeline: per-tile CRLB solve + global
-/// coarse anchor + multi-scale cascade + gated multi-shift winding fix (the
-/// same machinery as :func:`unwrap`, #35). Components are grown globally from
-/// the CRLB cost grid, independent of the solve.
+/// **EXPERIMENTAL / WIP — not validated.** Phase uses the tiled CRLB pipeline
+/// (per-tile CRLB solve + coarse anchor + cascade + gated multi-shift winding
+/// fix) — the same tiling that was mid-implementation and never brought to useful
+/// results for either coherence or CRLB. Components are grown globally from the
+/// CRLB cost grid, independent of the solve. A verified single-tile CRLB path is
+/// future work (#35).
 ///
 /// * ``igram`` — complex64, shape (m, n).
 /// * ``variance`` — float32 σ²_IG = σ²_a + σ²_b in rad², shape (m, n).

@@ -529,14 +529,16 @@ pub fn crlb_components_only(
     Ok(conncomp::grow_components(&graph, &net, mask, &params))
 }
 
-/// Robust CRLB-cost unwrap returning `(phase, conn_components)` — the engine
-/// behind the public `unwrap_crlb`.
+/// CRLB-cost unwrap returning `(phase, conn_components)` — the engine behind the
+/// public `unwrap_crlb`.
 ///
-/// Phase uses [`tile::unwrap_crlb_tiled_robust`] (auto-tile + gated multi-shift
-/// winding fix); components are grown globally and solve-free
-/// ([`crlb_components_only`]). `tile_size == 0` auto-tiles frames larger than
-/// 512 px. (Anchor + cascade parity with the coherence path is pending — see
-/// issue #35.)
+/// **EXPERIMENTAL / WIP — NOT validated.** Phase uses the tiled CRLB pipeline
+/// [`tile::unwrap_crlb_tiled_robust`] (`tile_size == 0` tiles frames larger than
+/// 512 px + a gated multi-shift winding fix); components are grown globally and
+/// solve-free ([`crlb_components_only`]). This tiling was mid-implementation and
+/// never brought to useful results — the SAME WIP status as the coherence tiled
+/// path; neither was validated. Porting the CRLB path to the verified single-tile
+/// kernel (the coherence default) is future work — see issue #35.
 pub fn unwrap_crlb_robust_with_components(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,

@@ -273,12 +273,12 @@ the only lever that lowers peak RAM** (and is still experimental). See
 | Component | State |
 |---|---|
 | 2D MCF unwrap (coherence cost) | done |
-| 2D MCF unwrap (CRLB cost) | done |
+| 2D MCF unwrap (CRLB cost) | **experimental** — tiled-only, never validated |
 | Mask support, end-to-end | done |
-| Tiled MCF + overlap-median stitch | done (`unwrap_crlb_tiled`) |
+| Tiled MCF + overlap-median stitch | **experimental, never validated** (`unwrap_crlb_tiled`; tiling never reached useful results for coherence *or* CRLB) |
 | Single-tile linear MCF (coherence cost) + gauge bridge | **done, DEFAULT** (`unwrap(…)` / `unwrap_linear`; bridge default-on, `WHIRLWIND_NO_BRIDGE=1` off) |
 | Tiled coherence path + global coarse anchor + multi-scale cascade | opt-in, **not validated** (~65–89% vs single-tile ~99–100%; `tile_size>=4` / `multilook>1` / `WHIRLWIND_UNWRAP_SOLVER=tiled`) |
-| Feathered seam composite + `multilook=` for noisy scenes | done (8aa7a1d) |
+| Feathered seam composite + `multilook=` for noisy scenes | experimental (part of the opt-in, unvalidated tiled path) |
 | Virtual ground-node MCF | done (`unwrap_crlb_grounded`) |
 | Temporal closure correction (tree projection) | done, off by default — see [ATBD-3d §10.2](ATBD-3d.md#102-closure-correction-now-hurts-more-than-it-helps) |
 | Per-pixel quality map from temporal triangles | done (`quality_triangles`) |
