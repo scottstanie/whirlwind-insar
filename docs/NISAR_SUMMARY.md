@@ -18,11 +18,13 @@ corr, nlooks, mask)`; it is wired into dolphin and used by default there.
   GUNW frames**, and **beats it on the one hard frame** (A_025's low-coherence
   river: **58 → 99.99 %** via the bridge, vs ww-orig's 70 %). Beats isce3 **PHASS**
   on quality on every frame, often by a lot (D_075 88 vs 48, A_030 100 vs 75).
-- **Speed:** ~12–40 s/frame — **~15–45× faster than single-tile SNAPHU** (~590 s),
-  ~1.5–2× faster than the Python reference. (PHASS is ~2–4× faster than whirlwind
-  but much more heuristic / lower quality.)
-- **Memory:** linear in pixels, **~0.2 GB per megapixel** (~3.5 GB per NISAR
-  frame); tiling is the only lever that lowers it (and is still experimental).
+- **Speed:** ~14–41 s/frame — **~15–80× faster than single-tile SNAPHU**
+  (465–1242 s) and **~3–5× faster than SNAPHU's *production* 9×9-tiled + reoptimize
+  path** (90–110 s, given the same core count). ~1.5–3× faster than the Python
+  reference. (PHASS is ~2–4× faster but lower quality; isce2 ICU is ~3–9× slower.)
+- **Memory:** linear in pixels, **~0.2 GB per megapixel** (~3–4 GB per NISAR frame)
+  — **about half single-tile SNAPHU's ~7–8 GB**, and on par with SNAPHU-9×9. Tiling
+  is the only lever that lowers it further (still experimental).
 - **Match metric:** per-connected-component 2π-ambiguity agreement with the
   production GUNW unwrap (which *is* SNAPHU), median-aligned per component.
 
@@ -51,15 +53,23 @@ default-on bridge). *(Table from `scripts/sweep_all_unwrappers.sh` →
 
 ![13-frame NISAR GUNW comparison](figures/nisar_summary.png)
 
-Runtimes (this laptop): whirlwind **14–41 s**, ww-orig 46–122 s (so ~1.5–3×
-faster), PHASS 5.5–23 s, SNAPHU ≈ 590 s. Peak RSS: whirlwind **~2.8–4.0 GB**,
-ww-orig ~2.5–4.8 GB, PHASS ~1.7–2.4 GB.
+Runtimes (this laptop): whirlwind **14–41 s**, ww-orig 46–122 s, PHASS 5.5–23 s,
+**SNAPHU single-tile 465–1242 s**, **SNAPHU 9×9 + reoptimize 90–110 s** (its
+production path, same core count), isce2 ICU 109–204 s. Peak RSS: whirlwind
+**~3–4 GB**, **SNAPHU single-tile ~7–8 GB**, SNAPHU-9×9 ~3–3.8 GB, PHASS ~1.7–2.4 GB,
+ICU ~1.5–2.8 GB. Full per-frame numbers (5 engines × quality/runtime/memory) are in
+[`nisar_4way_results.csv`](nisar_4way_results.csv); see the 3-panel figure above.
 
-**Reading it:** whirlwind ≥ ww-orig on every frame and strictly beats it on A_025.
-D_075 (88 %) is a genuinely hard scene where ww-orig (88 %) and PHASS (48 %) also
-fall short of SNAPHU — it is *not* a whirlwind-specific failure. SNAPHU is the
-reference (100 % self-match) at ~590 s/frame single-tile; the fast isce2 *mroipac*
-ICU is a useful classic comparison (100 % on clean frames, ~73 % on A_025, ~2 min).
+**Reading it:** whirlwind matches ww-orig **and SNAPHU** on every frame, and
+strictly beats ww-orig on A_025. D_075 (88 %) is a genuinely hard scene where
+ww-orig (88 %) and PHASS (48 %) also miss SNAPHU — not a whirlwind-specific failure.
+The headline: whirlwind reaches **SNAPHU quality at ~3–5× faster than even SNAPHU's
+tiled *production* path, and ~half the memory of single-tile SNAPHU.**
+**ICU caveat:** its per-comp is scored only on the pixels it actually connects
+(gaps excluded, same as PHASS); ICU leaves low-coherence land *unconnected*
+(e.g. D_077 at ~81 % coverage), so a strong ICU bar can mask a coverage gap, whereas
+whirlwind's MCF fills the frame. (ww-orig, the unpublished Python reference, is in
+the CSV but off the figure.)
 
 ## The A_025 river — bridging
 

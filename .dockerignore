@@ -1,0 +1,15 @@
+# keep the build context (and image) small + the build cache stable
+target/
+.git/
+.venv/
+**/.venv/
+**/__pycache__/
+*.whl
+*.pyc
+.claude/
+.mypy_cache/
+.pytest_cache/
+docs/figures/*.png
+*.png
+*.npz
+2026-*-opus-*.txt
