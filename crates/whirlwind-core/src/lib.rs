@@ -359,6 +359,10 @@ pub fn unwrap_linear(
     let costs = cost::compute_carballo_costs_parity(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new(&graph, residues.view(), &costs);
+    // The network has copied both into its own buffers; free them now (~1.5 i32
+    // arc/node vectors) so they don't sit alive through the Dijkstra peak.
+    drop(costs);
+    drop(residues);
     // Use full-completion Dijkstra to match Python ww-orig's `dijkstra_pd`
     // which runs `while (!dijkstra.done())`. Early-exit Dijkstra leaves
     // unpopped nodes with conservative d_max potentials instead of exact

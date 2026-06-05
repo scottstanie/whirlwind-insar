@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.8,<2.0"]
+requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
@@ -10,8 +10,9 @@ dynamic = ["version"]
 description = "Rust-backed 2D phase unwrapper for InSAR (`import whirlwind`)"
 requires-python = ">=3.11"
 authors = [{ name = "Scott Staniewicz", email = "scott.stanie@utexas.edu" }]
-license = "MIT"
-license-files = ["LICENSE"]
+# Classic table form so both older (<1.8) and newer maturin accept it; the SPDX
+# string + `license-files` array (PEP 639) needs maturin >=1.8.
+license = { file = "LICENSE" }
 dependencies = ["numpy>=1.21"]
 
 [tool.maturin]
