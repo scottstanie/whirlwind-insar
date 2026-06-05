@@ -47,7 +47,7 @@ import os as _os
 engines = [
     ("whirlwind", "#1f77b4"),
     ("snaphu", "#2ca02c"),  # SNAPHU single-tile
-    ("snaphu9x9", "#98df8a"),  # SNAPHU 9x9 tiles + reoptimize (production path)
+    ("snaphu3x3", "#98df8a"),  # SNAPHU 3x3 tiles + reoptimize (9 tiles, all parallel)
     ("phass", "#d62728"),
     ("icu", "#9467bd"),  # isce2 mroipac ICU
 ]
@@ -56,7 +56,7 @@ if _os.environ.get("WW_ORIG") == "1":
 labels = {
     "whirlwind": "whirlwind (default)",
     "snaphu": "SNAPHU (1 tile)",
-    "snaphu9x9": "SNAPHU (9x9+reopt)",
+    "snaphu3x3": "SNAPHU (3x3+reopt)",
     "phass": "PHASS",
     "icu": "ICU (isce2)",
     "wworig": "ww-orig",

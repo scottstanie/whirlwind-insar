@@ -8,8 +8,8 @@ The comparison uses 13 HH NISAR GUNW frames with `nlooks=16`. Runtimes and memor
 
 - Whirlwind agrees with the production SNAPHU unwrap on at least 98.8 percent of pixels on 12 of 13 frames (99 percent or better on 11 of them).
 - The remaining frame, D_075, is difficult for every method in this sweep; Whirlwind agrees with production SNAPHU on 88.2 percent of pixels there, while PHASS agrees on 48.4 percent.
-- Runtime is 14-41 seconds per frame for Whirlwind, compared with 465-1242 seconds for single-tile SNAPHU and 90-110 seconds for SNAPHU 9x9 tiled plus reoptimization.
-- Peak memory is about 3-4 GB per NISAR frame for Whirlwind, compared with about 8 GB for single-tile SNAPHU and about 4 GB for the 9x9 SNAPHU configuration here. SNAPHU's tiled peak is not intrinsic: it scales with how many tiles unwrap concurrently (`nproc`), so a coarser tiling can use far more (see the note under the table).
+- Runtime is 14-41 seconds per frame for Whirlwind, compared with 465-1242 seconds for single-tile SNAPHU and about 100-200 seconds for SNAPHU 3x3 tiled (9 tiles in parallel) plus reoptimization.
+- Peak memory is about 3-4 GB per NISAR frame for Whirlwind, compared with about 8 GB for single-tile SNAPHU and about 6-13 GB for 3x3 tiled SNAPHU. The tiled peak is not intrinsic: it is dominated by the parallel tile phase, so it scales with how many tiles unwrap at once (`nproc`) -- capping concurrency roughly halves it (see the note under the table).
 
 ## Metric
 
@@ -43,18 +43,19 @@ The full per-frame table with runtime and memory is in [nisar_4way_results.csv](
 |---|---:|---:|---|
 | Whirlwind | 14-41 s | 3-4 GB | Rust-backed 2D MCF path |
 | SNAPHU, single tile | 465-1242 s | ~8 GB | quality reference, slowest configuration |
-| SNAPHU, 9x9 tiled + reoptimize | 90-110 s | ~4 GB | 81 small tiles, up to 12 concurrent |
+| SNAPHU, 3x3 tiled + reoptimize | 97-201 s | 6-13 GB | 9 tiles; peak set by concurrency (`nproc`) |
 | PHASS | 5.5-23 s | 1.7-2.4 GB | faster, lower agreement on several frames |
 | isce2 ICU | 109-204 s | 1.5-2.8 GB | leaves some low-coherence areas disconnected |
 
-Memory note: peak RSS is measured by summing the whole process tree. SNAPHU's
+Memory note: the SNAPHU tiled numbers are peak RSS summed over the whole process
+tree (`scripts/peak_rss_tree.py`), because SNAPHU forks one worker per concurrent
+tile and a per-process measure such as `/usr/bin/time` undercounts them. SNAPHU's
 tiled peak is dominated by the parallel tile phase, not the final reoptimize, so
-it scales with concurrency: on A_025 a 3x3 tiling peaks at about 12 GB with 9
-tiles unwrapping at once but about 6 GB capped at 4 (`nproc=4`), and the 9x9
-config above stays near 4 GB only because each of its 81 tiles is small. (The
-`*_rss_bytes` column in `nisar_4way_results.csv` and the memory panel of the
-figure were sampled per-process with `/usr/bin/time` and therefore undercount
-the concurrent SNAPHU tile workers; the single-process engines are unaffected.)
+it scales with concurrency: on A_025 the 3x3 tiling peaks at about 12 GB with all
+9 tiles unwrapping at once, but about 6 GB capped at `nproc=4` (at roughly +45%
+runtime). The single-process engines (Whirlwind, PHASS, ICU, single-tile SNAPHU)
+are one process, so their `nisar_4way_results.csv` figures are unaffected by this
+distinction.
 
 ## A_025 river case
 
