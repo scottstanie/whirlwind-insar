@@ -6,7 +6,7 @@ The comparison uses 13 HH NISAR GUNW frames with `nlooks=16`. Runtimes and memor
 
 ## Summary
 
-- Whirlwind agrees with the production SNAPHU unwrap at 99-100 percent of pixels on 12 of 13 frames.
+- Whirlwind agrees with the production SNAPHU unwrap on at least 98.8 percent of pixels on 12 of 13 frames (99 percent or better on 11 of them).
 - The remaining frame, D_075, is difficult for every method in this sweep; Whirlwind agrees with production SNAPHU on 88.2 percent of pixels there, while PHASS agrees on 48.4 percent.
 - Runtime is 14-41 seconds per frame for Whirlwind, compared with 465-1242 seconds for single-tile SNAPHU and 90-110 seconds for SNAPHU 9x9 tiled plus reoptimization.
 - Peak memory is about 3-4 GB per NISAR frame, compared with about 7-8 GB for single-tile SNAPHU and about 3-3.8 GB for SNAPHU 9x9.

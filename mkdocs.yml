@@ -1,4 +1,4 @@
-# whirlwind-rs documentation site.
+# whirlwind documentation site.
 #
 # Build:    uv run mkdocs build           # writes ./site/
 # Serve:    uv run mkdocs serve           # http://127.0.0.1:8000/
@@ -9,12 +9,12 @@
 # PERFORMANCE.md, ENV_VARS.md, ATBD-whirlwind.md) and figures/ are real files
 # in docs/.
 
-site_name: whirlwind-rs
+site_name: whirlwind
 site_description: >-
   Rust-backed 2D phase unwrapper for InSAR.
 site_author: Scott Staniewicz
-repo_url: https://github.com/scottstanie/whirlwind
-repo_name: scottstanie/whirlwind
+repo_url: https://github.com/scottstanie/whirlwind-insar
+repo_name: scottstanie/whirlwind-insar
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -89,4 +89,4 @@ extra_javascript:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/scottstanie/whirlwind
+      link: https://github.com/scottstanie/whirlwind-insar

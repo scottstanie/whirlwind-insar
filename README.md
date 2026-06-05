@@ -1,8 +1,10 @@
-# whirlwind-rs
+# whirlwind
 
 Fast Rust-backed 2D InSAR phase unwrapping with Python bindings.
 
 Whirlwind unwraps a complex interferogram and returns both unwrapped phase and connected-component labels. The [NISAR comparison](docs/NISAR_SUMMARY.md) shows agreement with production SNAPHU on 2pi ambiguities, with lower runtime in the tested scenes.
+
+> The package is `whirlwind-insar` on PyPI and GitHub; it imports as `whirlwind`.
 
 ## Quickstart
 
@@ -24,10 +26,14 @@ unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)
 
 `igram` is a complex wrapped interferogram, `corr` is coherence/correlation in `[0, 1]`, and `mask` is optional with `True` for valid pixels.
 
-For noisy scenes, down-look first:
+For noisy scenes, coarsen the solve with `downsample` (it unwraps an 8x8
+coherently-averaged copy to pick each block's 2π cycle, then maps the cycles
+back onto the full-resolution phase). `nlooks` stays the effective looks of your
+input `corr` — the down-look scaling is handled internally, so you do not raise
+it yourself:
 
 ```python
-unw, conncomp = ww.unwrap(igram, corr, nlooks=50.0, mask=mask, multilook=8)
+unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask, downsample=8)
 ```
 
 ## CLI

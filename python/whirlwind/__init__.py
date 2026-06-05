@@ -1,15 +1,18 @@
-"""whirlwind-rs: Rust-backed InSAR phase unwrapper."""
+"""whirlwind: Rust-backed InSAR phase unwrapper."""
 
 from __future__ import annotations
 
+import logging
 import os
+import warnings
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-# Single source of truth is Cargo.toml ([workspace.package].version); maturin
-# stamps it into the installed distribution metadata, which we read back here.
+logger = logging.getLogger(__name__)
+
+# Version lives in Cargo.toml; maturin stamps it into the distribution metadata.
 __version__ = version("whirlwind-insar")
 
 from ._native import (
@@ -144,7 +147,8 @@ def unwrap(
     mask: "NDArray[np.bool_] | None" = None,
     *,
     bridge: bool = True,
-    multilook: int = 1,
+    downsample: int = 1,
+    multilook: "int | None" = None,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -172,16 +176,18 @@ def unwrap(
     Parameters
     ----------
     igram : ndarray of complex64
-        Wrapped interferometric phase.
-        Out-of-bounds or nodata pixels should be ``0+0j``.
+        Wrapped interferometric phase. Nodata pixels should be ``0+0j``; any
+        ``NaN`` is treated as nodata (set to ``0`` with a warning).
     corr : ndarray of float32
-        Sample coherence in ``[0, 1]``, same shape as ``igram``.
+        Sample coherence in ``[0, 1]``, same shape as ``igram``. ``NaN`` is
+        treated as nodata (set to ``0`` with a warning).
     nlooks : float
         Effective number of looks used to estimate ``corr`` (at least 1). A
         higher number of looks means higher confidence in ``corr`` and sets the
         width of the coherence cost model.
     mask : ndarray of bool, optional
-        Valid-pixel mask, ``True`` = valid. Defaults to ``igram != 0``.
+        Valid-pixel mask, ``True`` = valid. Defaults to ``(igram != 0) &
+        (corr > 0)``, so exact-zero phase or zero-coherence pixels are excluded.
     bridge : bool, default True
         Post-processing step that re-levels regions the valid mask splits into
         disconnected pieces (for example two land slabs separated by a
@@ -190,23 +196,22 @@ def unwrap(
         snaps each region to a coarse 8x-downlooked anchor (shifts taken
         relative to the largest region), only where the coarse scale connects
         the regions and only when the offset rounds cleanly to an integer. A
-        single-region or coherently-connected frame is left unchanged. Fixes the
-        NISAR A_025 river frame (58 to about 100 percent) with no regression
-        elsewhere. Disable with ``bridge=False`` or ``WHIRLWIND_NO_BRIDGE=1``.
-    multilook : int, default 1
+        single-region or coherently-connected frame is left unchanged. Disable
+        with ``bridge=False`` or ``WHIRLWIND_NO_BRIDGE=1``.
+    downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
-        interferogram is coherently averaged into ``multilook x multilook``
-        blocks, which suppresses the noise the linear cost otherwise mis-routes
-        through, and that smaller, smoother frame is unwrapped to decide which
-        2π cycle each block sits on. The coarse integer-cycle field is then
-        transferred back onto the full-resolution wrapped phase
-        (``k = round((coarse_up - wrapped) / 2π)``; ``unw = wrapped + 2π k``),
-        so the output keeps every per-pixel wrapped value rather than becoming
-        block-constant; only the integer cycle is borrowed from the coarse
-        solve. The one thing lost is detail finer than the block scale, which
-        genuinely aliases under the downlook. Use it for noisy or
-        moderate-coherence scenes (for example Sentinel-1) where a
-        full-resolution solve mis-routes; leave it at 1 for clean scenes.
+        interferogram is coherently averaged into ``downsample x downsample``
+        blocks and that smaller, smoother frame is unwrapped to decide which 2π
+        cycle each block sits on. Only the integer cycle is borrowed back onto
+        the full-resolution wrapped phase, so every per-pixel value is kept;
+        detail finer than the block scale aliases under the downlook. Use it for
+        noisy or moderate-coherence scenes (for example Sentinel-1); leave it at
+        1 for clean scenes. Note this coherently averages an existing
+        interferogram, which is not the same as forming a multilooked
+        interferogram from the SLCs.
+    multilook : int, optional
+        Deprecated alias for ``downsample``; will be removed in a future
+        release.
     goldstein_alpha : float, default 0.0
         Goldstein adaptive-filter strength in ``[0, 1]``. 0 (default) disables
         filtering; a typical "on" value is 0.7. When enabled, the filter only
@@ -254,6 +259,34 @@ def unwrap(
     conncomp : ndarray of uint32, shape ``(m, n)``
         Connected-component labels; ``0`` = background / dropped.
     """
+    if multilook is not None:
+        warnings.warn(
+            "`multilook` is deprecated; use `downsample`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if downsample != 1:
+            raise ValueError("pass only one of `downsample` or `multilook`")
+        downsample = multilook
+
+    # NaN inputs are treated as nodata: zero them (so the default mask drops
+    # them) and warn, rather than letting a NaN propagate through the solve.
+    igram = np.ascontiguousarray(igram, dtype=np.complex64)
+    corr = np.ascontiguousarray(corr, dtype=np.float32)
+    ig_nan = np.isnan(igram)
+    corr_nan = np.isnan(corr)
+    n_nan = int(ig_nan.sum() + corr_nan.sum())
+    if n_nan:
+        logger.warning("NaN in %d input pixel(s); treating as nodata (0).", n_nan)
+        igram = igram.copy()
+        corr = corr.copy()
+        igram[ig_nan] = 0
+        corr[corr_nan] = 0
+
+    if mask is None:
+        mask = (igram != 0) & (corr > 0)
+    mask = np.ascontiguousarray(mask, dtype=bool)
+
     if conncomp_sigma is not None:
         import math
 
@@ -269,7 +302,7 @@ def unwrap(
             mask=mask,
             tile_size=0,
             tile_overlap=0,
-            multilook=multilook,
+            multilook=downsample,
             cost_threshold=cost_threshold,
             min_size_px=min_size_px,
             max_ncomps=max_ncomps,
@@ -286,7 +319,7 @@ def unwrap(
             mask=mask,
             tile_size=0,
             tile_overlap=0,
-            multilook=multilook,
+            multilook=downsample,
             cost_threshold=cost_threshold,
             min_size_px=min_size_px,
             max_ncomps=max_ncomps,
@@ -339,9 +372,7 @@ def _bridge_components(
     re-levelled to a coherent xL coarse anchor, with shifts taken *relative to
     the largest region*, gated to regions the coarse scale connects, and vetoed
     unless the offset is cleanly integer. A single-region (or coherently
-    connected) frame yields no shifts and is byte-identical. Prototype +
-    validation: ``scripts/proto_bridge_a025.py`` (A_025 58 → 99.99 %, zero
-    regression on A_016/A_030/A_028/D_077/D_074).
+    connected) frame yields no shifts and is byte-identical.
     """
     tau = 2.0 * np.pi
     L = multilook_factor
@@ -409,11 +440,9 @@ def _bridge_components(
     return out
 
 
-# goldstein() is the Rust-backed native binding re-exported from
-# ``._native``. See crates/whirlwind-core/src/goldstein.rs for the
-# implementation and the ww-specific choices (unit-magnitude
-# normalisation, Hann window) that move agreement-with-SNAPHU from
-# 87% → 99.5% within ±π/2 on the NISAR HH test scene.
+# goldstein() is the Rust-backed native binding re-exported from ``._native``.
+# See crates/whirlwind-core/src/goldstein.rs for the implementation and the
+# unit-magnitude normalisation / Hann-window choices it makes.
 
 
 # NOTE: the CRLB unwrappers (``unwrap_crlb``, ``unwrap_crlb_grounded``,

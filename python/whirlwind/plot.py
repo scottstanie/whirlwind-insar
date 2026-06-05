@@ -1,4 +1,4 @@
-"""Plotting helpers for whirlwind-rs results."""
+"""Plotting helpers for whirlwind results."""
 
 from __future__ import annotations
 

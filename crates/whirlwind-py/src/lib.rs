@@ -710,7 +710,7 @@ fn set_num_threads(n: usize) -> PyResult<()> {
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e}")))
 }
 
-/// Return the size of the rayon thread pool whirlwind-rs uses.
+/// Return the size of the rayon thread pool whirlwind uses.
 ///
 /// If called before any parallel work has happened *and* no env var was
 /// set, this returns rayon's default (= all logical CPUs).

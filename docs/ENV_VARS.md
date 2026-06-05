@@ -1,6 +1,6 @@
 # Environment variables
 
-Most users do not need any environment variables. Prefer normal function arguments such as `mask=`, `multilook=`, and `goldstein_alpha=` when they apply.
+Most users do not need any environment variables. Prefer normal function arguments such as `mask=`, `downsample=`, and `goldstein_alpha=` when they apply.
 
 These variables are mainly for debugging, benchmarking, and reproducing internal experiments.
 

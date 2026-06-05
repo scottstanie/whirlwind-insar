@@ -11,7 +11,7 @@ name: Release
 # with:
 #   PyPI project name: whirlwind-insar
 #   Owner:             scottstanie
-#   Repository:        whirlwind-rs
+#   Repository:        whirlwind-insar
 #   Workflow:          release.yml
 #   Environment:       pypi
 #

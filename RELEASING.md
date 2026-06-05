@@ -1,4 +1,4 @@
-# Releasing whirlwind-rs
+# Releasing whirlwind
 
 End-to-end release flow for the Python distribution. The Rust crates
 (`whirlwind-core`, `whirlwind-cli`) are not currently published to
@@ -36,7 +36,7 @@ GitHub secrets. To set it up:
    (or *Add a publisher* if the project already exists), enter:
    - **PyPI project name:** `whirlwind-insar`
    - **Owner:** `scottstanie`
-   - **Repository name:** `whirlwind-rs`
+   - **Repository name:** `whirlwind-insar`
    - **Workflow name:** `release.yml`
    - **Environment name:** `pypi`
 3. In GitHub → *Settings* → *Environments* → *New environment*, create

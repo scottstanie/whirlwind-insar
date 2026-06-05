@@ -222,7 +222,7 @@ fn run_scene(
 }
 
 fn main() {
-    println!("# whirlwind-rs scale benchmark\n");
+    println!("# whirlwind scale benchmark\n");
     println!(
         "Times in milliseconds. Peak RSS via `getrusage(RUSAGE_SELF)`; the RSS column\n\
               shows the **delta** to the prior call so each row gives a real per-image cost.\n"

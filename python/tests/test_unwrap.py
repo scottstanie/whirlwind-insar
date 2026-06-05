@@ -1,4 +1,4 @@
-"""whirlwind-rs unwrap tests, mirroring snaphu-py/test/test_unwrap.py."""
+"""whirlwind unwrap tests, mirroring snaphu-py/test/test_unwrap.py."""
 
 from __future__ import annotations
 
@@ -53,9 +53,8 @@ class TestUnwrap:
         igram[~mask] = np.nan + 1j * np.nan
         corr[~mask] = 0.0
 
-        # Replace NaN before passing (whirlwind-rs doesn't auto-handle NaN igram).
-        igram = np.nan_to_num(igram, nan=0.0).astype(np.complex64)
-
+        # unwrap() now sanitizes NaN inputs to nodata (0) with a warning, so the
+        # NaN band can be passed straight through.
         unw, _cc = ww.unwrap(igram, corr, nlooks=1.0, mask=mask, goldstein_alpha=0)
         # Only check the valid band.
         aligned = _align_to_truth(unw[mask], phase[mask])

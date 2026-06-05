@@ -1,6 +1,7 @@
-# whirlwind-rs
+# whirlwind
 
-Fast Rust-backed 2D InSAR phase unwrapping with Python bindings.
+Fast Rust-backed 2D InSAR phase unwrapping with Python bindings. The package is
+`whirlwind-insar` on PyPI and GitHub; it imports as `whirlwind`.
 
 Start with the [project README](https://github.com/scottstanie/whirlwind-insar/blob/main/README.md) for installation, Python usage, CLI usage, and links to comparisons.
 

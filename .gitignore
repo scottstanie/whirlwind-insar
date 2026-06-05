@@ -1,15 +1,31 @@
+# Rust / build
 target/
 **/*.rs.bk
 *.pdb
+*.so
+*.dylib
+
+# Python
 .venv/
 __pycache__/
 *.pyc
-*.so
-*.dylib
-scripts/out/
-.DS_Store
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Editor / OS
 .vscode/
+.DS_Store
+
+# Generated / data
 site/
+scripts/out/
 *.npy
 *.npz
-paper/*.pdf
+
+# Research scratch kept off the public repo
+paper/
+# Session transcripts / agent dumps (e.g. 2026-05-28-...-opus-...txt)
+*-opus-*.txt

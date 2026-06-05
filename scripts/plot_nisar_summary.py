@@ -1,5 +1,6 @@
-"""NISAR-summary headline figure from the 4-way sweep results.csv: per-frame
-per-component match (whirlwind vs ww-orig vs PHASS) + runtime. Highlights A_025.
+"""NISAR-summary headline figure from the sweep results.csv: per-frame
+per-component match, runtime, and peak memory for whirlwind vs SNAPHU (1-tile and
+9x9), PHASS, and ICU. Highlights A_025.
 
 Usage: python scripts/plot_nisar_summary.py [results.csv] [out.png]
 """
