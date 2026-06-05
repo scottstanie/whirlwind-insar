@@ -183,8 +183,8 @@ fn single_source_ssp_bounded_on_zero_cost_masked_sea() {
     // so leftover residues must route across cost-0 masked region in the SSP.
     let mask = Array2::from_shape_fn((m, n), |(i, j)| (i % 16 < 2) || (j % 16 < 2));
 
-    let unw = whirlwind_core::unwrap_linear(igram.view(), corr.view(), 4.0, Some(mask.view()))
-        .unwrap();
+    let unw =
+        whirlwind_core::unwrap_linear(igram.view(), corr.view(), 4.0, Some(mask.view())).unwrap();
     let t = whirlwind_core::primal_dual::last_timings();
     assert!(
         t.ssp_iters > 0,

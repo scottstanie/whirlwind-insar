@@ -123,7 +123,13 @@ fn interpolate<'py>(
     let w = weights.as_array();
     let out = py.detach(|| {
         whirlwind_core::interpolate::interpolate(
-            ig, w, weight_cutoff, num_neighbors, max_radius, min_radius, alpha,
+            ig,
+            w,
+            weight_cutoff,
+            num_neighbors,
+            max_radius,
+            min_radius,
+            alpha,
         )
     });
     out.into_pyarray(py)
@@ -433,7 +439,9 @@ fn unwrap_linear_ext_costs<'py>(
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
     let ig = igram.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
-    let c = costs.as_slice().map_err(|e| PyValueError::new_err(format!("costs must be C-contiguous: {e}")))?;
+    let c = costs
+        .as_slice()
+        .map_err(|e| PyValueError::new_err(format!("costs must be C-contiguous: {e}")))?;
     let unw = py.detach(|| whirlwind_core::unwrap_linear_ext_costs(ig, m, c));
     let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(unw.into_pyarray(py))
@@ -644,7 +652,9 @@ fn _unwrap_with_costs<'py>(
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
     use whirlwind_core::{grid, integrate, network, primal_dual, residue};
     let ig = igram.as_array();
-    let cost_slice = costs.as_slice().map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    let cost_slice = costs
+        .as_slice()
+        .map_err(|e| PyValueError::new_err(format!("{e}")))?;
     let m_view = mask.as_ref().map(|m| m.as_array());
     let out = py.detach(|| {
         let (m, n) = ig.dim();
@@ -652,7 +662,8 @@ fn _unwrap_with_costs<'py>(
         let residues = residue::compute(wrapped_phase.view());
         let g = grid::RectangularGridGraph::new(m + 1, n + 1);
         let costs_vec = cost_slice.to_vec();
-        let mut net = network::Network::new_reuse_with_mask(&g, residues.view(), &costs_vec, m_view);
+        let mut net =
+            network::Network::new_reuse_with_mask(&g, residues.view(), &costs_vec, m_view);
         primal_dual::run(&g, &mut net, 50);
         if m_view.is_some() {
             integrate::integrate_with_mask(wrapped_phase.view(), &g, &net, m_view)

@@ -74,7 +74,11 @@ fn has_negative_residual_cycle(
 /// Network::marginal_cost exactly (no potentials).
 fn raw_marginal(arc: usize, nf: usize, flow: &[i32], offsets: &[i32], weights: &[i32]) -> i64 {
     let ns = 100_i64;
-    let (fwd, sign) = if arc < nf { (arc, 1_i64) } else { (arc - nf, -1_i64) };
+    let (fwd, sign) = if arc < nf {
+        (arc, 1_i64)
+    } else {
+        (arc - nf, -1_i64)
+    };
     let f = flow[fwd] as i64;
     let o = offsets[fwd] as i64;
     let w = weights[fwd] as i64;
@@ -100,6 +104,7 @@ fn total_cost(flow: &[i32], offsets: &[i32], weights: &[i32]) -> i64 {
 /// CANCEL the residue excess (so the residual is balanced to zero).
 fn induced_excess(g: &RectangularGridGraph, flow: &[i32], num_nodes: usize) -> Vec<i32> {
     let mut e = vec![0_i32; num_nodes];
+    #[allow(clippy::needless_range_loop)] // `a` is the arc id, used by arc_endpoints too
     for a in 0..g.num_forward {
         let f = flow[a];
         if f == 0 {
@@ -111,7 +116,6 @@ fn induced_excess(g: &RectangularGridGraph, flow: &[i32], num_nodes: usize) -> V
     }
     e
 }
-
 
 /// PROBE 1: After preload, run ONE multi-source-Dijkstra + augment by replaying
 /// what primal_dual::run does, then check whether any UNSATURATED residual arc
@@ -143,14 +147,20 @@ fn negative_rc_occurs_after_preload() {
     let mut net = Network::new_convex_with_mask(&g, residues.view(), &offsets, &weights, None);
 
     // Pre-condition: arc 0 has negative f=0 marginal (offset>50).
-    assert!(net.marginal_cost(0) < 0, "expected neg f=0 marginal on arc 0");
+    assert!(
+        net.marginal_cost(0) < 0,
+        "expected neg f=0 marginal on arc 0"
+    );
 
     net.preload_convex_min(&g);
 
     // After preload, EVERY residual marginal must be >=0 (the soundness claim).
     for a in 0..2 * nf {
         let m = net.marginal_cost(a);
-        assert!(m >= 0, "post-preload marginal on arc {a} = {m} < 0 (preload broken)");
+        assert!(
+            m >= 0,
+            "post-preload marginal on arc {a} = {m} < 0 (preload broken)"
+        );
     }
 
     // Now run the real solver to convergence.
@@ -382,7 +392,9 @@ fn debug_asserts_or_wrong_on_noisy_ramp() {
             neg_after_preload += 1;
         }
     }
-    eprintln!("[probe3] residual arcs with neg marginal AFTER preload (pre-solve) = {neg_after_preload}");
+    eprintln!(
+        "[probe3] residual arcs with neg marginal AFTER preload (pre-solve) = {neg_after_preload}"
+    );
 
     // Run the solver. In debug this fires the rc>=0 debug_assert if a negative
     // reduced cost reaches Dijkstra during SSP.
@@ -406,7 +418,9 @@ fn debug_asserts_or_wrong_on_noisy_ramp() {
     );
     // This is the smoking gun: if >0, the solve ran with negative residual
     // marginals present (non-optimal / unsound for plain Dijkstra-SSP).
-    eprintln!("[probe3] done (no debug_assert fired => either release, or rc>=0 held via potentials)");
+    eprintln!(
+        "[probe3] done (no debug_assert fired => either release, or rc>=0 held via potentials)"
+    );
 }
 
 /// PROBE 4: RANDOMIZED differential test. For many random tiny instances
@@ -606,8 +620,7 @@ fn negative_cycle_certificate_on_noisy_ramp() {
         let g = RectangularGridGraph::new(m + 1, n + 1);
         let nf = g.num_forward;
 
-        let mut net =
-            Network::new_convex_with_mask(&g, residues.view(), &offsets, &weights, None);
+        let mut net = Network::new_convex_with_mask(&g, residues.view(), &offsets, &weights, None);
         net.preload_convex_min(&g);
         whirlwind_core::primal_dual::run(&g, &mut net, 50);
 
@@ -615,7 +628,12 @@ fn negative_cycle_certificate_on_noisy_ramp() {
         let neg_cycle = has_negative_residual_cycle(&g, &net, &flow, &offsets, &weights);
 
         // Count residue excess remaining (solver should drain it all).
-        let resid_excess: i64 = net.excess.iter().take(g.num_nodes()).map(|&e| e.unsigned_abs() as i64).sum();
+        let resid_excess: i64 = net
+            .excess
+            .iter()
+            .take(g.num_nodes())
+            .map(|&e| e.unsigned_abs() as i64)
+            .sum();
 
         eprintln!(
             "[probe5] seed={seed} gamma={gamma_val} cycles={cycles}: NEGATIVE residual cycle present = {neg_cycle} | leftover |excess|={resid_excess}"
@@ -627,7 +645,12 @@ fn negative_cycle_certificate_on_noisy_ramp() {
 /// (we subtract the mean difference so a constant offset doesn't count).
 fn quality_vs_truth(unw: &Array2<f32>, truth: &Array2<f32>) -> (f64, f64) {
     let n = unw.len() as f64;
-    let mean_diff: f64 = unw.iter().zip(truth.iter()).map(|(&u, &t)| (u - t) as f64).sum::<f64>() / n;
+    let mean_diff: f64 = unw
+        .iter()
+        .zip(truth.iter())
+        .map(|(&u, &t)| (u - t) as f64)
+        .sum::<f64>()
+        / n;
     // Fraction of pixels within 0.1 rad of truth after removing global offset.
     let mut within = 0usize;
     let mut sumsq = 0.0;
@@ -649,7 +672,7 @@ fn quality_vs_truth(unw: &Array2<f32>, truth: &Array2<f32>) -> (f64, f64) {
 #[test]
 fn convex_quality_vs_baseline_on_noisy_ramp() {
     use rand::SeedableRng;
-    use whirlwind_core::{cost, integrate, residue, simulate};
+    use whirlwind_core::{integrate, simulate};
 
     for (seed, gamma_val, cycles) in [(11_u64, 0.5_f32, 3.0_f32), (12, 0.7, 4.0)] {
         let m = 64;
@@ -674,8 +697,7 @@ fn convex_quality_vs_baseline_on_noisy_ramp() {
         let (frac_i, rms_i) = quality_vs_truth(&unw_itoh, &truth);
 
         // unwrap_reuse (linear coherence cost) for reference.
-        let unw_reuse =
-            whirlwind_core::unwrap_reuse(igram.view(), cor.view(), 4.0, None).unwrap();
+        let unw_reuse = whirlwind_core::unwrap_reuse(igram.view(), cor.view(), 4.0, None).unwrap();
         let (frac_r, rms_r) = quality_vs_truth(&unw_reuse, &truth);
 
         eprintln!(
@@ -723,7 +745,10 @@ fn certificate_detects_known_suboptimal_flow() {
     let flow2: Vec<i32> = (0..nf).map(|a| net2.arc_flow(&g, a)).collect();
     let neg2 = has_negative_residual_cycle(&g, &net2, &flow2, &offsets, &weights);
     eprintln!("[probe7] certificate after preload-to-k* (optimal): neg_cycle={neg2}");
-    assert!(!neg2, "certificate FALSE-POSITIVE on the optimal preloaded flow");
+    assert!(
+        !neg2,
+        "certificate FALSE-POSITIVE on the optimal preloaded flow"
+    );
 }
 
 /// PROBE 8: the COST mechanism on a CLEAN (high-coherence) steep ramp. SNAPHU's
@@ -745,14 +770,15 @@ fn clean_steep_ramp_cost_under_wraps() {
     // is whether the convex COST agrees that no flow is needed AND whether the
     // offsets carry any absolute-ramp signal.)
     let cycles = 6.0_f32;
-    let truth = Array2::from_shape_fn((m, n), |(i, j)| {
+    let truth = Array2::from_shape_fn((m, n), |(_i, j)| {
         2.0 * std::f32::consts::PI * cycles * (j as f32) / (n as f32)
     });
     let gamma = Array2::<f32>::from_elem((m, n), 0.99); // clean
     let mut rng = rand::rngs::StdRng::seed_from_u64(99);
     let (igram, cor) = simulate::simulate_ifg(&truth, &gamma, 16, &mut rng);
 
-    let (offsets, _weights) = cost::compute_snaphu_smooth_costs(igram.view(), cor.view(), 16.0, None);
+    let (offsets, _weights) =
+        cost::compute_snaphu_smooth_costs(igram.view(), cor.view(), 16.0, None);
     let nf = offsets.len();
     let kstar_nonzero = offsets
         .iter()

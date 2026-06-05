@@ -239,7 +239,7 @@ impl CarballoLut {
                     if p1 < 1e-30 {
                         MAX_CARBALLO_COST
                     } else {
-                        (-(p1 / p0).ln() as f32).min(MAX_CARBALLO_COST).max(0.0)
+                        (-(p1 / p0).ln() as f32).clamp(0.0, MAX_CARBALLO_COST)
                     }
                 };
                 values[ig * N_ALPHA_CARB + ia] = cost;

@@ -1276,17 +1276,17 @@ fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Arr
 /// the coarse solve at e.g. 522 px on a 4176-px NISAR frame - so the *anchor
 /// itself ran away* (D_077 tiled: 48 → 63 % once the coarse image is pushed
 /// below ~256 px). We therefore size `lk` so the coarse image lands just under
-/// ~256 px: large enough that the coarse solve doesn't run away, but no coarser
-/// - over-multilooking smooths away real winding and regresses gentler frames
-/// (A_030 held at lk≤16 / coarse≥266 px but lost 2.6 pts by lk=20 / coarse
-/// 213 px in the 13-frame sweep). Floor at 8 (the historical value) for small
+/// ~256 px: large enough that the coarse solve doesn't run away, but no
+/// coarser, since over-multilooking smooths away real winding and regresses
+/// gentler frames (A_030 held at lk≤16 / coarse≥266 px but lost 2.6 pts by lk=20
+/// / coarse 213 px in the 13-frame sweep). Floor at 8 (historical) for small
 /// frames where the whole-image solve is already well-posed.
 /// `WHIRLWIND_ANCHOR_LK` overrides for A/B testing.
 fn anchor_lk((m, n): (usize, usize)) -> usize {
-    if let Ok(v) = std::env::var("WHIRLWIND_ANCHOR_LK") {
-        if let Ok(k) = v.parse::<usize>() {
-            return k.max(1);
-        }
+    if let Ok(v) = std::env::var("WHIRLWIND_ANCHOR_LK")
+        && let Ok(k) = v.parse::<usize>()
+    {
+        return k.max(1);
     }
     // Coarse image ~256-288 px: large enough the coarse solve doesn't run away,
     // not so coarse it over-smooths real winding. The sweet spot is narrow and
@@ -1349,7 +1349,7 @@ fn compute_dual_anchor(
     lk_fine: usize,
     lk_coarse: usize,
 ) -> Option<Array2<f32>> {
-    assert!(lk_coarse > lk_fine && lk_coarse % lk_fine == 0);
+    assert!(lk_coarse > lk_fine && lk_coarse.is_multiple_of(lk_fine));
     let fine = compute_coarse_anchor(igram, corr, 1.0, mask, lk_fine)?;
     let coarse = compute_coarse_anchor(igram, corr, 1.0, mask, lk_coarse)?;
     let (m, n) = fine.dim();
