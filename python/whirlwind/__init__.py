@@ -43,7 +43,7 @@ def unwrap_crlb_stack(
 
     Loops over the leading axis calling :func:`unwrap_crlb`
     per IG. Each per-IG MCF solve is independent, so this is just a
-    convenient Python wrapper — there is no shared state between IGs. For
+    convenient Python wrapper - there is no shared state between IGs. For
     parallel execution use ``multiprocessing`` or ``concurrent.futures``.
 
     Parameters
@@ -122,7 +122,7 @@ def cost_threshold_from_cycle_prob(cycle_prob: float) -> int:
     This is *local edge reliability*, NOT a global residue-pairing probability.
     Lower ``cycle_prob`` ⇒ higher threshold ⇒ MORE edges cut (stricter). The
     legacy ``cost_threshold=50`` ≈ ``cycle_prob ≈ 2.4e-4`` (≈ 3.5σ Gaussian-
-    equivalent). Carballo/coherence conncomp only — the CRLB inverse-variance
+    equivalent). Carballo/coherence conncomp only - the CRLB inverse-variance
     cost path does not use this scaling.
     """
     import math
@@ -157,8 +157,8 @@ def unwrap(
     continuous unwrapped phase together with connected-component labels.
 
     The ``conncomp`` output labels regions believed to be unwrapped
-    self-consistently — one positive integer per region, ``0`` for background or
-    dropped pixels — analogous to SNAPHU's connected components. They are grown
+    self-consistently - one positive integer per region, ``0`` for background or
+    dropped pixels - analogous to SNAPHU's connected components. They are grown
     globally from the coherence cost.
 
     A fast default post-pass (``bridge``) repairs the relative 2π level of
@@ -194,11 +194,11 @@ def unwrap(
     multilook : int, default 1
         Resolution-reduction factor for a coarse-but-robust solve. When ``> 1``,
         the scene is NOT solved per-pixel: the complex interferogram is
-        coherently averaged into ``multilook × multilook`` blocks (suppressing
+        coherently averaged into ``multilook x multilook`` blocks (suppressing
         the noise the linear cost otherwise mis-routes through), that smaller
         coarse frame is unwrapped, and its result is block-replicated back to
         full size. The output is therefore piecewise-constant within each
-        ``multilook × multilook`` block — fringes finer than the block scale are
+        ``multilook x multilook`` block - fringes finer than the block scale are
         smoothed away and are *not* recovered. It trades fine detail for speed
         (an ``multilook²``-times-smaller solve) and noise robustness, so it
         helps on noisy / moderate-coherence scenes (e.g. Sentinel-1) where a
@@ -207,7 +207,7 @@ def unwrap(
     goldstein_alpha : float, default 0.0
         Goldstein adaptive-filter strength in ``[0, 1]``. ``0`` (default)
         disables filtering; a typical "on" value is ``0.7``.
-        When enabled, the filter only informs the MCF — the integer 2π·k field
+        When enabled, the filter only informs the MCF - the integer 2π·k field
         it produces is
         applied to the *original* wrapped phase, so every per-pixel value the
         caller passed in is preserved.
@@ -246,7 +246,7 @@ def unwrap(
     tile_size : int, default 0
         ``0`` uses the verified single-tile solver (whole image). A value ``≥ 4``
         (with ``tile_overlap ≥ 2``) opts into the **experimental, unvalidated**
-        tiled pipeline at that tile size — it can produce seam artifacts on
+        tiled pipeline at that tile size - it can produce seam artifacts on
         fragmented scenes and is not part of the validated results.
     tile_overlap : int, default 0
         Overlap in pixels between tiles when the tiled pipeline is used.
@@ -317,7 +317,7 @@ def unwrap(
     if conncomp_coh_floor:
         # Drop low-coherence pixels from their components (a quality floor):
         # noisy percolation goes to background predictably, since a coherence
-        # floor — unlike cost_threshold — cuts regardless of the local gradient.
+        # floor - unlike cost_threshold - cuts regardless of the local gradient.
         cc = np.asarray(cc).copy()
         cc[np.clip(np.nan_to_num(corr), 0.0, 1.0) < conncomp_coh_floor] = 0
     return unw, cc
@@ -337,9 +337,9 @@ def _bridge_components(
 ) -> "NDArray[np.float32]":
     """Integration-component gauge bridging post-pass (see ``unwrap(bridge=)``).
 
-    The free 2π gauge is between INTEGRATION components — the connected
+    The free 2π gauge is between INTEGRATION components - the connected
     components of the valid mask, which is the partition the MCF integrator seeds
-    independently — NOT the (finer) connected-component labels. Each region is
+    independently - NOT the (finer) connected-component labels. Each region is
     re-levelled to a coherent xL coarse anchor, with shifts taken *relative to
     the largest region*, gated to regions the coarse scale connects, and vetoed
     unless the offset is cleanly integer. A single-region (or coherently
