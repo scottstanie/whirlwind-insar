@@ -35,8 +35,6 @@ def unwrap(
     *,
     bridge: bool = ...,
     multilook: int = ...,
-    tile_size: int = ...,
-    tile_overlap: int = ...,
     cost_threshold: int = ...,
     conncomp_cycle_prob: float | None = ...,
     conncomp_sigma: float | None = ...,

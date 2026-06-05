@@ -62,7 +62,7 @@ enum Cmd {
         /// crossing masked pixels so MCF skips them - critical for large
         /// real scenes with water / shadow / decorrelated regions, where
         /// the unmasked path treats NoData pixels as real residues and
-        /// can slow down by 10–100x.
+        /// can slow down by 10-100x.
         #[arg(long)]
         mask: Option<PathBuf>,
         /// number of looks

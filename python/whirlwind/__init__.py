@@ -55,7 +55,7 @@ def unwrap_crlb_stack(
         rad² (typically ``crlb_<date_a>.tif + crlb_<date_b>.tif``).
     mask : bool, optional
         Either ``(m, n)`` (one mask for the whole stack) or
-        ``(E, m, n)`` (per-IG mask). ``False`` ⇒ excluded pixel.
+        ``(E, m, n)`` (per-IG mask). ``False`` means an excluded pixel.
     cost_threshold, min_size_px, max_ncomps
         Forwarded to :func:`unwrap_crlb`. See that function
         for the meaning of each.
@@ -117,13 +117,14 @@ def cost_threshold_from_cycle_prob(cycle_prob: float) -> int:
     """Connected-component ``cost_threshold`` for a target per-edge one-cycle
     probability.
 
-    An edge is cut (a component boundary) when its cost ``<= cost_threshold``,
-    i.e. when its **local one-cycle-correction probability** ``>= cycle_prob``.
-    This is *local edge reliability*, NOT a global residue-pairing probability.
-    Lower ``cycle_prob`` ⇒ higher threshold ⇒ MORE edges cut (stricter). The
-    legacy ``cost_threshold=50`` ≈ ``cycle_prob ≈ 2.4e-4`` (≈ 3.5σ Gaussian-
-    equivalent). Carballo/coherence conncomp only - the CRLB inverse-variance
-    cost path does not use this scaling.
+    An edge is cut (a component boundary) when its cost is ``<= cost_threshold``,
+    which happens when its local one-cycle-correction probability is at least
+    ``cycle_prob``. This is a local edge reliability, not a global
+    residue-pairing probability. A lower ``cycle_prob`` raises the threshold and
+    cuts more edges (stricter). The default ``cost_threshold=50`` corresponds to
+    a ``cycle_prob`` of about 2.4e-4, roughly a 3.5-sigma Gaussian equivalent.
+    This applies to the Carballo coherence connected components only; the CRLB
+    inverse-variance cost path does not use this scaling.
     """
     import math
 
@@ -139,8 +140,6 @@ def unwrap(
     *,
     bridge: bool = True,
     multilook: int = 1,
-    tile_size: int = 0,
-    tile_overlap: int = 0,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -157,14 +156,13 @@ def unwrap(
     continuous unwrapped phase together with connected-component labels.
 
     The ``conncomp`` output labels regions believed to be unwrapped
-    self-consistently - one positive integer per region, ``0`` for background or
-    dropped pixels - analogous to SNAPHU's connected components. They are grown
-    globally from the coherence cost.
+    self-consistently, with one positive integer per region and ``0`` for
+    background or dropped pixels, analogous to SNAPHU's connected components.
+    They are grown globally from the coherence cost.
 
     A fast default post-pass (``bridge``) repairs the relative 2π level of
-    regions that the valid mask splits apart (e.g. land slabs separated by a
-    low-coherence river).
-
+    regions that the valid mask splits apart, such as land slabs separated by a
+    low-coherence river.
 
     Parameters
     ----------
@@ -174,45 +172,42 @@ def unwrap(
     corr : ndarray of float32
         Sample coherence in ``[0, 1]``, same shape as ``igram``.
     nlooks : float
-        Effective number of looks used to estimate ``corr`` (≥ 1).
-        Higher number of looks means higher confidence in the estimates of `corr`.
-        This sets the width of the coherence cost model.
+        Effective number of looks used to estimate ``corr`` (at least 1). A
+        higher number of looks means higher confidence in ``corr`` and sets the
+        width of the coherence cost model.
     mask : ndarray of bool, optional
         Valid-pixel mask, ``True`` = valid. Defaults to ``igram != 0``.
     bridge : bool, default True
-        Flag to perform a post-processing step to re-level regions that the
-        valid mask splits into disconnected pieces (e.g. two land slabs separated
-        by a low-coherence river).
-        The MCF seeds each piece at an arbitrary 2π level, so their *relative* offset is
-        under-determined; this post-pass snaps each region to a coherent x8
-        coarse anchor (shifts taken relative to the largest region), gated to
-        regions the coarse scale actually connects and applied only when the
-        offset is cleanly integer. A single-region or coherently-connected frame
-        is a strict no-op. Fixes the NISAR A_025 river frame (58 → ~100 %) with
-        no regression elsewhere. Disable with ``bridge=False`` or
-        ``WHIRLWIND_NO_BRIDGE=1``.
+        Post-processing step that re-levels regions the valid mask splits into
+        disconnected pieces (for example two land slabs separated by a
+        low-coherence river). The MCF seeds each piece at an arbitrary 2π level,
+        so the relative offset between pieces is under-determined. This pass
+        snaps each region to a coarse 8x-downlooked anchor (shifts taken
+        relative to the largest region), only where the coarse scale connects
+        the regions and only when the offset rounds cleanly to an integer. A
+        single-region or coherently-connected frame is left unchanged. Fixes the
+        NISAR A_025 river frame (58 to about 100 percent) with no regression
+        elsewhere. Disable with ``bridge=False`` or ``WHIRLWIND_NO_BRIDGE=1``.
     multilook : int, default 1
-        Coarse-solve-then-transfer factor for noisy scenes. When ``> 1``, the
-        complex interferogram is coherently averaged into ``multilook x
-        multilook`` blocks (suppressing the noise the linear cost otherwise
-        mis-routes through) and that smaller, smoother frame is unwrapped to
-        decide which 2π cycle each block sits on. The coarse integer-cycle field
-        is then transferred back onto the full-resolution wrapped phase via
-        ``k = round((coarse_up - wrapped) / 2π)``; ``unw = wrapped + 2π·k``, so
-        the output keeps every per-pixel wrapped value and is not
+        Coarse-solve factor for noisy scenes. When greater than 1, the complex
+        interferogram is coherently averaged into ``multilook x multilook``
+        blocks, which suppresses the noise the linear cost otherwise mis-routes
+        through, and that smaller, smoother frame is unwrapped to decide which
+        2π cycle each block sits on. The coarse integer-cycle field is then
+        transferred back onto the full-resolution wrapped phase
+        (``k = round((coarse_up - wrapped) / 2π)``; ``unw = wrapped + 2π k``),
+        so the output keeps every per-pixel wrapped value rather than becoming
         block-constant; only the integer cycle is borrowed from the coarse
-        solve. Detail finer than the block scale that genuinely aliases under
-        the downlook is the one thing lost. Use it for noisy / moderate-
-        coherence scenes (e.g. Sentinel-1) where a full-resolution solve
-        mis-routes; leave it at ``1`` for clean scenes. (Routes through the
-        opt-in tiled path.)
+        solve. The one thing lost is detail finer than the block scale, which
+        genuinely aliases under the downlook. Use it for noisy or
+        moderate-coherence scenes (for example Sentinel-1) where a
+        full-resolution solve mis-routes; leave it at 1 for clean scenes.
     goldstein_alpha : float, default 0.0
-        Goldstein adaptive-filter strength in ``[0, 1]``. ``0`` (default)
-        disables filtering; a typical "on" value is ``0.7``.
-        When enabled, the filter only informs the MCF - the integer 2π·k field
-        it produces is
-        applied to the *original* wrapped phase, so every per-pixel value the
-        caller passed in is preserved.
+        Goldstein adaptive-filter strength in ``[0, 1]``. 0 (default) disables
+        filtering; a typical "on" value is 0.7. When enabled, the filter only
+        informs the MCF; the integer cycle field it produces is applied to the
+        original wrapped phase, so every per-pixel value the caller passed in is
+        preserved.
     goldstein_psize : int, default 64
         Goldstein FFT patch size (only used when ``goldstein_alpha > 0``).
 
@@ -221,37 +216,31 @@ def unwrap(
     cost_threshold : int, default 50
         Connected-component boundary threshold in raw cost units. An edge becomes
         a component boundary when its statistical cost is ``<= cost_threshold``.
-        Larger ⇒ more boundaries ⇒ smaller, safer components. Prefer the physical
-        knobs below over tuning this directly.
+        A larger value makes more boundaries and so smaller, safer components.
+        Prefer the physical knobs below over tuning this directly.
     conncomp_sigma : float or None, optional
         Set ``cost_threshold`` from a Gaussian-equivalent noise level: an edge is
         cut when its one-cycle-correction probability exceeds
-        ``0.5·erfc(sigma/√2)``. Higher ``sigma`` ⇒ stricter ⇒ more boundaries.
-        ``sigma ≈ 3.5`` reproduces the default ``cost_threshold=50``. Overrides
-        ``cost_threshold`` and ``conncomp_cycle_prob`` when given.
+        ``0.5 * erfc(sigma / sqrt(2))``. A higher sigma is stricter and makes
+        more boundaries. ``sigma`` of about 3.5 reproduces the default
+        ``cost_threshold=50``. Takes precedence over ``cost_threshold`` and
+        ``conncomp_cycle_prob`` when given.
     conncomp_cycle_prob : float or None, optional
-        Set ``cost_threshold`` directly from a target per-edge one-cycle-
-        correction probability (via :func:`cost_threshold_from_cycle_prob`). This
-        is *local edge reliability*, not a global residue-pairing probability.
-        Lower ``cycle_prob`` ⇒ stricter ⇒ more boundaries; ``≈ 2.4e-4`` matches
-        the default. Overrides ``cost_threshold`` (but ``conncomp_sigma`` wins if
-        both are given).
+        Set ``cost_threshold`` from a target per-edge one-cycle-correction
+        probability (via :func:`cost_threshold_from_cycle_prob`). This is a
+        local edge reliability, not a global residue-pairing probability. A
+        lower ``cycle_prob`` is stricter and makes more boundaries; about 2.4e-4
+        matches the default. Takes precedence over ``cost_threshold``, but
+        ``conncomp_sigma`` wins if both are given.
     conncomp_coh_floor : float or None, optional
         After labelling, drop any pixel whose coherence is below this floor to
         background (label ``0``). Unlike ``cost_threshold``, a coherence floor
         cuts regardless of the local gradient, so it cleanly removes noisy
-        low-coherence "percolation" that the cost threshold alone leaves behind.
+        low-coherence speckle that the cost threshold alone leaves behind.
     min_size_px : int, default 100
         Discard connected components smaller than this many pixels.
     max_ncomps : int, default 1024
         Maximum number of connected components to keep (largest first).
-    tile_size : int, default 0
-        ``0`` uses the verified single-tile solver (whole image). A value ``≥ 4``
-        (with ``tile_overlap ≥ 2``) opts into the experimental, unvalidated
-        tiled pipeline at that tile size - it can produce seam artifacts on
-        fragmented scenes and is not part of the validated results.
-    tile_overlap : int, default 0
-        Overlap in pixels between tiles when the tiled pipeline is used.
 
     Returns
     -------
@@ -273,8 +262,8 @@ def unwrap(
             corr,
             nlooks,
             mask=mask,
-            tile_size=tile_size,
-            tile_overlap=tile_overlap,
+            tile_size=0,
+            tile_overlap=0,
             multilook=multilook,
             cost_threshold=cost_threshold,
             min_size_px=min_size_px,
@@ -290,8 +279,8 @@ def unwrap(
             corr,
             nlooks,
             mask=mask,
-            tile_size=tile_size,
-            tile_overlap=tile_overlap,
+            tile_size=0,
+            tile_overlap=0,
             multilook=multilook,
             cost_threshold=cost_threshold,
             min_size_px=min_size_px,
