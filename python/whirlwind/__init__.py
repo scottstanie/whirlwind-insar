@@ -192,12 +192,23 @@ def unwrap(
         no regression elsewhere. Disable with ``bridge=False`` or
         ``WHIRLWIND_NO_BRIDGE=1``.
     multilook : int, default 1
-        ``> 1`` coherently down-looks the scene first (helps noisy / moderate-
-        coherence frames), unwraps the coarse frame, then upsamples.
+        Resolution-reduction factor for a coarse-but-robust solve. When ``> 1``,
+        the scene is NOT solved per-pixel: the complex interferogram is
+        coherently averaged into ``multilook × multilook`` blocks (suppressing
+        the noise the linear cost otherwise mis-routes through), that smaller
+        coarse frame is unwrapped, and its result is block-replicated back to
+        full size. The output is therefore piecewise-constant within each
+        ``multilook × multilook`` block — fringes finer than the block scale are
+        smoothed away and are *not* recovered. It trades fine detail for speed
+        (an ``multilook²``-times-smaller solve) and noise robustness, so it
+        helps on noisy / moderate-coherence scenes (e.g. Sentinel-1) where a
+        full-resolution solve mis-routes, but leave it at ``1`` for clean scenes
+        or when fine fringes matter. (Routes through the opt-in tiled path.)
     goldstein_alpha : float, default 0.0
         Goldstein adaptive-filter strength in ``[0, 1]``. ``0`` (default)
-        disables filtering; a typical "on" value is ``0.7``. When enabled, the
-        filter only informs the MCF — the integer 2π·k field it produces is
+        disables filtering; a typical "on" value is ``0.7``.
+        When enabled, the filter only informs the MCF — the integer 2π·k field
+        it produces is
         applied to the *original* wrapped phase, so every per-pixel value the
         caller passed in is preserved.
     goldstein_psize : int, default 64
