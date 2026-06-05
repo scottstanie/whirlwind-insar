@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run snaphu-py with NISAR's GUNW unwrap settings (single tile, cost=smooth,
-init=mcf — the isce3 defaults in share/nisar/defaults/insar.yaml) on a few GUNW
+init=mcf - the isce3 defaults in share/nisar/defaults/insar.yaml) on a few GUNW
 frames to get a RUNTIME baseline (and a quality reference) for the whirlwind
 comparison. snaphu-py 0.4.1's defaults already match NISAR; we only override
 min_region_size=300.
@@ -8,6 +8,7 @@ min_region_size=300.
     env -u CONDA_PREFIX uv run --no-sync python scripts/snaphu_nisar_compare.py \
         --local-h5 <WD>/nisar_gunw/*D_077*.h5 <WD>/nisar_gunw/*A_016*.h5 --nlooks 16
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,7 +30,7 @@ from bench_nisar_gunw_whirlwind import (  # noqa: E402
 
 
 def percomp_match(test_unw, prod_unw, wrapped, prod_cc, valid):
-    """Per-(production)-component ambiguity match — same metric as the ww bench."""
+    """Per-(production)-component ambiguity match - same metric as the ww bench."""
     amb = np.rint((test_unw - wrapped) / TWOPI) - np.rint((prod_unw - wrapped) / TWOPI)
     in_comp = valid & (prod_cc > 0)
     if not in_comp.any():
@@ -49,7 +50,9 @@ def main():
 
     import snaphu
 
-    print(f"snaphu {snaphu.__version__}  (cost=smooth, init=mcf, ntiles=(1,1), min_region_size=300)\n")
+    print(
+        f"snaphu {snaphu.__version__}  (cost=smooth, init=mcf, ntiles=(1,1), min_region_size=300)\n"
+    )
     for path in args.local_h5:
         with h5py.File(path, "r") as h:
             p = gunw_paths(h, None)
@@ -68,8 +71,13 @@ def main():
 
         t0 = time.perf_counter()
         unw, cc = snaphu.unwrap(
-            ig, coh, args.nlooks, cost="smooth", init="mcf",
-            mask=mask, min_region_size=300,
+            ig,
+            coh,
+            args.nlooks,
+            cost="smooth",
+            init="mcf",
+            mask=mask,
+            min_region_size=300,
         )
         dt = time.perf_counter() - t0
         unw = np.asarray(unw, np.float32)

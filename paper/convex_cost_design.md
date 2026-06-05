@@ -7,7 +7,7 @@ backends produce 0.005 %-identical answers) rules out solver-order
 tie-breaking as the cause of the residual NISAR error. That leaves
 the cost model itself as the missing piece.
 
-This doc plans the **convex-cost prototype** — the substantive next
+This doc plans the **convex-cost prototype** - the substantive next
 lane. Goal: get NISAR α=0 to within a few pp of dolphin PHASS
 (97.93 %) without changing the solver architecture beyond what
 convex MCF strictly requires.
@@ -25,11 +25,11 @@ c_e(k) = (k · nshortcycle − offset_e)² / σ²_e
   in integer cycles.
 * `offset_e` is the per-arc *preferred* integer flow. **CORRECTION
   (2026-05-28, verified against SNAPHU source):** SNAPHU computes
-  `offset = nshortcycle · (dpsi − avgdpsi)` — the DEVIATION of the raw
-  wrapped gradient from its local box-mean — NOT `avgdpsi` alone
+  `offset = nshortcycle · (dpsi − avgdpsi)` - the DEVIATION of the raw
+  wrapped gradient from its local box-mean - NOT `avgdpsi` alone
   (`snaphu_cost.c:1115-1116`; `dpsi` in cycles from `snaphu_util.c:149`).
   This deviation spikes toward ±1 cycle at an isolated wrap line (raw ≈ ±π
-  while the box-mean ≈ 0) yet is ≈0 in smooth regions — the wrap-line
+  while the box-mean ≈ 0) yet is ≈0 in smooth regions - the wrap-line
   routing signal the smoothed gradient lacks. The absolute (ramp-scale)
   flow comes from SNAPHU's coarse `unwrappedest` shift
   (`snaphu_cost.c:1127-1132`); whirlwind's analog is the anchor/cascade, so
@@ -44,7 +44,7 @@ at rate `1/σ²_e`.
 
 ## Why it should help the residual NISAR island
 
-The current Carballo cost is linear in `|k|` with `k=0` preferred —
+The current Carballo cost is linear in `|k|` with `k=0` preferred -
 *all* arcs prefer no flow. The 958k-pixel `-3 cycle` blob has a
 self-consistent solution paying `3 x (linear cost) x 958k` more
 than SNAPHU's solution. Under linear cost the routing finds a
@@ -52,7 +52,7 @@ than SNAPHU's solution. Under linear cost the routing finds a
 solution survives because each individual arc pays a modest premium.
 
 Under quadratic cost, the same 3-cycle deviation pays `9 x (cost) x
-958k` — an order of magnitude more, and crucially, *splitting* the
+958k` - an order of magnitude more, and crucially, *splitting* the
 3-cycle blob into three separate 1-cycle blobs costs only
 `3 x 1² x 958k = 3x`. Quadratic curvature makes large coherent
 errors structurally expensive in a way linear cost cannot.
@@ -88,9 +88,9 @@ they stay integer and comparable to Carballo magnitudes.
 ### Phase 2: Network state
 
 Add to `Network`:
-* `pub offsets: Vec<i32>` — length `num_forward`. Zero when not in
+* `pub offsets: Vec<i32>` - length `num_forward`. Zero when not in
   convex mode.
-* `pub weights: Vec<i32>` — length `num_forward`.
+* `pub weights: Vec<i32>` - length `num_forward`.
 * `pub convex_mode: bool`.
 
 `Network::new_convex_with_mask(...)` constructs in convex mode with
@@ -162,7 +162,7 @@ Phase 5+6 implementation completed. `unwrap_convex` in Rust and Python;
 `scripts/phass_experiments/run/run_convex.py` for reproduction.
 
 The end-to-end `diagonal_ramp_512_convex` test passes (max error 0.0
-rad) — algorithm is sound on synthetic.
+rad) - algorithm is sound on synthetic.
 
 But on real scenes, the picture is split:
 
@@ -181,11 +181,11 @@ passes. The cost machinery and solver are correct.
 NISAR: convex regresses past the unit-cap baseline. The +3 cycle blob
 that reuse partly fixed grows back, and a new error mode appears. So
 the convex cost as I've implemented it is *not* what SNAPHU produces
-on the same data — somewhere between cost formulation and solver
+on the same data - somewhere between cost formulation and solver
 interaction, the prototype solves a different problem.
 
 Plausible suspects (in order of cheapness to test):
-* ~~**σ² calibration.**~~ Tested — see below; ruled out.
+* ~~**σ² calibration.**~~ Tested - see below; ruled out.
 * **Offset polarity.** The Carballo per-direction split (DOWN gets
   `+α`, UP gets `−α`) translates to opposite signed offsets on the
   two arcs of one pixel edge. The math checks out on paper but
@@ -222,20 +222,20 @@ NISAR offsets (= round(α_smooth · 100 / 2π), bounded ±50):
 Maximum offset on NISAR is **22**, far below the saturation point at
 ±50 where wrap-line guidance kicks in (the cost-symmetric point
 between k=0 and k=±1). Most arcs have |offset|≤5, which is too small
-to matter — at |offset|=5 the cost ratio between k=0 and k=±1 is
+to matter - at |offset|=5 the cost ratio between k=0 and k=±1 is
 still 361x.
 
 Root cause: the **7x7 box smoothing** that the offset reads from
 washes wrap lines out. A wrap line is a sharp ±π discontinuity over
 ~1 pixel; box-averaged across 7 pixels (mixing both sides of the
 wrap) the smoothed gradient collapses to ~0. We measured max
-|α_smooth| ≈ 1.35 rad on NISAR — well below the theoretical π that a
+|α_smooth| ≈ 1.35 rad on NISAR - well below the theoretical π that a
 true wrap-line arc should produce.
 
 So convex cost on NISAR is *effectively* `w · k² · 10000` everywhere
 (pure quadratic, no offset structure). That strongly resists multi-
 cycle deviations, but with no offset signal to use as routing
-guidance, it just makes flow more expensive everywhere — worse than
+guidance, it just makes flow more expensive everywhere - worse than
 linear. **Suspects 2 alone is not the cause; the *preprocessing* that
 feeds the offset computation is.**
 
@@ -276,12 +276,12 @@ otherwise.
 
 | scene                      | mode                      |  wall |         K=match |
 | -------------------------- | ------------------------- | ----: | --------------: |
-| `diagonal_ramp_512_convex` | passes (0.97 s, was 91 s) |     — | max err 0.0 rad |
+| `diagonal_ramp_512_convex` | passes (0.97 s, was 91 s) |     - | max err 0.0 rad |
 | PV                         | convex, Lee var           | 8.8 s |         99.59 % |
 | NISAR                      | convex, Just/Bamler       | 402 s |         68.55 % |
 | NISAR                      | convex, Lee var           | 409 s |     **68.80 %** |
 
-NISAR moved 0.25 pp — well inside numerical noise. σ² calibration is
+NISAR moved 0.25 pp - well inside numerical noise. σ² calibration is
 *not* the cause of the regression. Suspect 1 ruled out.
 
 (Side effect: synthetic test now runs 90x faster because the Lee
@@ -294,22 +294,22 @@ Three suspects remain (offset polarity, whole-image vs tiled, and
 the no-Bellman-Ford assumption from Phase 4). Holding the convex
 prototype here per the original decision to pause + diagnose.
 
-## Resolution (2026-05-28 evening): offset fixed + solver made sound — convex is NOT a win
+## Resolution (2026-05-28 evening): offset fixed + solver made sound - convex is NOT a win
 
 All three remaining suspects addressed:
 * **Offset (Suspect 5):** switched to SNAPHU's true `nshortcycle·(dpsi −
   avgdpsi)` deviation (was `avgdpsi` alone). Offsets now reach ±~100 and
   carry wrap-line signal. Unit test `deviation_offset_zero_on_ramp_nonzero_at_feature`.
 * **Solver soundness (no-Bellman-Ford assumption):** replaced by
-  `Network::preload_convex_min` — pre-load each arc to `k* = round(offset/100)`,
+  `Network::preload_convex_min` - pre-load each arc to `k* = round(offset/100)`,
   adjust excess; at `k*` all residual marginals are ≥0 so zero potentials are
   valid and Dijkstra/heap stays sound (textbook ordered-parallel-arc convex MCF,
   no negative cycles, no Bellman-Ford). Soundness test
   `preload_makes_all_marginals_nonnegative`. The old `unwrap_convex` solve was
   silently corrupt in release (negative undo-arc marginals after a push, with
-  `debug_assert!(rc>=0)` stripped) — that is now fixed.
+  `debug_assert!(rc>=0)` stripped) - that is now fixed.
 
-**Empirical verdict — the convex cost is correct + sound but NOT the win:**
+**Empirical verdict - the convex cost is correct + sound but NOT the win:**
 | scene / mode                     | linear | convex (fixed)                 |
 | -------------------------------- | ------ | ------------------------------ |
 | Atlanta 5x whole-image           | 11.4%  | 11.0% (no help)                |
@@ -328,7 +328,7 @@ framing: the cost is ~4% of Atlanta's gap.
 ## Out of scope (for this prototype)
 
 * **Combining convex + reuse.** Convex cost should subsume reuse
-  semantics — multi-unit flow is naturally allowed by the
+  semantics - multi-unit flow is naturally allowed by the
   marginal-cost formulation. Reuse mode stays as the cheaper
   no-Goldstein default; convex is the higher-quality lane.
 * **Klein cycle-cancellation.** Hope to avoid by virtue of the

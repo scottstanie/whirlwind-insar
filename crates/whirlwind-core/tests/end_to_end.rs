@@ -24,7 +24,7 @@ fn max_abs_err(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
 
 /// The same 6π smooth-ramp regression test, but with the SNAPHU-style
 /// convex cost. Quadratic per-arc cost with nonzero preferred offset
-/// should give the *correct* topology choice directly — no need for
+/// should give the *correct* topology choice directly - no need for
 /// the reuse hack, no need for a virtual ground. If this passes it's
 /// the most principled fix to the original boundary-stacking failure.
 #[test]
@@ -121,7 +121,7 @@ fn gaussian_bump_noisy() {
     // With moderate noise and a smooth deformation, expect ≤ 2π anywhere.
     assert!(
         err < 6.5,
-        "max error {err} > 2π — unwrapping diverged on noisy bump"
+        "max error {err} > 2π - unwrapping diverged on noisy bump"
     );
 }
 
@@ -129,7 +129,7 @@ fn gaussian_bump_noisy() {
 /// the SINGLE-source SSP (`ssp::run_single_source`). This guards the correctness
 /// bar for that path: on a steep, noisy ramp that leaves residue after the 8 PD
 /// iterations (so the SSP fallback is actually exercised), the
-/// `debug_assert!(rc >= 0)` inside single-source SSP must never fire — i.e. the
+/// `debug_assert!(rc >= 0)` inside single-source SSP must never fire - i.e. the
 /// per-source capped potential update keeps reduced costs non-negative after
 /// every early-exit Dijkstra, not just at SSP entry. `cargo test` is a debug
 /// build, so the assertion is live; a regression panics here.
@@ -167,7 +167,7 @@ fn single_source_ssp_keeps_nonnegative_reduced_costs() {
 /// heap this ballooned to millions of equal-distance entries (RSS climbed
 /// without bound → hang/OOM-looking); Dial's bucket queue traverses the sea in
 /// O(nodes). This test must simply COMPLETE with finite output on the valid
-/// pixels — a regression to the heap would hang here.
+/// pixels - a regression to the heap would hang here.
 #[test]
 fn single_source_ssp_bounded_on_zero_cost_masked_sea() {
     use rand::SeedableRng;

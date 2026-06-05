@@ -1,7 +1,7 @@
 //! Python bindings for whirlwind-core.
 
 // PyO3 function signatures naturally have many args (one per Python kwarg)
-// and complex tuple return types — clippy's defaults don't fit them.
+// and complex tuple return types - clippy's defaults don't fit them.
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 use ndarray::Array2;
@@ -51,7 +51,7 @@ fn wrap_phase<'py>(py: Python<'py>, unw: PyReadonlyArray2<'py, f32>) -> Bound<'p
 ///
 /// Returns ``(labels, n_components)`` where ``labels`` is an ``(m, n)`` int32
 /// array with ``0`` for masked/background pixels and ``1..=n_components`` for
-/// each connected valid region (raster-order seeding — the same partition the
+/// each connected valid region (raster-order seeding - the same partition the
 /// MCF integrator walks in ``integrate_with_mask``). A dependency-free
 /// replacement for ``scipy.ndimage.label`` used by the bridging post-pass.
 #[pyfunction]
@@ -96,7 +96,7 @@ fn label_components<'py>(
     (labels.into_pyarray(py), next as usize)
 }
 
-/// Spiral persistent-scatterer phase interpolator — the Rust port of dolphin's
+/// Spiral persistent-scatterer phase interpolator - the Rust port of dolphin's
 /// ``interpolation.interpolate``.
 ///
 /// For each valid pixel (``ifg != 0``) with ``weights < weight_cutoff``, replaces
@@ -134,8 +134,8 @@ fn interpolate<'py>(
 /// Draws Lee-PDF phase noise around ``truth`` at per-pixel coherence
 /// ``gamma`` with ``nlooks`` looks, returning ``(igram, corr)`` where:
 ///
-/// * ``igram`` — complex64 ``exp(1j * (truth + noise))``, shape of truth.
-/// * ``corr`` — float32 sample coherence (biased upward at low γ; matches
+/// * ``igram`` - complex64 ``exp(1j * (truth + noise))``, shape of truth.
+/// * ``corr`` - float32 sample coherence (biased upward at low γ; matches
 ///   the multilook estimator). Shape of truth.
 ///
 /// Reproducible: same ``seed`` ⇒ same outputs.
@@ -155,26 +155,26 @@ fn simulate_ifg<'py>(
     (igram.into_pyarray(py), cor.into_pyarray(py))
 }
 
-/// CRLB-weighted unwrap returning ``(unwrapped_phase, conn_components)`` — the
+/// CRLB-weighted unwrap returning ``(unwrapped_phase, conn_components)`` - the
 /// phase-linked (Dolphin/EVD/EMI) twin of :func:`unwrap`.
 ///
-/// **EXPERIMENTAL / WIP — not validated.** Phase uses the tiled CRLB pipeline
+/// **EXPERIMENTAL / WIP - not validated.** Phase uses the tiled CRLB pipeline
 /// (per-tile CRLB solve + coarse anchor + cascade + gated multi-shift winding
-/// fix) — the same tiling that was mid-implementation and never brought to useful
+/// fix) - the same tiling that was mid-implementation and never brought to useful
 /// results for either coherence or CRLB. Components are grown globally from the
 /// CRLB cost grid, independent of the solve. A verified single-tile CRLB path is
 /// future work (#35).
 ///
-/// * ``igram`` — complex64, shape (m, n).
-/// * ``variance`` — float32 σ²_IG = σ²_a + σ²_b in rad², shape (m, n).
-/// * ``mask`` — optional bool, shape (m, n).
-/// * ``coherence`` — optional float32 ``[0, 1]`` confidence map for the
+/// * ``igram`` - complex64, shape (m, n).
+/// * ``variance`` - float32 σ²_IG = σ²_a + σ²_b in rad², shape (m, n).
+/// * ``mask`` - optional bool, shape (m, n).
+/// * ``coherence`` - optional float32 ``[0, 1]`` confidence map for the
 ///   anchor/cascade region-vote + seam stitch (e.g. the dolphin ``.cor``).
 ///   Defaults to a variance-derived pseudo-coherence, which is low-dynamic-
 ///   range; passing a real coherence raster markedly improves tile-block-offset
-///   pinning (#58). It is NOT used as the cost — the cost stays CRLB variance.
-/// * ``tile_size`` — 0 (default) auto-tiles frames > 512 px; ``≥ 4`` forces it.
-/// * ``cost_threshold`` / ``min_size_px`` / ``max_ncomps`` — conncomp params.
+///   pinning (#58). It is NOT used as the cost - the cost stays CRLB variance.
+/// * ``tile_size`` - 0 (default) auto-tiles frames > 512 px; ``≥ 4`` forces it.
+/// * ``cost_threshold`` / ``min_size_px`` / ``max_ncomps`` - conncomp params.
 #[pyfunction]
 #[pyo3(signature = (
     igram, variance, mask = None, coherence = None, tile_size = 0, tile_overlap = 0,
@@ -219,7 +219,7 @@ fn unwrap_crlb<'py>(
 
 /// Closure-correct a stack of unwrapped interferograms.
 ///
-/// **WARNING — opt-in, currently regresses.** Enforces exact temporal closure
+/// **WARNING - opt-in, currently regresses.** Enforces exact temporal closure
 /// (Σ ε·ψ ≡ 0 mod 2π) but degrades per-IG accuracy on real data: median
 /// absolute RMS vs SNAPHU is 2.29 rad (raw 2D + reference anchor) vs 5.61 rad
 /// (+ tree closure). `scripts/unwrap_stack.py` defaults to `closure_mode="off"`
@@ -227,12 +227,12 @@ fn unwrap_crlb<'py>(
 /// `ATBD-3d.md §10.2`.
 ///
 /// Inputs:
-///   unw_stack       : float32 (n_edges, m, n) — baseline unwrapped IGs
-///   edges_from      : uint32 (n_edges,) — reference-date index per IG
-///   edges_to        : uint32 (n_edges,) — secondary-date index per IG
-///   n_dates         : int    — number of unique acquisitions
-///   reference       : int    — date index whose phase is fixed to 0
-///   tree_priority   : float32 (n_edges,) or None — Prim weights (lower=better)
+///   unw_stack       : float32 (n_edges, m, n) - baseline unwrapped IGs
+///   edges_from      : uint32 (n_edges,) - reference-date index per IG
+///   edges_to        : uint32 (n_edges,) - secondary-date index per IG
+///   n_dates         : int    - number of unique acquisitions
+///   reference       : int    - date index whose phase is fixed to 0
+///   tree_priority   : float32 (n_edges,) or None - Prim weights (lower=better)
 ///
 /// Returns a dict with:
 ///   corrected       : float32 (n_edges, m, n)
@@ -293,7 +293,7 @@ fn closure_correct<'py>(
 /// cycle is exactly zero, any post-unwrap cycle residual is exactly 2π · K
 /// with K an integer. K=0 means all fundamental cycles through this pixel
 /// agree on the integer ambiguity choices; K≥1 means at least one cycle
-/// disagrees — typically water or decorrelated regions where per-IG
+/// disagrees - typically water or decorrelated regions where per-IG
 /// unwraps were arbitrary.
 ///
 /// Inputs:
@@ -302,7 +302,7 @@ fn closure_correct<'py>(
 ///   edges_to        : uint32  (E,)
 ///   n_dates         : int
 ///   reference       : int
-///   tree_priority   : float32 (E,) or None — same semantics as closure_correct
+///   tree_priority   : float32 (E,) or None - same semantics as closure_correct
 ///
 /// Returns: uint16 (m, n).
 #[pyfunction]
@@ -374,7 +374,7 @@ fn unwrap_crlb_grounded<'py>(
     Ok(unw.into_pyarray(py))
 }
 
-/// PHASS-style flow-reuse solver — the default whole-image tile solver. Same
+/// PHASS-style flow-reuse solver - the default whole-image tile solver. Same
 /// coherence cost as `unwrap`, but arcs carry multiple units of flow at zero
 /// marginal cost after the first push (the corner-safe behaviour that replaced
 /// the removed capacity-1 solver). See ``paper/phass_experiments.md``.
@@ -395,7 +395,7 @@ fn unwrap_reuse<'py>(
     Ok(unw.into_pyarray(py))
 }
 
-/// Capacity-1 (linear) MCF solver — exact replica of Python `whirlwind_orig`.
+/// Capacity-1 (linear) MCF solver - exact replica of Python `whirlwind_orig`.
 ///
 /// Uses unit-capacity arcs and only 8 primal-dual iterations, matching
 /// `primal_dual(network, maxiter=8)` in `ww_orig._unwrap`. Diagnostic function
@@ -443,7 +443,7 @@ fn unwrap_linear_ext_costs<'py>(
 ///
 /// Same idea as `quality_map` but uses only triangles instead of the
 /// fundamental cycle basis. Triangles are *local* (3 IGs per cycle), so
-/// errors don't accumulate over long tree paths — the recommended default
+/// errors don't accumulate over long tree paths - the recommended default
 /// for "reliable region" gating on phase-linked stacks where short-baseline
 /// triangle redundancy is the natural network structure.
 #[pyfunction]
@@ -481,25 +481,25 @@ fn quality_triangles<'py>(
 
 /// Cycle-greedy MCF refinement on an already-unwrapped stack.
 ///
-/// Unlike `closure_correct`, this does NOT trust the spanning tree —
+/// Unlike `closure_correct`, this does NOT trust the spanning tree -
 /// integer corrections can land on any edge (including tree edges), routed
 /// to whichever edge has the largest per-pixel CRLB variance in each
 /// closure-violated cycle.
 ///
 /// Inputs:
-///   unw_stack       : float32 (E, m, n) — usually closure_correct's output
-///   edges_from      : uint32 (E,) — reference-date index per IG
-///   edges_to        : uint32 (E,) — secondary-date index per IG
+///   unw_stack       : float32 (E, m, n) - usually closure_correct's output
+///   edges_from      : uint32 (E,) - reference-date index per IG
+///   edges_to        : uint32 (E,) - secondary-date index per IG
 ///   n_dates         : int
 ///   reference       : int
-///   crlb_per_date   : float32 (D, m, n) — σ²_d(p) per acquisition, in rad²
-///   tree_priority   : float32 (E,) or None — for cycle-basis selection
-///   max_iter        : int — cap on greedy iterations per pixel (32 is plenty)
+///   crlb_per_date   : float32 (D, m, n) - σ²_d(p) per acquisition, in rad²
+///   tree_priority   : float32 (E,) or None - for cycle-basis selection
+///   max_iter        : int - cap on greedy iterations per pixel (32 is plenty)
 ///
 /// Returns a dict with:
 ///   corrected            : float32 (E, m, n)
-///   corrections          : int16   (E, m, n) — additive on top of input
-///   residual_violations  : uint16  (m, n)   — cycles still open per pixel
+///   corrections          : int16   (E, m, n) - additive on top of input
+///   residual_violations  : uint16  (m, n)   - cycles still open per pixel
 ///   iterations           : uint8   (m, n)
 #[pyfunction]
 #[pyo3(signature = (
@@ -572,13 +572,13 @@ fn closure_refine_mcf<'py>(
 /// post-pass and the K-transfer back onto the original phase live in the Python
 /// ``unwrap`` wrapper (Goldstein pre-filtering is OFF by default there).
 ///
-/// * ``tile_size`` — 0 (default) is single-tile linear on the whole frame (NOT
+/// * ``tile_size`` - 0 (default) is single-tile linear on the whole frame (NOT
 ///   auto-tiled); ``≥ 4`` opts in to the unvalidated tiled pipeline at that
 ///   tile size.
-/// * ``multilook`` — > 1 routes through the coherent-downlook-first path.
-/// * ``cost_threshold`` — Carballo units (``COST_SCALE = 100``); ≈ γ̂ 0.3 at 50.
-/// * ``min_size_px`` — absolute component floor in pixels.
-/// * ``max_ncomps`` — keep at most this many components (largest by size).
+/// * ``multilook`` - > 1 routes through the coherent-downlook-first path.
+/// * ``cost_threshold`` - Carballo units (``COST_SCALE = 100``); ≈ γ̂ 0.3 at 50.
+/// * ``min_size_px`` - absolute component floor in pixels.
+/// * ``max_ncomps`` - keep at most this many components (largest by size).
 #[pyfunction]
 #[pyo3(name = "_unwrap_native", signature = (
     igram, corr, nlooks, mask = None,
@@ -631,9 +631,9 @@ fn unwrap_native<'py>(
 /// built-in cost computation. Costs must be packed in the same arc-id order
 /// as `whirlwind_core::cost::compute_carballo_costs` returns.
 ///
-/// * ``igram`` — complex64 (m, n); used for residues and integration only.
-/// * ``costs`` — int32 flat vector of length ``num_forward_arcs``.
-/// * ``mask`` — optional bool (m, n) validity mask.
+/// * ``igram`` - complex64 (m, n); used for residues and integration only.
+/// * ``costs`` - int32 flat vector of length ``num_forward_arcs``.
+/// * ``mask`` - optional bool (m, n) validity mask.
 #[pyfunction]
 #[pyo3(signature = (igram, costs, mask = None))]
 fn _unwrap_with_costs<'py>(
@@ -670,9 +670,9 @@ fn _unwrap_with_costs<'py>(
 /// is bit-identical to the Python one but typically 10x–30x faster on
 /// large scenes thanks to rustfft + rayon over independent FFT blocks.
 ///
-/// * ``igram`` — complex64, shape ``(m, n)``.
-/// * ``alpha`` — filter strength in ``[0, 1]``. 0 disables filtering.
-/// * ``psize`` — square FFT patch size (must be even, ≥ 4).
+/// * ``igram`` - complex64, shape ``(m, n)``.
+/// * ``alpha`` - filter strength in ``[0, 1]``. 0 disables filtering.
+/// * ``psize`` - square FFT patch size (must be even, ≥ 4).
 #[pyfunction]
 #[pyo3(signature = (igram, alpha = 0.7, psize = 64))]
 fn goldstein<'py>(
@@ -689,7 +689,7 @@ fn goldstein<'py>(
 /// Set the number of threads used by ww's internal parallel work.
 ///
 /// Initialises rayon's global thread pool. **Must be called before the
-/// first parallel ww function** (`unwrap*`, `goldstein`, etc.) —
+/// first parallel ww function** (`unwrap*`, `goldstein`, etc.) -
 /// rayon's global pool can only be initialised once per process.
 ///
 /// Raises ``RuntimeError`` if the pool is already initialised (either
@@ -723,7 +723,7 @@ fn num_threads() -> usize {
 /// wins) and initialise rayon's global pool to that thread count.
 /// Failures are silently dropped: rayon's `build_global` returns Err
 /// when the pool is already set (e.g. another rayon-using extension
-/// beat us to it), which is fine — we just defer to whoever did.
+/// beat us to it), which is fine - we just defer to whoever did.
 fn maybe_init_thread_pool_from_env() {
     let n = std::env::var("WHIRLWIND_NUM_THREADS")
         .ok()
@@ -743,10 +743,10 @@ fn maybe_init_thread_pool_from_env() {
 /// better results than dense unwrap-then-mask.
 ///
 /// Inputs:
-///   points: float64 (n, 2) — `(x, y)` of each valid pixel.
-///   wrapped_phase: float32 (n,) — wrapped phase per pixel.
-///   variance: float32 (n,) — CRLB phase variance σ² per pixel (rad²).
-///   max_edge_length: float or None — see `unwrap_sparse` rustdocs. Set this
+///   points: float64 (n, 2) - `(x, y)` of each valid pixel.
+///   wrapped_phase: float32 (n,) - wrapped phase per pixel.
+///   variance: float32 (n,) - CRLB phase variance σ² per pixel (rad²).
+///   max_edge_length: float or None - see `unwrap_sparse` rustdocs. Set this
 ///     to a few times the median nearest-neighbor distance; without it,
 ///     long convex-hull edges produce garbage.
 ///

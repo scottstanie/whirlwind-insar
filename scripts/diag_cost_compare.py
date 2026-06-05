@@ -13,6 +13,7 @@ line (set WHIRLWIND_DEBUG=1 when running this script).
 
 Usage: WHIRLWIND_DEBUG=1 python scripts/diag_cost_compare.py D_074
 """
+
 import sys
 import glob
 import time
@@ -30,16 +31,26 @@ tau = 2 * np.pi
 wrap = lambda x: ((x + np.pi) % tau) - np.pi
 frame = sys.argv[1]
 
-h5 = glob.glob(f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5")[0]
+h5 = glob.glob(
+    f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
+)[0]
 base = "/science/LSAR/GUNW/grids/frequencyA/unwrappedInterferogram"
 with h5py.File(h5, "r") as h:
     grp = h[base]
-    pol = sorted(k for k, v in grp.items() if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"})[0]
+    pol = sorted(
+        k
+        for k, v in grp.items()
+        if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"}
+    )[0]
     prod_unw = h[f"{base}/{pol}/unwrappedPhase"][()].astype(np.float32)
     coh = h[f"{base}/{pol}/coherenceMagnitude"][()].astype(np.float32)
     mask_arr = h[f"{base}/mask"][()] if "mask" in grp else None
 
-mask = (mask_arr != 255) & ((mask_arr // 100) % 10 == 0) if mask_arr is not None else np.ones(prod_unw.shape, bool)
+mask = (
+    (mask_arr != 255) & ((mask_arr // 100) % 10 == 0)
+    if mask_arr is not None
+    else np.ones(prod_unw.shape, bool)
+)
 mask &= np.isfinite(prod_unw) & np.isfinite(coh)
 wrapped = np.where(mask, wrap(prod_unw), 0.0).astype(np.float32)
 ig = np.exp(1j * wrapped).astype(np.complex64)
@@ -49,19 +60,30 @@ print(f"{frame}: shape={ig.shape} valid={mask.mean()*100:.1f}%", flush=True)
 # --- ww-orig: build network manually, run PD x8, read objective + balance ---
 phase = np.angle(ig).astype(np.float32)
 res = np.asarray(orig_residue(phase))
-res[0, :] = 0; res[-1, :] = 0; res[:, 0] = 0; res[:, -1] = 0
+res[0, :] = 0
+res[-1, :] = 0
+res[:, 0] = 0
+res[:, -1] = 0
 surplus = res.flatten()
 cost = orig_costs(ig, coh_in, 16.0, ~mask)
 graph = RectangularGridGraph(*res.shape)
 network = Network(graph, surplus, cost, capacity=1)
 t = time.time()
 primal_dual(network, maxiter=8)
-print(f"{frame}: ww_orig  total_cost={network.total_cost()}  "
-      f"balanced={network.is_balanced()}  total_excess={network.total_excess()}  "
-      f"({time.time()-t:.0f}s)", flush=True)
+print(
+    f"{frame}: ww_orig  total_cost={network.total_cost()}  "
+    f"balanced={network.is_balanced()}  total_excess={network.total_excess()}  "
+    f"({time.time()-t:.0f}s)",
+    flush=True,
+)
 
 # --- Rust: run unwrap_linear; the [pd_full] FINAL line prints to stderr ---
-print(f"{frame}: running Rust unwrap_linear (FINAL cost on stderr below) ...", flush=True)
+print(
+    f"{frame}: running Rust unwrap_linear (FINAL cost on stderr below) ...", flush=True
+)
 t = time.time()
 _ = ww._native.unwrap_linear(ig, coh_in, 16.0, mask)
-print(f"{frame}: unwrap_linear done ({time.time()-t:.0f}s) — see [pd_full] FINAL above", flush=True)
+print(
+    f"{frame}: unwrap_linear done ({time.time()-t:.0f}s) - see [pd_full] FINAL above",
+    flush=True,
+)

@@ -4,7 +4,7 @@
 //! raster) and the sparse Delaunay-triangulated graph (one residue per triangle
 //! face + one outer face) implement this trait. Dijkstra, the primal-dual loop,
 //! and `Network` are all generic over `G: ResidualGraph`, so swapping topology
-//! is a matter of plugging in a different impl — no fork of the solver.
+//! is a matter of plugging in a different impl - no fork of the solver.
 //!
 //! Indexing convention (shared by all impls):
 //!
@@ -13,7 +13,7 @@
 //!   * Reverse arcs are `usize` in `[num_forward(), 2 * num_forward())`, with
 //!     `transpose(fwd) = fwd + num_forward()`.
 //!
-//! Networks may *append* extra nodes/arcs on top (e.g. a ground node) — those
+//! Networks may *append* extra nodes/arcs on top (e.g. a ground node) - those
 //! live outside the trait and are managed by `Network` itself.
 
 /// Residual-graph topology. Sole reason for the trait: lets one MCF solver
@@ -41,7 +41,7 @@ pub trait ResidualGraph: Sync {
     /// Endpoints of `arc` as `(tail, head)`. Works for both forward and reverse.
     fn arc_endpoints(&self, arc: usize) -> (usize, usize);
 
-    /// Append `(arc_id, head_node)` for every outgoing arc from `node` —
+    /// Append `(arc_id, head_node)` for every outgoing arc from `node` -
     /// forward arcs out of `node` and residual reverses of forward arcs
     /// into `node`. The caller is responsible for clearing `out` first when
     /// reusing the buffer across nodes.

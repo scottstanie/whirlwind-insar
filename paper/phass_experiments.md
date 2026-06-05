@@ -2,10 +2,10 @@
 
 Companion to `paper/different_vs_snaphu_costs.md`. That doc explains *why*
 whirlwind's linear-cost SSP can't reproduce SNAPHU's smooth-cost
-unwrap. This doc tests whether a different *cost shape* — borrowed
-from PHASS — closes the gap without changing the solver.
+unwrap. This doc tests whether a different *cost shape* - borrowed
+from PHASS - closes the gap without changing the solver.
 
-**Bottom line — two answers, depending on what you ask:**
+**Bottom line - two answers, depending on what you ask:**
 
 * **Our PHASS-flavoured *cost* in our solver: no.** On both NISAR (47 M
   px, snaphu_9x9 reference) and Palos Verdes (Capella C13_SP, 750 k
@@ -18,7 +18,7 @@ from PHASS — closes the gap without changing the solver.
   That's within 2 pp of SNAPHU at zero filtering, using the actual ISCE3
   PHASS C++ code we read in `~/repos/isce3/cxx/isce3/unwrap/phass`.
 
-So the gap at α=0 is **not** in the PHASS *idea* — it's specifically in
+So the gap at α=0 is **not** in the PHASS *idea* - it's specifically in
 *our reimplementation* of pieces of that idea on top of a different
 solver. Goldstein remains the working lever for whirlwind-α=0 today,
 but PHASS-as-shipped already shows that a cost-side-only fix is
@@ -33,7 +33,7 @@ Whirlwind α=0 with four cost variants (toggled via env vars in
 | mode         | env                             | what it does                                                                                                                                 |
 | ------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `baseline`   | (none)                          | Default Carballo `γ·(π − α_smooth)`                                                                                                          |
-| `hard_cut`   | `WHIRLWIND_HARD_CUT_THRESH=2.0` | Plus: any arc with `                                                                                                                         | wrap(Δphase_raw) | ≥ 2.0` is forced to cost = 0 (PHASS-style cut, but at 2.0 rad — see below). |
+| `hard_cut`   | `WHIRLWIND_HARD_CUT_THRESH=2.0` | Plus: any arc with `                                                                                                                         | wrap(Δphase_raw) | ≥ 2.0` is forced to cost = 0 (PHASS-style cut, but at 2.0 rad - see below). |
 | `phass_cost` | `WHIRLWIND_PHASS_COST=0.5`      | Replace cost with `γ² · π` saturated at `0.5² · π` (PHASS coh-only, no α term). Conncomp threshold lowered 4x to match the lower magnitudes. |
 | `phass_full` | both env vars set               | PHASS cost + cuts.                                                                                                                           |
 
@@ -80,11 +80,11 @@ px, 31 % of frame; SNAPHU wall: 17 min, 9x9 tiling).
 | default Carballo                    | 75.0 s | **80.01** | 1.71 | 18.28 |
 | Carballo + cut @2.0 rad             | 69.8 s |     73.55 | 8.26 | 18.18 |
 | PHASS γ²                            | 92.5 s |     67.45 | 2.30 | 30.26 |
-| PHASS γ² + cut @2.0 (skipped)       |      — |         — |    — |     — |
+| PHASS γ² + cut @2.0 (skipped)       |      - |         - |    - |     - |
 | **dolphin `--unwrap-method PHASS`** |  ~60 s | **97.93** | 2.07 |  0.00 |
-| Goldstein α=0.7 (PR #19)            |   38 s | **99.90** |    — |     — |
+| Goldstein α=0.7 (PR #19)            |   38 s | **99.90** |    - |     - |
 
-The last row is from earlier work — same NISAR scene with the production
+The last row is from earlier work - same NISAR scene with the production
 default of `--goldstein-alpha 0.7`. **38 s and 99.9 % match.** With
 Goldstein on, whirlwind beats SNAPHU's 17 min wall by 27x while
 agreeing with it pixel-for-pixel on the cc=1 mainland.
@@ -114,9 +114,9 @@ dolphin unwrap --ifg-filenames .../20251224_20260117.int.looked.tif \
 Completed in roughly 60 s on this laptop, no Goldstein, and produced
 **29.41 % conncomp coverage** (53 components, vs SNAPHU's 1 component
 at 30.84 %) with **97.93 % K-match against SNAPHU 9x9** on the cc=1
-mainland (after a uniform −5 cycle global offset — expected, since
+mainland (after a uniform −5 cycle global offset - expected, since
 PHASS doesn't pin to any particular K=0 anchor). `|dK|=1: 2.07 %`,
-`|dK|≥2: 0.00 %` — no multi-cycle misroutes anywhere.
+`|dK|≥2: 0.00 %` - no multi-cycle misroutes anywhere.
 
 Plot: `plots/nisar_dolphin_phass_vs_snaphu.png`. The mountain region
 shape and the surrounding ramp match SNAPHU's pattern; the conncomp
@@ -136,12 +136,12 @@ cuts break the ties geometrically; we don't have an amplitude-edge
 detector and the phase-gradient cuts alone aren't enough.
 
 Hard cuts (`γ_edge=0` at high `|dpsi|`) add per-arc cheap channels, but
-they fire on isolated noise arcs too — and an isolated cheap arc in an
+they fire on isolated noise arcs too - and an isolated cheap arc in an
 otherwise coherent region just gives MCF a free place to dump residue
 pairs that have no business going there. We saw this in the
 [[different-vs-snaphu-costs]] *deviation* experiment too; same failure
 mode, same explanation. PHASS doesn't suffer from this as badly because
-its coh-only cost is *saturated* — every coherent arc has the same flat
+its coh-only cost is *saturated* - every coherent arc has the same flat
 high cost, so a single arc dropping to 0 is uniquely cheap. In our
 Carballo cost the surrounding γ·(π − α) values vary continuously, so
 a cut arc isn't structurally distinguishable.
@@ -152,7 +152,7 @@ a cut arc isn't structurally distinguishable.
 our linear unit-capacity SSP do not close the no-Goldstein gap on either
 scene we tested.
 
-**For phase unwrapping in general: clearly no** — both SNAPHU and PHASS
+**For phase unwrapping in general: clearly no** - both SNAPHU and PHASS
 match (each other and themselves) at α=0 without any Goldstein
 prefilter. The dolphin-PHASS row above demonstrates this directly: at
 α=0, PHASS 97.93 % vs SNAPHU within 2 pp. The Goldstein gain in
@@ -171,13 +171,13 @@ What we now know matters:
 
 Closing the gap inside whirlwind would mean either:
 
-* Adding asymmetric tie-breaking to a coh-only base cost — most likely
+* Adding asymmetric tie-breaking to a coh-only base cost - most likely
   a Canny-on-amplitude branch-cut prior, the way PHASS actually does
   it. We don't have an amplitude path today.
 * Promoting the solver to convex per-arc cost (iterative-recost SSP or
   Goldberg parallel-arc reduction). Neither is prototyped here.
 * Keeping Goldstein and shipping the PR #19 default. **38 s, 99.9 %
-  K-match with SNAPHU 9x9** — that's the working answer today, and the
+  K-match with SNAPHU 9x9** - that's the working answer today, and the
   only PHASS-class number we beat empirically.
 
 If a user truly needs no-Goldstein at scale, the practical
@@ -194,7 +194,7 @@ Each was tested.
 ### 1. The whirlwind PHASS cost port was *unfaithful*. Faithful port: pathological.
 
 ISCE3 PHASS (`PhassUnwrapper.cc:119-141`) uses `γ²·100` for low-coh edges
-and **jumps to 255** for `γ² > good_corr²` — a step function, not a
+and **jumps to 255** for `γ² > good_corr²` - a step function, not a
 flat clamp. Whirlwind's port (`cost/mod.rs:cost_dir`) instead capped the
 high-coh tail at `good_corr²·π` (flat ceiling). The reviewer expected
 restoring the 255-cliff to close most of the gap.
@@ -214,7 +214,7 @@ so once a wrap line is laid down it becomes a free reusable highway for
 subsequent demands. The 255-cliff is fine in PHASS because expensive
 arcs only get paid for once. In whirlwind, unit-capacity + linear cost
 means every wrap line pays the cliff in full and the SSP has to
-re-discover routes for each demand — the cliff produces many near-tied
+re-discover routes for each demand - the cliff produces many near-tied
 candidate paths in the bucket queue and the solver chokes.
 
 The faithful cost recipe has been reverted; the existing
@@ -231,7 +231,7 @@ saturation hard-limits each arc to one unit.
 
 This is the root architectural difference and the most plausible single
 explanation for the cost+SSP-only gap. It's also a far more invasive
-change than a cost knob — multi-capacity needs new flow accounting in
+change than a cost knob - multi-capacity needs new flow accounting in
 `primal_dual::run`, `network::Network`, and `integrate_*`. Not
 prototyped here.
 
@@ -272,7 +272,7 @@ boundary-stacking regime.
 ### Net take
 
 The PHASS-class K-agreement gap at α=0 is not closable via cost-shape
-tweaks confined to our SSP — the limiting abstraction is **linear,
+tweaks confined to our SSP - the limiting abstraction is **linear,
 unit-capacity, per-arc-cost SSP itself**, not any specific scalar tuning.
 That diagnosis is now consistent across both the cost-shape experiments
 (this doc, May) and the second-pass reviewer notes from after the
@@ -288,7 +288,7 @@ Where that leaves the scientific story:
   tiled wall on the same scene is 17 min. That's the only "we beat
   the reference" data point we currently have, and it is the publishable
   claim *if* the K-transfer back to original wrapped phase counts as
-  "no smoothing of the delivered output" (it does — Goldstein only
+  "no smoothing of the delivered output" (it does - Goldstein only
   stabilises the integer ambiguity decision, the emitted phase is
   congruent to the unfiltered input modulo 2π by construction).
 * **What does not work.** Trying to be a PHASS/SNAPHU peer *without*
@@ -302,13 +302,13 @@ Where that leaves the scientific story:
   tweaks. Neither is started here.
 
 The "Carballo papers looked better than Chen's" instinct that this
-codebase started from isn't refuted by these experiments — what we
+codebase started from isn't refuted by these experiments - what we
 have is a fast Carballo-style ambiguity solver that happens to need a
 preconditioner to match the no-filter behavior of the reference
 algorithms. Whether that's the right scientific framing for a paper, or
 whether the right next step is a solver rewrite, is the open question.
 
-## 2026-05-28 part 2: PHASS-style flow-reuse prototype — diagnosis confirmed
+## 2026-05-28 part 2: PHASS-style flow-reuse prototype - diagnosis confirmed
 
 Implemented `Network::reuse_mode` + an override in
 `shortest_path::dial` that forces reduced cost = 0 on any arc with
@@ -326,12 +326,12 @@ Result on the same two scenes, α=0 (no Goldstein), no other changes:
 | NISAR | baseline (unit-cap) |  75 s |     80.01 % | 1.71 % |    18.28 % |
 | NISAR | **reuse**           |  93 s | **92.70 %** | 0.24 % | **7.06 %** |
 | NISAR | dolphin PHASS (ref) | ~60 s |     97.93 % | 2.07 % |     0.00 % |
-| NISAR | Goldstein α=0.7     |  38 s |     99.90 % |      — |          — |
+| NISAR | Goldstein α=0.7     |  38 s |     99.90 % |      - |          - |
 
 The diagnosis holds. Flow-reuse alone (with the existing cost shape,
 no amplitude edges, no curvature) closes essentially all of the PV gap
 and ~2/3 of the NISAR gap to dolphin PHASS. The runtime tax is 1.2-5x
-baseline, well inside acceptable. And — possibly the cleanest signal —
+baseline, well inside acceptable. And - possibly the cleanest signal -
 the ignored `diagonal_ramp_512` regression test (6π smooth ramp,
 boundary stacking failure under unit-capacity MCF) **passes** under
 reuse with max error 0.0 rad. That's a stronger pass than even the
@@ -340,9 +340,9 @@ failing baseline; only the flow model changed. Test added as
 `diagonal_ramp_512_reuse`.
 
 What's left in the NISAR gap to dolphin PHASS (92.7 % → 97.9 %, the
-remaining 5 pp): one or more of —
+remaining 5 pp): one or more of -
 * **Hard cuts** at `phase_diff_th = 1.0 rad` (PHASS adds these on top
-  of cost-only routing). Now testable cleanly on top of reuse — the
+  of cost-only routing). Now testable cleanly on top of reuse - the
   earlier "hard cuts blow up runtime" failure was an artifact of the
   unit-capacity SSP, not the cuts themselves.
 * **Cost shape**: PHASS γ²·100 with the 255-cliff. Earlier diagnosed
@@ -351,7 +351,7 @@ remaining 5 pp): one or more of —
 * **Solver tuning**: bucket-queue size for the wider cost range,
   augmentation strategy.
 
-None of those require core-algorithm work — they're knobs on top of
+None of those require core-algorithm work - they're knobs on top of
 the now-working reuse path. The hard question (linear unit-capacity
 SSP as a fundamental limit) is **answered**: it was the limit, and
 relaxing the unit-capacity piece alone closes most of the gap.
@@ -364,16 +364,16 @@ threshold) and `=2.0` (the practical pre-reuse setting):
 | mode                 |             wall |     K=match |      ` |     dK | `=1 | ` | dK | `≥2 |
 | -------------------- | ---------------: | ----------: | -----: | -----: |
 | reuse alone          |             93 s | **92.70 %** | 0.24 % | 7.06 % |
-| reuse + hard_cut 1.0 | killed at >8 min |           — |      — |      — |
+| reuse + hard_cut 1.0 | killed at >8 min |           - |      - |      - |
 | reuse + hard_cut 2.0 |            125 s |     91.30 % | 1.73 % | 6.98 % |
 
-`hard_cut=1.0` is still pathological even with reuse — the zero-cost
+`hard_cut=1.0` is still pathological even with reuse - the zero-cost
 subgraph creates an unbounded bucket-0 in Dial. `hard_cut=2.0` runs
 cleanly but **hurts** K-agreement (-1.4 pp; `|dK|=1` rises from
 0.24 → 1.73 %). Mechanism: hard cuts pre-bake zero-cost arcs *before*
 any flow is pushed. With reuse, the first augmenting paths get locked
 into those pre-baked cuts. At threshold 2.0 the cuts fire on
-within-coherent-region noise as well as true wrap-line gradients —
+within-coherent-region noise as well as true wrap-line gradients -
 false positives become spurious "highways" that the routing then
 reinforces via reuse. PHASS escapes this because its auction-based
 augmentation handles tied costs differently than our Dial bucket
@@ -383,9 +383,9 @@ ours.
 Net: the residual ~5 pp NISAR gap is **not** closable by the cost-knob
 side. The two remaining options are:
 1. **Convex SNAPHU-style cost** (per-arc curvature, nonzero preferred
-   offsets) — bigger prototype, the other lane from the 2026-05-28
+   offsets) - bigger prototype, the other lane from the 2026-05-28
    diagnosis.
-2. **Smarter cut placement** — limit zero-cost arcs to clusters that
+2. **Smarter cut placement** - limit zero-cost arcs to clusters that
    look like actual wrap-line topology (long aligned runs of high
    `|wrap(Δphase_raw)|`), rather than per-arc thresholding. Effectively
    PHASS's amplitude/Canny detector, but driven from phase instead.
@@ -405,7 +405,7 @@ PY=/Users/staniewi/miniforge3/envs/mapping-312/bin/python
 cd /Users/staniewi/repos/whirlwind-insar
 maturin develop --release
 
-# Sequential — never run more than one heavy unwrap at a time on this laptop:
+# Sequential - never run more than one heavy unwrap at a time on this laptop:
 $PY scripts/phass_experiments/run/run_snaphu_pv.py
 for scene in pv nisar; do
   for mode in baseline hard_cut phass_cost; do
@@ -418,10 +418,10 @@ $PY scripts/phass_experiments/analyze/analyze.py
 Outputs land in
 `/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/phass_experiments/`:
 
-* `outputs/<scene>_<mode>.npz` — `unw`, `cc`, `k`, `elapsed`
-* `outputs/pv_snaphu.npz`      — SNAPHU smooth reference (single tile)
-* `outputs/results.md`         — the tables above
-* `plots/<scene>_k_panel.png`  — side-by-side K-field comparison
+* `outputs/<scene>_<mode>.npz` - `unw`, `cc`, `k`, `elapsed`
+* `outputs/pv_snaphu.npz`      - SNAPHU smooth reference (single tile)
+* `outputs/results.md`         - the tables above
+* `plots/<scene>_k_panel.png`  - side-by-side K-field comparison
 
 For NISAR the SNAPHU 9x9 reference is the `.snaphu_9x9.{unw,cc}.tif`
 TIFFs next to the input data, generated in earlier work.

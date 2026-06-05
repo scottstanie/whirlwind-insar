@@ -2,7 +2,7 @@
 
 Question
 --------
-Spurt builds its spatial graph over pixels with ``temp_coh > threshold`` —
+Spurt builds its spatial graph over pixels with ``temp_coh > threshold`` -
 a hard good/bad partition. We use a continuous coherence- (or CRLB-) weighted
 cost over all pixels. Does binarizing our costs by thresholding the same
 quality map recover spurt's behavior? And is binarization fragile when the
@@ -10,14 +10,14 @@ threshold lands in the middle of the coherence distribution?
 
 In whirlwind-rs the closest analog to spurt's "exclude bad pixels" is the
 existing ``mask`` argument. ``mask[i,j] = False`` sets every arc touching
-``(i,j)`` to integer cost 0 — i.e. "free to cut". (Strict exclusion would
+``(i,j)`` to integer cost 0 - i.e. "free to cut". (Strict exclusion would
 need a Rust-side change to set those arcs to large cost; not done here.)
 
 This script runs three controlled scenarios and writes PNGs + a JSON summary.
 
 Scenarios
 ---------
-1. ``bridge_between_blobs`` — two high-coherence blobs joined by a thin
+1. ``bridge_between_blobs`` - two high-coherence blobs joined by a thin
    strip of moderate coherence (γ≈0.7), embedded in a low-coherence
    background (γ≈0.3). A phase ramp runs across the bridge. Tests whether
    threshold position around 0.7 changes the *topology* of the graph:
@@ -26,12 +26,12 @@ Scenarios
    between them is unconstrained. Continuous costs should not have this
    knife-edge.
 
-2. ``noise_spike_at_boundary`` — flat truth phase. A single 2π noise spike
+2. ``noise_spike_at_boundary`` - flat truth phase. A single 2π noise spike
    sits one pixel inside the high-coh side of a γ≈0.4 / γ≈0.9 boundary.
    Tests whether moving the threshold across the boundary changes how
    the spike's residue dipole is routed.
 
-3. ``threshold_sweep`` — a noisy-bump scene; sweep the binary threshold
+3. ``threshold_sweep`` - a noisy-bump scene; sweep the binary threshold
    from 0.5 to 0.95 and plot RMSE-vs-threshold against the continuous
    baseline, measured on a common evaluation mask.
 
@@ -42,7 +42,7 @@ unreliable values where the mask=False (cost=0 lets flow stream freely
 through, but the integrated phase is not meaningful). To avoid making
 binary look artificially better by only evaluating on its own (smaller,
 easier) mask, the metrics are computed on a single *common evaluation
-mask* per scenario — the intersection of all per-method masks, or the
+mask* per scenario - the intersection of all per-method masks, or the
 strictest binary mask in the sweep.
 
 How to rerun
@@ -84,14 +84,16 @@ import whirlwind as ww
 #                + a mask = (coh > threshold). Mask=False sets arc cost to
 #                0 (cheap to cut), the spurt-style "this pixel doesn't pay
 #                penalty to cut around" behavior. Good edges get a uniform
-#                cost regardless of their actual coherence — that's the
+#                cost regardless of their actual coherence - that's the
 #                "binary" part.
 #
 # Both use the Carballo cost (``ww.unwrap``). nlooks fixed at 5.
 
 
 def unwrap_continuous(igram: np.ndarray, coh: np.ndarray, nlooks: float) -> np.ndarray:
-    unw, _cc = ww.unwrap(igram.astype(np.complex64), coh.astype(np.float32), float(nlooks))
+    unw, _cc = ww.unwrap(
+        igram.astype(np.complex64), coh.astype(np.float32), float(nlooks)
+    )
     return unw
 
 
@@ -128,7 +130,9 @@ def integer_cycle_offset(unw: np.ndarray, truth: np.ndarray, mask: np.ndarray) -
     return int(np.round(float(np.median(diff)) / (2 * np.pi)))
 
 
-def metrics(unw: np.ndarray, truth: np.ndarray, eval_mask: np.ndarray) -> dict[str, Any]:
+def metrics(
+    unw: np.ndarray, truth: np.ndarray, eval_mask: np.ndarray
+) -> dict[str, Any]:
     """RMSE + cycle-error count on `eval_mask`, NaN-skipping.
 
     Reports four things:
@@ -139,15 +143,26 @@ def metrics(unw: np.ndarray, truth: np.ndarray, eval_mask: np.ndarray) -> dict[s
       - ``n_pixels_nan`` (where this method had no answer in the eval mask)
     """
     if not eval_mask.any():
-        return {"rmse_rad": float("nan"), "n_cycle_errors": 0, "n_pixels_compared": 0, "n_pixels_nan": 0, "k": 0}
+        return {
+            "rmse_rad": float("nan"),
+            "n_cycle_errors": 0,
+            "n_pixels_compared": 0,
+            "n_pixels_nan": 0,
+            "k": 0,
+        }
     valid = eval_mask & np.isfinite(unw)
     if not valid.any():
-        return {"rmse_rad": float("nan"), "n_cycle_errors": 0, "n_pixels_compared": 0,
-                "n_pixels_nan": int(eval_mask.sum()), "k": 0}
+        return {
+            "rmse_rad": float("nan"),
+            "n_cycle_errors": 0,
+            "n_pixels_compared": 0,
+            "n_pixels_nan": int(eval_mask.sum()),
+            "k": 0,
+        }
     k = integer_cycle_offset(unw, truth, valid)
     err = (unw + 2 * np.pi * k - truth)[valid]
     return {
-        "rmse_rad": float(np.sqrt(np.mean(err ** 2))),
+        "rmse_rad": float(np.sqrt(np.mean(err**2))),
         "n_cycle_errors": int(np.sum(np.abs(err) > np.pi)),
         "n_pixels_compared": int(valid.sum()),
         "n_pixels_nan": int(eval_mask.sum() - valid.sum()),
@@ -164,7 +179,7 @@ def _add_phase_noise(
     truth: np.ndarray, coh: np.ndarray, nlooks: float, rng: np.random.Generator
 ) -> np.ndarray:
     """Gaussian-approximate Lee phase noise; std = sqrt((1-γ²)/(2 L γ²))."""
-    sigma = np.sqrt((1 - coh ** 2) / (2 * nlooks * np.maximum(coh ** 2, 1e-3)))
+    sigma = np.sqrt((1 - coh**2) / (2 * nlooks * np.maximum(coh**2, 1e-3)))
     return (truth + sigma * rng.standard_normal(truth.shape)).astype(np.float32)
 
 
@@ -175,15 +190,17 @@ def scene_bridge_between_blobs(
     rng = np.random.default_rng(seed)
     m, n = shape
     # Truth: a ramp in x. Multiple 2π wrap lines so unwrapping is non-trivial.
-    truth = (np.arange(n, dtype=np.float32) * (6 * np.pi / n))[None, :] * np.ones((m, 1), dtype=np.float32)
+    truth = (np.arange(n, dtype=np.float32) * (6 * np.pi / n))[None, :] * np.ones(
+        (m, 1), dtype=np.float32
+    )
 
     # Coherence layout: two disk blobs joined by a thin horizontal bridge.
     yy, xx = np.mgrid[0:m, 0:n].astype(np.float32)
     blob_radius = m // 6
     cy = m // 2
     cx1, cx2 = n // 4, 3 * n // 4
-    in_blob1 = (yy - cy) ** 2 + (xx - cx1) ** 2 < blob_radius ** 2
-    in_blob2 = (yy - cy) ** 2 + (xx - cx2) ** 2 < blob_radius ** 2
+    in_blob1 = (yy - cy) ** 2 + (xx - cx1) ** 2 < blob_radius**2
+    in_blob2 = (yy - cy) ** 2 + (xx - cx2) ** 2 < blob_radius**2
     in_bridge = (np.abs(yy - cy) < 3) & (xx > cx1) & (xx < cx2)
     coh = np.full(shape, 0.3, dtype=np.float32)
     coh[in_bridge] = 0.7
@@ -193,7 +210,7 @@ def scene_bridge_between_blobs(
     noisy_phase = _add_phase_noise(truth, coh, nlooks, rng)
     igram = np.exp(1j * noisy_phase).astype(np.complex64)
     # Evaluation mask: the two blobs only (where truth comparison is meaningful
-    # AND every method has reliable data — we DON'T evaluate on the bridge or
+    # AND every method has reliable data - we DON'T evaluate on the bridge or
     # background, only on the blobs).
     eval_mask = in_blob1 | in_blob2
     return {
@@ -268,7 +285,9 @@ def scene_noisy_bump(
 # ---------------------------------------------------------------------------
 
 
-def _residual_panel(ax, unw: np.ndarray, truth: np.ndarray, eval_mask: np.ndarray, title: str) -> None:
+def _residual_panel(
+    ax, unw: np.ndarray, truth: np.ndarray, eval_mask: np.ndarray, title: str
+) -> None:
     valid = eval_mask & np.isfinite(unw)
     k = integer_cycle_offset(unw, truth, valid)
     resid = np.where(np.isfinite(unw), unw + 2 * np.pi * k - truth, np.nan)
@@ -278,7 +297,8 @@ def _residual_panel(ax, unw: np.ndarray, truth: np.ndarray, eval_mask: np.ndarra
         vmax = float(2 * np.pi)
     im = ax.imshow(resid, cmap="RdBu_r", vmin=-vmax, vmax=vmax)
     ax.set_title(title, fontsize=9)
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
 
@@ -296,25 +316,30 @@ def plot_scenario(
     ax = axes[0]
     im = ax.imshow(wrapped, cmap="twilight_shifted", vmin=-np.pi, vmax=np.pi)
     ax.set_title("wrapped", fontsize=9)
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     ax = axes[1]
     im = ax.imshow(truth, cmap="viridis")
     ax.set_title("truth (unwrapped)", fontsize=9)
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     ax = axes[2]
     im = ax.imshow(coh, cmap="cividis", vmin=0, vmax=1)
     ax.set_title("coherence", fontsize=9)
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     for i, (label, payload) in enumerate(results.items(), start=3):
         _residual_panel(axes[i], payload["unw"], truth, scene["eval_mask"], label)
 
-    fig.suptitle(f"{name}: residual = unw − truth, evaluated on common mask", fontsize=11)
+    fig.suptitle(
+        f"{name}: residual = unw − truth, evaluated on common mask", fontsize=11
+    )
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -332,7 +357,12 @@ def plot_threshold_sweep(
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 3.5))
     ax1.plot(thresholds, rmses, "o-", label="binary mask")
-    ax1.axhline(cont["rmse_rad"], color="black", linestyle="--", label="continuous (all eval pixels)")
+    ax1.axhline(
+        cont["rmse_rad"],
+        color="black",
+        linestyle="--",
+        label="continuous (all eval pixels)",
+    )
     ax1.set_xlabel("threshold")
     ax1.set_ylabel("RMSE vs truth [rad]")
     ax1.set_title("RMSE on surviving eval pixels", fontsize=10)
@@ -346,7 +376,10 @@ def plot_threshold_sweep(
     ax2.set_title("data loss in eval band (γ ∈ [0.6, 0.8])", fontsize=10)
     ax2.grid(alpha=0.3)
 
-    fig.suptitle("threshold sweep (noisy_bump): binary loses pixels as T climbs;\ncontinuous keeps the whole eval band", fontsize=11)
+    fig.suptitle(
+        "threshold sweep (noisy_bump): binary loses pixels as T climbs;\ncontinuous keeps the whole eval band",
+        fontsize=11,
+    )
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -358,7 +391,9 @@ def plot_threshold_sweep(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--out", type=Path, default=Path("/tmp/binary-vs-continuous/synth"))
     args = ap.parse_args()
 
@@ -380,7 +415,10 @@ def main() -> None:
             "unw": unwrap_binary(scene["igram"], scene["coh"], t, scene["nlooks"]),
         }
     # Metric on common eval mask (the two blobs only).
-    scn_metrics = {label: metrics(p["unw"], scene["truth"], scene["eval_mask"]) for label, p in runs.items()}
+    scn_metrics = {
+        label: metrics(p["unw"], scene["truth"], scene["eval_mask"])
+        for label, p in runs.items()
+    }
     # Bonus: per-blob integer offset to expose disconnect.
     for label, p in runs.items():
         k1 = integer_cycle_offset(p["unw"], scene["truth"], scene["blob1"])
@@ -400,11 +438,18 @@ def main() -> None:
     print(f"[{name}]")
     scene = scene_noise_spike_at_boundary()
     runs = {
-        "continuous": {"unw": unwrap_continuous(scene["igram"], scene["coh"], scene["nlooks"])},
+        "continuous": {
+            "unw": unwrap_continuous(scene["igram"], scene["coh"], scene["nlooks"])
+        },
     }
     for t in (0.5, 0.7, 0.95):
-        runs[f"binary T={t}"] = {"unw": unwrap_binary(scene["igram"], scene["coh"], t, scene["nlooks"])}
-    scn_metrics = {label: metrics(p["unw"], scene["truth"], scene["eval_mask"]) for label, p in runs.items()}
+        runs[f"binary T={t}"] = {
+            "unw": unwrap_binary(scene["igram"], scene["coh"], t, scene["nlooks"])
+        }
+    scn_metrics = {
+        label: metrics(p["unw"], scene["truth"], scene["eval_mask"])
+        for label, p in runs.items()
+    }
     summary[name] = scn_metrics
     plot_scenario(name, scene, runs, out / f"{name}.png")
     for label, mt in scn_metrics.items():
@@ -427,9 +472,16 @@ def main() -> None:
         t = float(round(float(t_val), 3))
         unw = unwrap_binary(scene["igram"], scene["coh"], t, scene["nlooks"])
         sweep.append((t, metrics(unw, scene["truth"], scene["eval_mask"])))
-    summary[name] = {"continuous": cont, "sweep": [{"threshold": t, **m} for t, m in sweep]}
-    plot_threshold_sweep(sweep, cont, int(scene["eval_mask"].sum()), out / f"{name}.png")
-    print(f"    continuous     RMSE={cont['rmse_rad']:.3f}  errs={cont['n_cycle_errors']:>5d}/{cont['n_pixels_compared']}")
+    summary[name] = {
+        "continuous": cont,
+        "sweep": [{"threshold": t, **m} for t, m in sweep],
+    }
+    plot_threshold_sweep(
+        sweep, cont, int(scene["eval_mask"].sum()), out / f"{name}.png"
+    )
+    print(
+        f"    continuous     RMSE={cont['rmse_rad']:.3f}  errs={cont['n_cycle_errors']:>5d}/{cont['n_pixels_compared']}"
+    )
     for t, mt in sweep:
         print(
             f"    binary T={t:.2f}  RMSE={mt['rmse_rad']:.3f}  errs={mt['n_cycle_errors']:>5d}/{mt['n_pixels_compared']}  "

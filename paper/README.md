@@ -32,9 +32,9 @@ Copies of the three figures live in `paper/figures/`, mirrored from
 `docs/figures/` so the LaTeX build is self-contained. Regenerate the
 sources with:
 
-- `scripts/reproduce.sh --full` — `fig_palos_verdes_full_wrapped_vs_unwrapped.png`
-- `scripts/reproduce.sh` (1024² tile) — `fig_palos_verdes_1024_wrapped_vs_unwrapped.png`
-- `scripts/bench_tile_memory.py` — `fig_tile_memory.png` (memory-profile plot)
+- `scripts/reproduce.sh --full` - `fig_palos_verdes_full_wrapped_vs_unwrapped.png`
+- `scripts/reproduce.sh` (1024² tile) - `fig_palos_verdes_1024_wrapped_vs_unwrapped.png`
+- `scripts/bench_tile_memory.py` - `fig_tile_memory.png` (memory-profile plot)
 
 After regenerating, copy the new versions into `paper/figures/` before
 rebuilding the PDF.

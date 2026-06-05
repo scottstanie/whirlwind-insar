@@ -44,7 +44,7 @@ enum Cmd {
     ///
     /// Takes the wrapped phase as a single float32 TIFF (radians, range
     /// `[-π, π]`). Internally the unwrapper only reads `arg(z)` from the
-    /// IG — the magnitude is unused — so wrapped phase is the full input.
+    /// IG - the magnitude is unused - so wrapped phase is the full input.
     ///
     /// If you have a complex-valued GeoTIFF, you can extract the phase first via
     ///
@@ -59,7 +59,7 @@ enum Cmd {
         cor: PathBuf,
         /// optional valid-pixel mask (TIFF, u8/u16/i8/i16/f32/f64).
         /// Any nonzero value = valid (SNAPHU convention). Pre-saturates arcs
-        /// crossing masked pixels so MCF skips them — critical for large
+        /// crossing masked pixels so MCF skips them - critical for large
         /// real scenes with water / shadow / decorrelated regions, where
         /// the unmasked path treats NoData pixels as real residues and
         /// can slow down by 10–100x.
@@ -73,13 +73,13 @@ enum Cmd {
         /// phase is Goldstein-filtered before MCF (≈ 2x faster on noisy
         /// scenes, fewer ±2π errors at wrap-line boundaries), then the
         /// resulting integer cycle field is transferred back to the
-        /// *original* wrapped phase (dolphin PR #364 convention — avoids
+        /// *original* wrapped phase (dolphin PR #364 convention - avoids
         /// spurious 2π jumps at fringe boundaries).
         ///
         /// On a 6811x6912 NISAR scene against SNAPHU `ntiles=(9,9)` as the
         /// land-area reference (17 min wall): α=0.5 gave 93.5 % per-pixel
         /// integer-cycle agreement on the cc=1 mainland; α=0.7 gives
-        /// 99.90 % — essentially pixel-perfect agreement — while still
+        /// 99.90 % - essentially pixel-perfect agreement - while still
         /// running 27x faster than SNAPHU. α=0.75 is marginally worse
         /// (99.87 %), so 0.7 is a good "on" value for typical InSAR scenes.
         /// Default is 0 (off) while the Goldstein-on-vs-off trade-off is
@@ -393,7 +393,7 @@ fn read_f32_tiff(path: &Path) -> Result<Array2<f32>> {
     // Default `Limits` cap decoding_buffer_size at 256 MiB, which rejects
     // any single-band raster bigger than ~64 Mpx of f32 (or ~32 Mpx of f64).
     // NISAR-scale and full-frame Sentinel-1 inputs routinely exceed that, so
-    // lift the limit — this is a local CLI on trusted inputs, not a
+    // lift the limit - this is a local CLI on trusted inputs, not a
     // network-facing decoder.
     let mut d = Decoder::new(r)?.with_limits(tiff::decoder::Limits::unlimited());
     let (w, h) = d.dimensions()?;

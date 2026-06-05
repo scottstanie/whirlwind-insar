@@ -39,7 +39,7 @@ with open(CSV) as f:
 
 frames = sorted(pc)
 # Recognizable / published engines on the headline figure. ww-orig stays in
-# results.csv (for readers who know it) but is off the figure by default — set
+# results.csv (for readers who know it) but is off the figure by default - set
 # WW_ORIG=1 to include it.
 import os as _os
 
@@ -69,7 +69,7 @@ w = 0.8 / max(ne, 1)
 fig, (ax0, ax1, ax2) = plt.subplots(3, 1, figsize=(14, 11), height_ratios=[2, 1.2, 1.2])
 off = (np.arange(ne) - (ne - 1) / 2) * w
 
-# Panel 0 — per-component match vs the production SNAPHU unwrap.
+# Panel 0 - per-component match vs the production SNAPHU unwrap.
 for k, (eng, color) in enumerate(engines):
     ax0.bar(
         x + off[k],
@@ -85,7 +85,7 @@ ax0.set_xticklabels([])
 ax0.axhline(100, color="k", lw=0.5, ls=":")
 ax0.legend(loc="lower left", ncol=len(engines), fontsize=9)
 ax0.set_title(
-    "Whirlwind 2D unwrapping — NISAR GUNW 13-frame comparison (quality / runtime / peak memory)"
+    "Whirlwind 2D unwrapping - NISAR GUNW 13-frame comparison (quality / runtime / peak memory)"
 )
 if "A_025" in frames:
     ax0.annotate(
@@ -97,7 +97,7 @@ if "A_025" in frames:
         arrowprops=dict(arrowstyle="->", color="#1f77b4"),
     )
 
-# Panel 1 — runtime (log).
+# Panel 1 - runtime (log).
 for k, (eng, color) in enumerate(engines):
     ax1.bar(x + off[k], [rt[fr].get(eng, np.nan) for fr in frames], w, color=color)
 ax1.set_ylabel("runtime (s, log)")
@@ -105,7 +105,7 @@ ax1.set_yscale("log")
 ax1.set_xticks(x)
 ax1.set_xticklabels([])
 
-# Panel 2 — peak resident memory (GB).
+# Panel 2 - peak resident memory (GB).
 for k, (eng, color) in enumerate(engines):
     ax2.bar(x + off[k], [mem[fr].get(eng, np.nan) for fr in frames], w, color=color)
 ax2.set_ylabel("peak RSS (GB)")

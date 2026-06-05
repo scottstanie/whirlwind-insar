@@ -3,7 +3,7 @@
 #
 # Runs the VERIFIED single-tile path (`bench_nisar_gunw_whirlwind.py --solver
 # linear --nlooks 16`) on each frame in its OWN process, ONE AT A TIME (single-
-# tile whole-image is ~6.6 GB/frame — never run these concurrently; see the
+# tile whole-image is ~6.6 GB/frame - never run these concurrently; see the
 # concurrency note in memory). Captures per-frame:
 #   * runtime + ambiguity match/percomp + a 3-panel plot   (from the bench)
 #   * peak RSS                                              (from /usr/bin/time -l)
@@ -23,7 +23,7 @@ mkdir -p "$OUT"
 # any bench process for THIS sweep (matched by its --out-dir under $OUT) so it
 # can't accumulate. Scoped to $OUT so unrelated runs are untouched. Run this
 # script in the FOREGROUND (not a detached background task) so it dies with the
-# caller — backgrounding it is what previously orphaned children.
+# caller - backgrounding it is what previously orphaned children.
 cleanup() { pkill -9 -f -- "$OUT" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
@@ -46,7 +46,7 @@ for h5 in "$H5DIR"/*.h5; do
     --local-h5 "$h5" --solver linear --nlooks "$NLOOKS" \
     --out-dir "$OUT/$frame" $FORCE_FLAG \
     > "$OUT/$frame.stdout" 2> "$OUT/$frame.time" || {
-      printf '    FRAME FAILED (exit %d) — see %s\n' "$?" "$OUT/$frame.time"
+      printf '    FRAME FAILED (exit %d) - see %s\n' "$?" "$OUT/$frame.time"
       continue
     }
   rss=$(grep "maximum resident set size" "$OUT/$frame.time" | grep -oE '[0-9]+' | head -1 || echo 0)

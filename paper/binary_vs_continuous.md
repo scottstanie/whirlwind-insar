@@ -29,7 +29,7 @@ Two natural questions:
 
 1.  **Equivalence.**  If we threshold `temporal_coherence` and pass it as a
     binary mask to whirlwind-rs, do we recover the spurt-style behavior?
-2.  **Sensitivity.**  Spurt's hard threshold is fragile near the cutoff —
+2.  **Sensitivity.**  Spurt's hard threshold is fragile near the cutoff -
     a pixel at γ = 0.71 looks identical to a pixel at γ = 0.95 once
     binarized.  Does whirlwind-rs's continuous cost behave better in that
     fragile band?
@@ -41,12 +41,12 @@ Palos Verdes Capella SAR stack used elsewhere in the paper.
 
 In whirlwind-rs the existing `mask` argument to `ww.unwrap` /
 `ww.unwrap_crlb` is the closest analog to spurt's exclusion: `mask=False`
-sets every arc touching that pixel to integer cost 0 — cheap-to-cut.
+sets every arc touching that pixel to integer cost 0 - cheap-to-cut.
 After unwrap, pixels in the connected component of `mask=True` containing
 the seed get integrated; pixels in other components stay `NaN`
 ([crates/whirlwind-core/src/integrate.rs](../crates/whirlwind-core/src/integrate.rs)).
 This is exactly the spurt "your pixel isn't in our graph" semantics, but
-**restricted by the grid's 4-connectivity** — the key difference we
+**restricted by the grid's 4-connectivity** - the key difference we
 quantify below.
 
 Variants compared:
@@ -85,12 +85,12 @@ uv run python scripts/binary_vs_continuous_plots.py \
     --pv-out /tmp/binary-vs-continuous/pv
 ```
 
-No Rust code was added or changed for the comparison — it uses the
+No Rust code was added or changed for the comparison - it uses the
 existing `mask` argument.
 
 ## Findings
 
-### Synthetic 1 — bridge between blobs (`bridge_between_blobs.png`)
+### Synthetic 1 - bridge between blobs (`bridge_between_blobs.png`)
 
 Two high-coherence (γ = 0.9) blobs separated by a thin γ = 0.7 bridge
 embedded in a γ = 0.3 background, with a phase ramp running across.
@@ -107,22 +107,22 @@ continuous.  At T = 0.6 the bridge is kept and forces a consistent
 relative cycle between the blobs; at T = 0.8 the bridge is cut and
 blob2 falls into a different connected component, returning `NaN`.  The
 continuous variant routes the wrap-line correction through the low-coh
-background and picks up an extra 2π between blobs — a real failure mode
+background and picks up an extra 2π between blobs - a real failure mode
 worth flagging.  It is exactly the case where spurt's exclusion-based
 graph is helpful.
 
-### Synthetic 2 — noise spike at boundary (`noise_spike_at_boundary.png`)
+### Synthetic 2 - noise spike at boundary (`noise_spike_at_boundary.png`)
 
 Flat truth, a 2π noise spike two pixels inside a sharp γ = 0.4 → γ = 0.9
 boundary.  All variants except T = 0.95 reach the same answer (RMSE
 0.15, 0 cycle errors); T = 0.95 wipes the entire eval region to `NaN`.
 At realistic noise levels both cost regimes agree.
 
-### Synthetic 3 — threshold sweep (`threshold_sweep.png`)
+### Synthetic 3 - threshold sweep (`threshold_sweep.png`)
 
 Noisy Gaussian deformation bump, evaluation mask = pixels with
 γ ∈ [0.6, 0.8] (the "moderate" band).  Binary RMSE on the *surviving*
-pixels decreases monotonically with threshold — purely a survivorship
+pixels decreases monotonically with threshold - purely a survivorship
 effect; the surviving pixels are the higher-γ half of the band.  The
 right panel shows the cost: fraction of the eval band kept drops from
 1.0 at T = 0.5 to 0 at T ≈ 0.8.  Continuous keeps all 31 526 pixels at
@@ -151,7 +151,7 @@ tiny bright cluster at the top edge of the scene is reachable.
 This is the qualitative difference from spurt.  Spurt builds a
 Delaunay triangulation over the sparse kept-pixel set; long-range edges
 in that triangulation knit isolated bright pixels into a single
-connected graph.  Whirlwind-rs's grid graph cannot do that — it can
+connected graph.  Whirlwind-rs's grid graph cannot do that - it can
 only reach what is 4-connected through the mask.  On a heavily
 decorrelated scene like Palos Verdes (median `temp_coh` ≈ 0.38), the
 4-connected kept set fragments into thousands of tiny components.
@@ -159,8 +159,8 @@ decorrelated scene like Palos Verdes (median `temp_coh` ≈ 0.38), the
 The time-series panel shows the consequence: at three of the four
 hand-picked pixels (high-coh, low-coh, near-threshold) the binary
 variants have **0 / 23 finite values** because the picked pixel is
-outside the seed's component.  Only the `binary_survives` pixel — chosen
-specifically to be inside that component — has both methods present,
+outside the seed's component.  Only the `binary_survives` pixel - chosen
+specifically to be inside that component - has both methods present,
 and there the binary variants show much smaller temporal variation than
 continuous because the per-IG median fallback flattens the signal.
 
@@ -182,8 +182,8 @@ it would be a small env-var-guarded variant of the cost function (see
 The continuous cost is not strictly a superset of the binary mask
 behavior, but it is overwhelmingly preferable for the grid-graph
 architecture we use, for one architectural reason: **the grid is
-4-connected.**  Any approach that relies on dropping pixels — spurt's
-exclusion, or whirlwind-rs with a binary mask — must compensate either
+4-connected.**  Any approach that relies on dropping pixels - spurt's
+exclusion, or whirlwind-rs with a binary mask - must compensate either
 with a Delaunay-style sparse graph or with low-cost arcs through the
 "bad" set.  Whirlwind-rs takes the latter route, with the additional
 benefit of weighting "bad" pixels by their actual coherence rather than
@@ -197,8 +197,8 @@ matters most: heavily decorrelated scenes where a hard `temp_coh`
 threshold leaves only fragments, and a 4-connected grid cannot bridge
 them.
 
-The bridge synthetic is a real cautionary tale — continuous can fail
-catastrophically on contrived geometries — but it requires both a very
+The bridge synthetic is a real cautionary tale - continuous can fail
+catastrophically on contrived geometries - but it requires both a very
 low-coh routing channel (γ = 0.3) and a wrap line stretched across it,
 neither of which dominates in the PV stack.  In production the failure
 is screened out by the post-unwrap closure-quality map.
@@ -236,7 +236,7 @@ roughly neutral.
 
 Mechanism (same one that helped the bridge):
 `γ̂ < √(1/L)` ⇒ `γ_corr = 0`.  On a uniformly low-coh scene that wipes
-out *every* edge's cost, leaving MCF nothing to optimize against — the
+out *every* edge's cost, leaving MCF nothing to optimize against - the
 (π − |α|) gradient term has nothing to scale.  Bias correction tells us
 correctly that "this whole scene is consistent with γ_true ≈ 0", but our
 cost function has no graceful fallback for that case.
@@ -244,8 +244,8 @@ cost function has no graceful fallback for that case.
 The closed-form correction therefore trades one failure mode for
 another.  It is kept as an experimental knob (no effect on any default
 code path or any production figure) because the bridge result is a real
-phenomenon worth documenting and the underlying issue — biased γ in a
-plug-in likelihood — is structural.  A softer correction (non-zero floor
+phenomenon worth documenting and the underlying issue - biased γ in a
+plug-in likelihood - is structural.  A softer correction (non-zero floor
 or Bayesian shrinkage with a uniform γ_true prior) might combine the two
 behaviors; not implemented.
 
@@ -260,7 +260,7 @@ post-processing step.
 
 We ported SNAPHU's `GrowConnCompsMask` (Chen 2001 thesis; Chen & Zebker
 2002 IEEE TGRS; `snaphu_tile.c:670`).  SNAPHU's criterion is: for each
-arc, compute `min(negcost, poscost)` — the local incremental cost of
+arc, compute `min(negcost, poscost)` - the local incremental cost of
 perturbing the flow by ±1 unit at the current solution.  Arcs where this
 "flatness" is below a threshold are *cuts*; BFS through non-cut arcs
 defines components.  Small components are dropped; the largest
@@ -275,7 +275,7 @@ mask-forbidden arcs.  Notably, *MCF flow placement is not a cut
 signal*: a high-cost branch cut means MCF paid the correct price to
 close a noise-induced residue pair, which is the right answer to encode,
 not an unreliable region.  Branch cuts that *do* sit in low-coherence
-regions show up as cuts anyway because the underlying arc cost is low —
+regions show up as cuts anyway because the underlying arc cost is low -
 so the algorithm captures the meaningful cases without double-counting.
 
 API: `whirlwind.unwrap_with_conncomp(igram, coh, nlooks, mask,
@@ -287,7 +287,7 @@ from a single MCF solve.
 
 Two scenes:
 
-1. **bridge_between_blobs** — same scene as Synthetic 1.  We compare
+1. **bridge_between_blobs** - same scene as Synthetic 1.  We compare
    spurt-style (`skimage.measure.label` on `γ̂ > T`) and MCF
    components at several thresholds.  Headline numbers (256², γ̂ ∈
    {0.3, 0.7, 0.9}):
@@ -304,11 +304,11 @@ Two scenes:
    spurt sweep very closely once you align them: the same step
    transitions (background cut at low threshold; bridge cut at high
    threshold) happen at corresponding points on the two axes.  **The
-   MCF approach is not a smoother gradient on bimodal-γ̂ inputs** — both
+   MCF approach is not a smoother gradient on bimodal-γ̂ inputs** - both
    step functions are sharp because the underlying coherence
    distribution is sharp.
 
-2. **noisy_ramp_with_hole** — smooth ramp with a low-γ̂ disk.  All
+2. **noisy_ramp_with_hole** - smooth ramp with a low-γ̂ disk.  All
    approaches give the right answer: one component covering ~95% of
    the scene, the hole excluded.  Threshold-insensitive (MCF stable
    over `cost_threshold ∈ [0, 250]`; spurt stable over `T ∈ [0.5,
@@ -318,14 +318,14 @@ Two scenes:
 
 The synthetic doesn't really stress what could be the actual advantage,
 because γ̂ is set per-region rather than estimated from data.  In real
-data the Carballo cost is `γ̂ · (π − |α_smooth|)` — the product of
+data the Carballo cost is `γ̂ · (π − |α_smooth|)` - the product of
 coherence *and* a local phase-smoothness term.  Two pixels with the
 same γ̂ can have very different costs depending on the local phase
 gradient.  A spurt-style temp-coh threshold cannot distinguish these;
 the MCF cost threshold can.  That difference should appear most
 visibly on real data with regions that have high coherence but
 incoherent phase gradients (water; off-axis residues from atmosphere).
-We don't have a Palos Verdes pass on this branch — that's the obvious
+We don't have a Palos Verdes pass on this branch - that's the obvious
 next experiment.
 
 ### What this is not

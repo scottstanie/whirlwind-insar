@@ -155,7 +155,7 @@ def plot_scene(scene: str, snaphu_wall_s: float, baseline_wall_s: float):
 
 
 if __name__ == "__main__":
-    # Wall times for context — SNAPHU's own run on each scene.
+    # Wall times for context - SNAPHU's own run on each scene.
     # PV SNAPHU was 12.3 s (single tile). NISAR SNAPHU 9x9 tiled was 17 min.
     plot_scene("pv", snaphu_wall_s=12.3, baseline_wall_s=0.7)
     plot_scene("nisar", snaphu_wall_s=17 * 60, baseline_wall_s=75.0)

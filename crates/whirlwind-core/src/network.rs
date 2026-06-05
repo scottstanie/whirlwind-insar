@@ -2,17 +2,17 @@
 //! single virtual *ground* node connected to every boundary residue.
 //!
 //! Layout (forward arc indexing):
-//!     [0 .. nf_grid)              — grid forward arcs (unchanged from grid.rs)
-//!     [nf_grid .. nf_total)       — ground forward arcs, one per boundary node
+//!     [0 .. nf_grid)              - grid forward arcs (unchanged from grid.rs)
+//!     [nf_grid .. nf_total)       - ground forward arcs, one per boundary node
 //! Reverse arcs sit at the corresponding offsets `+ nf_total`:
-//!     [nf_total .. nf_total + nf_grid) — grid reverses
-//!     [nf_total + nf_grid .. 2*nf_total) — ground reverses
+//!     [nf_total .. nf_total + nf_grid) - grid reverses
+//!     [nf_total + nf_grid .. 2*nf_total) - ground reverses
 //!
 //! Centralising the forward-count in `Network::num_forward()` means callers
 //! must use `net.transpose(arc)` (not `g.transpose(arc)`) and `net.num_forward()`
 //! (not `g.num_forward`) whenever they need to flip arc direction. Grid arc
 //! IDs themselves are unchanged, so integration's `g.right_arc(...)` /
-//! `net.arc_flow(...)` flow happens to be backward-compatible — only the
+//! `net.arc_flow(...)` flow happens to be backward-compatible - only the
 //! transpose math shifts.
 
 use crate::grid::RectangularGridGraph;
@@ -32,14 +32,14 @@ pub struct Network {
     pub flow_count: Vec<i32>,
     /// PHASS-style flow-reuse mode: arcs never saturate (multi-unit capacity)
     /// and Dial overrides reduced cost to 0 on any arc with `flow_count != 0`.
-    /// Prototype path — see `solver_reuse` history and `unwrap_reuse`.
+    /// Prototype path - see `solver_reuse` history and `unwrap_reuse`.
     pub reuse_mode: bool,
 
     /// SNAPHU-style convex cost mode: cost is parabolic in flow per arc,
     /// `c_e(k) = weights[e] · (k · 100 − offsets[e])²`. Dial uses the
     /// *marginal* cost (cost of pushing one more unit at current flow)
     /// via [`Network::marginal_cost`]. Arcs are effectively multi-unit
-    /// capacity (no saturation under convex_mode). Prototype path —
+    /// capacity (no saturation under convex_mode). Prototype path -
     /// see [`Network::new_convex_with_mask`] and `unwrap_convex`.
     pub convex_mode: bool,
     /// Per-forward-arc preferred-flow offsets (in units of nshortcycle=100).
@@ -76,7 +76,7 @@ pub struct Network {
 //   (fwd=false, rev=true)  : initial state, capacity 1 forward, 0 reverse
 //   (fwd=true,  rev=false) : 1 unit of flow on forward arc
 //   (fwd=true,  rev=true)  : arc is **forbidden** (mask said either endpoint
-//                            pixel is invalid) — both directions saturated,
+//                            pixel is invalid) - both directions saturated,
 //                            never carry flow
 //   (fwd=false, rev=false) : unreachable
 
@@ -105,7 +105,7 @@ impl Network {
     /// `offsets[a]` and `weights[a]` together define the per-arc parabolic
     /// cost `c_e(k) = weights[a] · (k · 100 − offsets[a])²`, where `k` is
     /// the integer signed flow tracked in `flow_count[a]`. The `cost_fwd`
-    /// field is left as a placeholder of zeros — Dial uses
+    /// field is left as a placeholder of zeros - Dial uses
     /// [`Network::marginal_cost`] instead in convex mode.
     ///
     /// Arcs are effectively multi-unit capacity in convex mode (no
@@ -114,7 +114,7 @@ impl Network {
     /// parabola minimum `k* = round(offset/100)`), which would corrupt the
     /// Dijkstra/heap SSP. The caller MUST call [`Network::preload_convex_min`]
     /// first: it loads each arc to `k*` and adjusts node excess, after which
-    /// every residual marginal is ≥0 and zero initial potentials are valid —
+    /// every residual marginal is ≥0 and zero initial potentials are valid -
     /// no Bellman-Ford pre-pass needed (every subsequent push moves away from
     /// the minimum → non-negative, non-decreasing marginals).
     pub fn new_convex_with_mask(
@@ -145,7 +145,7 @@ impl Network {
         // they're unreachable until forward flow opens them. Convex_mode
         // wants reverse arcs available from t=0 (the cost is parabolic; the
         // cheaper push direction can be backward). Unsaturate reverse arcs
-        // that aren't part of a masked-out edge — forbidden arcs (`fwd=true,
+        // that aren't part of a masked-out edge - forbidden arcs (`fwd=true,
         // rev=true`) stay forbidden; only the (fwd=false, rev=true) entries
         // get unsaturated to (false, false).
         let nf_total = net.num_forward();
@@ -173,11 +173,11 @@ impl Network {
     /// a dense rectangular raster (e.g. the sparse triangulated graph used by
     /// `unwrap_sparse`).
     ///
-    /// * `excess` — per-node integer winding count. Must satisfy
+    /// * `excess` - per-node integer winding count. Must satisfy
     ///   `excess.len() == num_nodes` and `excess.iter().sum() == 0`.
-    /// * `costs` — per-forward-arc integer cost. Must satisfy
+    /// * `costs` - per-forward-arc integer cost. Must satisfy
     ///   `costs.len() == num_forward`.
-    /// * `forbidden_fwd` — optional bitset of forward arcs to pre-saturate
+    /// * `forbidden_fwd` - optional bitset of forward arcs to pre-saturate
     ///   (both directions). Length `num_forward`. Useful when the caller
     ///   wants to disallow flow on specific edges before the solve.
     ///
@@ -243,7 +243,7 @@ impl Network {
     /// from an integer flow vector, intended as a hook for spurt-PR-#97-style
     /// B⊥ ambiguity warm-starts. Entries must be in `{-1, 0, +1}`.
     ///
-    /// # Known issues — do not use in production
+    /// # Known issues - do not use in production
     ///
     /// 1. **Excess is NOT adjusted.** Despite the "warm-start" framing, this
     ///    function only toggles `is_saturated`. To preserve the MCF
@@ -264,7 +264,7 @@ impl Network {
     ///
     /// Until that machinery lands, prefer the [`Network::from_topology`]
     /// `excess` parameter for "apply div(warm-start) without saturating
-    /// arcs" — which is what `unwrap_sparse` currently does.
+    /// arcs" - which is what `unwrap_sparse` currently does.
     #[doc(hidden)]
     pub fn warm_start<G: ResidualGraph>(&mut self, g: &G, flow: &[i32]) {
         assert_eq!(flow.len(), self.num_grid_forward);
@@ -284,7 +284,7 @@ impl Network {
     /// cost `c`. Lets MCF drain wrap-line termination charges at the image
     /// boundary without forcing them to pair with distant interior partners.
     ///
-    /// `c == 0` makes the ground arc free — MCF then *always* prefers ground
+    /// `c == 0` makes the ground arc free - MCF then *always* prefers ground
     /// for boundary residues, which is desirable for clean wrapping inputs
     /// (no interior residues ⇒ Itoh integration alone recovers the unwrap)
     /// but for noisy data can pull interior residues toward boundary along
@@ -508,7 +508,7 @@ impl Network {
     // -- forbidding -----------------------------------------------------------
 
     /// Forbid the arcs that run *along* the boundary frame of the residue
-    /// grid. Kept for future flow-policy experiments — not called by default.
+    /// grid. Kept for future flow-policy experiments - not called by default.
     #[allow(dead_code)]
     fn forbid_frame_along_arcs(&mut self, g: &RectangularGridGraph) {
         let m = g.m;
@@ -608,7 +608,7 @@ impl Network {
         self.is_saturated[arc]
     }
 
-    /// In `reuse_mode`, an arc with `|flow_count| > 0` is "used" — Dial will
+    /// In `reuse_mode`, an arc with `|flow_count| > 0` is "used" - Dial will
     /// override its reduced cost to 0 (PHASS `ASSP.cc:2034` behavior). In
     /// MCF mode, always returns false (no override).
     #[inline]
@@ -672,13 +672,13 @@ impl Network {
     /// `w·(k·100 − offset)²` is minimized at integer `k*`; at `k*` BOTH the
     /// forward (`k*→k*+1`) and reverse (`k*→k*−1`) marginal costs are ≥0
     /// (a move in either direction climbs the parabola). So after pre-loading
-    /// every arc to its own `k*`, all residual marginals are ≥0 — zero initial
+    /// every arc to its own `k*`, all residual marginals are ≥0 - zero initial
     /// potentials are valid and the successive-shortest-path solver (Dijkstra /
     /// heap) stays sound for the rest of the run, since every subsequent push
     /// moves an arc *away* from its minimum (non-negative, non-decreasing
     /// marginal: the textbook ordered-parallel-arc reduction of convex-cost MCF,
     /// Ahuja–Magnanti–Orlin §14.5). No Bellman-Ford pre-pass and no negative
-    /// cycles are needed — the negativity the old `unwrap_convex` tripped over
+    /// cycles are needed - the negativity the old `unwrap_convex` tripped over
     /// (a forward push at `k=0` when `offset>50`, then a negative undo arc) is
     /// eliminated by starting at `k*` instead of `0`.
     ///
@@ -884,7 +884,7 @@ mod convex_marginal_tests {
     }
 
     /// SOUNDNESS of `preload_convex_min`: a large offset (|offset|>50) makes the
-    /// forward marginal NEGATIVE at f=0 — which would silently corrupt the
+    /// forward marginal NEGATIVE at f=0 - which would silently corrupt the
     /// release Dijkstra (its `debug_assert!(rc>=0)` is compiled out). After
     /// pre-loading each arc to k*=round(offset/100), EVERY arc's marginal in
     /// BOTH directions must be ≥0 (zero potentials are then valid), and the

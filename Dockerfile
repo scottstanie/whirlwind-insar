@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
 # Containerized whirlwind CLI (the `whirlwind` binary from crates/whirlwind-cli).
-# Pure Rust — the only raster I/O is the `tiff` crate (0.10), so there is NO GDAL
+# Pure Rust - the only raster I/O is the `tiff` crate (0.10), so there is NO GDAL
 # / libtiff / system geo dependency: the runtime image is just glibc + the binary.
 #
 #   docker build -t whirlwind .

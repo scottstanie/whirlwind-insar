@@ -25,6 +25,7 @@ import numpy as np
 import rasterio
 from rasterio.windows import Window
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from datetime import datetime
@@ -58,14 +59,20 @@ def _phase_cmap():
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--ours", type=Path, required=True)
-    p.add_argument("--dolphin", type=Path, default=None,
-                   help="dolphin output dir (optional, needed for diff plots)")
-    p.add_argument("--out", type=Path, required=True,
-                   help="figure output directory")
-    p.add_argument("--name", default="palos_verdes",
-                   help="prefix for output filenames")
-    p.add_argument("--n-sample-pixels", type=int, default=5,
-                   help="number of pixels to plot in the timeseries figure")
+    p.add_argument(
+        "--dolphin",
+        type=Path,
+        default=None,
+        help="dolphin output dir (optional, needed for diff plots)",
+    )
+    p.add_argument("--out", type=Path, required=True, help="figure output directory")
+    p.add_argument("--name", default="palos_verdes", help="prefix for output filenames")
+    p.add_argument(
+        "--n-sample-pixels",
+        type=int,
+        default=5,
+        help="number of pixels to plot in the timeseries figure",
+    )
     args = p.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -74,7 +81,11 @@ def main() -> None:
     dates = report["dates"]
     ref = report["reference_pixel"]
     window = report.get("window")
-    crop = Window(window[1], window[0], window[3] - window[1], window[2] - window[0]) if window else None  # type: ignore[call-arg]
+    crop = (
+        Window(window[1], window[0], window[3] - window[1], window[2] - window[0])
+        if window
+        else None
+    )  # type: ignore[call-arg]
     closure_on = report.get("closure_mode", "tree") != "off"
 
     print(f"[fig] {len(edges)} IGs over {len(dates)} dates")
@@ -96,7 +107,9 @@ def main() -> None:
     im0 = axes[0].imshow(wrapped, cmap=_phase_cmap(), vmin=-np.pi, vmax=np.pi)
     axes[0].set_title(f"Wrapped phase\n{name_ig[:8]}_{name_ig[15:23]}")
     plt.colorbar(im0, ax=axes[0], shrink=0.7, label="rad")
-    im1 = axes[1].imshow(ours, cmap="RdBu_r", vmin=np.percentile(ours, 1), vmax=np.percentile(ours, 99))
+    im1 = axes[1].imshow(
+        ours, cmap="RdBu_r", vmin=np.percentile(ours, 1), vmax=np.percentile(ours, 99)
+    )
     suffix = "closure-corrected, anchored" if closure_on else "anchored"
     axes[1].set_title(f"whirlwind-rs unwrapped\n({suffix})")
     plt.colorbar(im1, ax=axes[1], shrink=0.7, label="rad")
@@ -105,8 +118,12 @@ def main() -> None:
         if unw_path.exists():
             theirs = _read(unw_path, crop)
             theirs_a = theirs - theirs[ref["i"], ref["j"]]
-            im2 = axes[2].imshow(theirs_a, cmap="RdBu_r",
-                                  vmin=np.percentile(ours, 1), vmax=np.percentile(ours, 99))
+            im2 = axes[2].imshow(
+                theirs_a,
+                cmap="RdBu_r",
+                vmin=np.percentile(ours, 1),
+                vmax=np.percentile(ours, 99),
+            )
             axes[2].set_title("dolphin SNAPHU unwrapped\n(anchored at our reference)")
             plt.colorbar(im2, ax=axes[2], shrink=0.7, label="rad")
         else:
@@ -143,8 +160,12 @@ def main() -> None:
     if closure_on:
         rms = _read(args.ours / "closure_rms.tif")
         fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
-        im = ax.imshow(rms, cmap="magma", vmin=0, vmax=max(1e-3, float(np.percentile(rms, 99))))
-        ax.set_title(f"Closure RMS after correction (≈ 0 by construction)\nmean = {rms.mean():.2e} rad")
+        im = ax.imshow(
+            rms, cmap="magma", vmin=0, vmax=max(1e-3, float(np.percentile(rms, 99)))
+        )
+        ax.set_title(
+            f"Closure RMS after correction (≈ 0 by construction)\nmean = {rms.mean():.2e} rad"
+        )
         plt.colorbar(im, ax=ax, shrink=0.7, label="rad")
         fig.savefig(args.out / f"fig_{args.name}_closure_rms.png", dpi=120)
         plt.close(fig)
@@ -152,10 +173,14 @@ def main() -> None:
 
         with rasterio.open(args.ours / "date_phase_std.tif") as src:
             std_cube = src.read()  # (D, m, n)
-        per_date_med = np.array([
-            float(np.median(std_cube[d][std_cube[d] > 0])) if (std_cube[d] > 0).any() else 0.0
-            for d in range(std_cube.shape[0])
-        ])
+        per_date_med = np.array(
+            [
+                float(np.median(std_cube[d][std_cube[d] > 0]))
+                if (std_cube[d] > 0).any()
+                else 0.0
+                for d in range(std_cube.shape[0])
+            ]
+        )
         fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
         per_date_row = std_cube.mean(axis=2)
         im = axes[0].imshow(per_date_row, aspect="auto", cmap="viridis", origin="lower")
@@ -175,7 +200,7 @@ def main() -> None:
         print(f"[fig] wrote fig_{args.name}_posterior_std.png")
 
     # ---- Figure 4 + 5: per-IG diff vs dolphin SNAPHU (if available) ----
-    # We compare against dolphin/unwrapped/*.unw.tif — the per-IG SNAPHU
+    # We compare against dolphin/unwrapped/*.unw.tif - the per-IG SNAPHU
     # outputs, which are the right apples-to-apples baseline for our per-IG
     # closure-corrected unwrap. Dolphin's timeseries/*.tif files are
     # SBAS-inverted DISPLACEMENT in meters (single-reference network), a
@@ -209,7 +234,9 @@ def main() -> None:
             pct_within.append(pct)
             abs_rms.append(rms)
             names.append(n)
-            d_t = (_parse_date(e["to"]) - _parse_date(e["from"])).total_seconds() / 86400
+            d_t = (
+                _parse_date(e["to"]) - _parse_date(e["from"])
+            ).total_seconds() / 86400
             baseline_days.append(d_t)
             if diff_panel is None and abs(rms - np.median(abs_rms or [rms])) < 1e-9:
                 diff_panel = d_mod
@@ -230,11 +257,17 @@ def main() -> None:
         if diff_panel is not None and diff_panel_name is not None:
             fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
             abs_diff = np.abs(diff_panel)
-            im = ax.imshow(abs_diff, cmap="hot",
-                           vmin=0, vmax=max(0.01, float(np.percentile(abs_diff, 99))))
+            im = ax.imshow(
+                abs_diff,
+                cmap="hot",
+                vmin=0,
+                vmax=max(0.01, float(np.percentile(abs_diff, 99))),
+            )
             short = f"{diff_panel_name[:8]}_{diff_panel_name[15:23]}"
-            ax.set_title(f"|whirlwind − dolphin SNAPHU| mod 2π  for {short}\n"
-                         f"max = {abs_diff.max():.4g} rad, median = {np.median(abs_diff):.2e} rad")
+            ax.set_title(
+                f"|whirlwind − dolphin SNAPHU| mod 2π  for {short}\n"
+                f"max = {abs_diff.max():.4g} rad, median = {np.median(abs_diff):.2e} rad"
+            )
             plt.colorbar(im, ax=ax, shrink=0.7, label="rad")
             fig.savefig(args.out / f"fig_{args.name}_diff_vs_dolphin.png", dpi=120)
             plt.close(fig)
@@ -245,19 +278,23 @@ def main() -> None:
         axes[0].scatter(baseline_days, pct_within, alpha=0.6)
         axes[0].set_xlabel("temporal baseline (days)")
         axes[0].set_ylabel("% of pixels within π/2 of dolphin (mod 2π)")
-        axes[0].set_title(f"per-IG mod-2π agreement  (median {np.median(pct_within):.1f}%)")
+        axes[0].set_title(
+            f"per-IG mod-2π agreement  (median {np.median(pct_within):.1f}%)"
+        )
         axes[0].set_ylim(min(99, min(pct_within) - 1), 100.5)
         axes[0].grid(alpha=0.3)
         axes[1].scatter(baseline_days, abs_rms, alpha=0.6)
         axes[1].set_xlabel("temporal baseline (days)")
         axes[1].set_ylabel("absolute RMS diff vs dolphin (rad)")
-        axes[1].set_title(f"per-IG absolute disagreement  (median {np.median(abs_rms):.2f} rad)")
+        axes[1].set_title(
+            f"per-IG absolute disagreement  (median {np.median(abs_rms):.2f} rad)"
+        )
         axes[1].grid(alpha=0.3)
         fig.savefig(args.out / f"fig_{args.name}_per_ig_metrics.png", dpi=120)
         plt.close(fig)
         print(f"[fig] wrote fig_{args.name}_per_ig_metrics.png")
 
-    # ---- θ_d(t) at sample pixels — only meaningful when closure was run ----
+    # ---- θ_d(t) at sample pixels - only meaningful when closure was run ----
     if closure_on:
         with rasterio.open(args.ours / "date_phases.tif") as src:
             theta = src.read()  # (D, m, n)
@@ -272,7 +309,7 @@ def main() -> None:
                     break
         fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
         dts = [_parse_date(d) for d in dates]
-        for (i, j) in sample_ij:
+        for i, j in sample_ij:
             ax.plot(dts, theta[:, i, j], "o-", alpha=0.7, label=f"({i},{j})")
         ax.axhline(0, color="black", lw=0.5, alpha=0.5)
         ax.set_xlabel("acquisition date")

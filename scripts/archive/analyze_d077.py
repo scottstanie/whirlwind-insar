@@ -10,6 +10,7 @@ whole-image, ww-tiled (default), and production, then:
   (B) cross per-component matches: snaphu-vs-prod, ww-vs-prod, ww-vs-snaphu.
   (C) a 5-panel comparison figure.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,6 +27,7 @@ WD = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning")
 def boxcar(a, k=7):
     """Separable box mean, edge-replicate; numpy-only."""
     from numpy.lib.stride_tricks import sliding_window_view as swv
+
     pad = k // 2
     ap = np.pad(a, ((pad, pad), (0, 0)), mode="edge")
     a = swv(ap, k, axis=0).mean(-1)
@@ -49,7 +51,7 @@ def snaphu_sigsq_edge(rho, nlooks):
 def map_objective(phi, wrapped, coh, mask, nlooks):
     """Convex MAP objective J = sum_edges (ns*(grad_cycles - avgdpsi))^2 / sigsq,
     over edges with both endpoints valid. (snaphu smooth cost; ww's is the same
-    structure with Lee variance — qualitative cost ranking is identical.)"""
+    structure with Lee variance - qualitative cost ranking is identical.)"""
     # NaN-safe: zero invalid samples (validity mask excludes them from the sum;
     # the shared avgdpsi bias near masked regions cancels in the cross-field ranking).
     phi = np.nan_to_num(phi, nan=0.0)
@@ -59,16 +61,20 @@ def map_objective(phi, wrapped, coh, mask, nlooks):
     dxw = ((wrapped[:, 1:] - wrapped[:, :-1] + np.pi) % TWOPI - np.pi) / TWOPI
     dyw = ((wrapped[1:, :] - wrapped[:-1, :] + np.pi) % TWOPI - np.pi) / TWOPI
     # boxcar of wrapped gradients -> avgdpsi (pad gradients back to full grid for boxcar)
-    dxw_full = np.zeros_like(wrapped); dxw_full[:, :-1] = dxw
-    dyw_full = np.zeros_like(wrapped); dyw_full[:-1, :] = dyw
+    dxw_full = np.zeros_like(wrapped)
+    dxw_full[:, :-1] = dxw
+    dyw_full = np.zeros_like(wrapped)
+    dyw_full[:-1, :] = dyw
     avgx = boxcar(dxw_full)[:, :-1]
     avgy = boxcar(dyw_full)[:-1, :]
     # unwrapped gradients (cycles) of the candidate field
     gx = (phi[:, 1:] - phi[:, :-1]) / TWOPI
     gy = (phi[1:, :] - phi[:-1, :]) / TWOPI
     # per-edge coherence (min of endpoints) and sigsq
-    cx = np.minimum(coh[:, 1:], coh[:, :-1]); cy = np.minimum(coh[1:, :], coh[:-1, :])
-    sx = snaphu_sigsq_edge(cx, nlooks); sy = snaphu_sigsq_edge(cy, nlooks)
+    cx = np.minimum(coh[:, 1:], coh[:, :-1])
+    cy = np.minimum(coh[1:, :], coh[:-1, :])
+    sx = snaphu_sigsq_edge(cx, nlooks)
+    sy = snaphu_sigsq_edge(cy, nlooks)
     vx = mask[:, 1:] & mask[:, :-1] & np.isfinite(gx)
     vy = mask[1:, :] & mask[:-1, :] & np.isfinite(gy)
     jx = (NS * (gx - avgx)) ** 2 / sx
@@ -94,23 +100,34 @@ def main():
     args = ap.parse_args()
 
     sn = np.load(WD / "snaphu_ref" / "D_077.npz")
-    prod_unw = sn["prod_unw"]; prod_cc = sn["prod_cc"].astype(np.int64)
-    coh = sn["coh"]; mask = sn["mask"]; wrapped = sn["wrapped"]
+    prod_unw = sn["prod_unw"]
+    prod_cc = sn["prod_cc"].astype(np.int64)
+    coh = sn["coh"]
+    mask = sn["mask"]
+    wrapped = sn["wrapped"]
     snaphu_unw = sn["snaphu_unw"]
-    print(f"snaphu: per-comp-vs-prod={sn['percomp']*100:.2f}%  runtime={sn['runtime_s']:.0f}s")
+    print(
+        f"snaphu: per-comp-vs-prod={sn['percomp']*100:.2f}%  runtime={sn['runtime_s']:.0f}s"
+    )
 
     cvx = np.load(glob.glob(str(WD / "ww_gunw_convex/*D_077*/full_arrays.npz"))[0])
     ww_convex = cvx["ww_unw"]
     til = np.load(glob.glob(str(WD / "ww_gunw_expand/*D_077*/full_arrays.npz"))[0])
     ww_tiled = til["ww_unw"]
 
-    fields = {"production": prod_unw, "snaphu": snaphu_unw,
-              "ww_tiled": ww_tiled, "ww_convex_whole": ww_convex}
+    fields = {
+        "production": prod_unw,
+        "snaphu": snaphu_unw,
+        "ww_tiled": ww_tiled,
+        "ww_convex_whole": ww_convex,
+    }
 
     print("\n=== (A) convex MAP objective J (lower=cost-optimal) ===")
     Js = {}
     for name, phi in fields.items():
-        Js[name] = map_objective(phi.astype(np.float64), wrapped, coh, mask, args.nlooks)
+        Js[name] = map_objective(
+            phi.astype(np.float64), wrapped, coh, mask, args.nlooks
+        )
     base = Js["production"]
     for name, j in sorted(Js.items(), key=lambda kv: kv[1]):
         print(f"  {name:18s} J={j:.4e}   (x production = {j/base:.3f})")
@@ -126,27 +143,54 @@ def main():
     # ww vs snaphu (does ww match snaphu's winding better than production's?)
     sn_cc_proxy = prod_cc  # align within production components
     for name in ("ww_tiled", "ww_convex_whole"):
-        phi = fields[name]; v = mask & np.isfinite(phi) & np.isfinite(snaphu_unw)
+        phi = fields[name]
+        v = mask & np.isfinite(phi) & np.isfinite(snaphu_unw)
         m_sn = percomp_match(phi, snaphu_unw, wrapped, sn_cc_proxy, v)
         print(f"  {name:18s} vs snaphu     per-comp = {m_sn*100:5.2f}%")
 
     # (C) figure
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
     st = 4
     fig, ax = plt.subplots(2, 3, figsize=(15, 9))
+
     def sh(a, d, t, **kw):
-        v = d[::st, ::st]; im = a.imshow(v, **kw); a.set_title(t, fontsize=10); a.axis("off")
+        v = d[::st, ::st]
+        im = a.imshow(v, **kw)
+        a.set_title(t, fontsize=10)
+        a.axis("off")
         fig.colorbar(im, ax=a, fraction=0.046)
-    sh(ax[0, 0], wrapped, "wrapped input (rad)", cmap="twilight", vmin=-np.pi, vmax=np.pi)
+
+    sh(
+        ax[0, 0],
+        wrapped,
+        "wrapped input (rad)",
+        cmap="twilight",
+        vmin=-np.pi,
+        vmax=np.pi,
+    )
     sh(ax[0, 1], np.where(mask, coh, np.nan), "coherence", cmap="gray", vmin=0, vmax=1)
     pm = np.where(mask & (prod_cc > 0), prod_unw, np.nan)
     lo, hi = np.nanpercentile(pm, [2, 98])
     sh(ax[0, 2], pm, "production (NISAR GUNW=snaphu)", cmap="viridis", vmin=lo, vmax=hi)
-    sh(ax[1, 0], np.where(valid, snaphu_unw, np.nan), f"snaphu re-run ({sn['percomp']*100:.0f}%)", cmap="viridis", vmin=lo, vmax=hi)
+    sh(
+        ax[1, 0],
+        np.where(valid, snaphu_unw, np.nan),
+        f"snaphu re-run ({sn['percomp']*100:.0f}%)",
+        cmap="viridis",
+        vmin=lo,
+        vmax=hi,
+    )
     sh(ax[1, 1], np.where(mask, ww_tiled, np.nan), "ww tiled (default)", cmap="viridis")
-    sh(ax[1, 2], np.where(mask, ww_convex, np.nan), "ww convex whole-image", cmap="viridis")
+    sh(
+        ax[1, 2],
+        np.where(mask, ww_convex, np.nan),
+        "ww convex whole-image",
+        cmap="viridis",
+    )
     fig.suptitle("D_077: production vs snaphu vs whirlwind (tiled / convex-whole)")
     fig.tight_layout()
     out = WD / "snaphu_ref" / "D_077_compare.png"

@@ -78,24 +78,89 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     src = p.add_argument_group("inputs")
-    src.add_argument("--local-h5", nargs="*", type=Path, default=[], help="Existing GUNW .h5 files to benchmark.")
-    src.add_argument("--granule", nargs="*", default=[], help="Exact NISAR GUNW granule names to search/download with earthaccess.")
-    src.add_argument("--bbox", nargs=4, type=float, metavar=("MINLON", "MINLAT", "MAXLON", "MAXLAT"), help="Bounding box for earthaccess search.")
-    src.add_argument("--start", help="Start date for earthaccess search, e.g. 2026-01-01.")
+    src.add_argument(
+        "--local-h5",
+        nargs="*",
+        type=Path,
+        default=[],
+        help="Existing GUNW .h5 files to benchmark.",
+    )
+    src.add_argument(
+        "--granule",
+        nargs="*",
+        default=[],
+        help="Exact NISAR GUNW granule names to search/download with earthaccess.",
+    )
+    src.add_argument(
+        "--bbox",
+        nargs=4,
+        type=float,
+        metavar=("MINLON", "MINLAT", "MAXLON", "MAXLAT"),
+        help="Bounding box for earthaccess search.",
+    )
+    src.add_argument(
+        "--start", help="Start date for earthaccess search, e.g. 2026-01-01."
+    )
     src.add_argument("--end", help="End date for earthaccess search, e.g. 2026-02-01.")
-    src.add_argument("--count", type=int, default=1, help="Max search results for bbox/time search.")
-    src.add_argument("--data-dir", type=Path, default=Path("nisar_data"), help="Where earthaccess downloads products.")
+    src.add_argument(
+        "--count", type=int, default=1, help="Max search results for bbox/time search."
+    )
+    src.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("nisar_data"),
+        help="Where earthaccess downloads products.",
+    )
 
     run = p.add_argument_group("benchmark")
-    run.add_argument("--out-dir", type=Path, default=Path("ww_gunw_bench"), help="Output directory.")
-    run.add_argument("--pol", default=None, help="Polarization group to use, e.g. HH or VV. Default: first available.")
-    run.add_argument("--nlooks", type=float, default=1.0, help="nlooks argument passed to whirlwind.unwrap.")
-    run.add_argument("--tile-size", type=int, default=512, help="whirlwind tile size (tiled+anchor+cascade path). 0 = whole-image.")
-    run.add_argument("--tile-overlap", type=int, default=64, help="whirlwind tile overlap.")
-    run.add_argument("--multilook", type=int, default=1, help="whirlwind multilook factor (noisy scenes; coherent down-look).")
-    run.add_argument("--sizes", nargs="*", default=["full"], help="Square center-crop sizes to run, plus optional 'full'.")
-    run.add_argument("--crop", nargs=4, type=int, metavar=("Y0", "Y1", "X0", "X1"), help="Explicit crop window. Overrides --sizes.")
-    run.add_argument("--coh-threshold", type=float, default=0.0, help="Minimum coherence for unwrapping mask.")
+    run.add_argument(
+        "--out-dir", type=Path, default=Path("ww_gunw_bench"), help="Output directory."
+    )
+    run.add_argument(
+        "--pol",
+        default=None,
+        help="Polarization group to use, e.g. HH or VV. Default: first available.",
+    )
+    run.add_argument(
+        "--nlooks",
+        type=float,
+        default=1.0,
+        help="nlooks argument passed to whirlwind.unwrap.",
+    )
+    run.add_argument(
+        "--tile-size",
+        type=int,
+        default=512,
+        help="whirlwind tile size (tiled+anchor+cascade path). 0 = whole-image.",
+    )
+    run.add_argument(
+        "--tile-overlap", type=int, default=64, help="whirlwind tile overlap."
+    )
+    run.add_argument(
+        "--multilook",
+        type=int,
+        default=1,
+        help="whirlwind multilook factor (noisy scenes; coherent down-look).",
+    )
+    run.add_argument(
+        "--sizes",
+        nargs="*",
+        default=["full"],
+        help="Square center-crop sizes to run, plus optional 'full'.",
+    )
+    run.add_argument(
+        "--crop",
+        nargs=4,
+        type=int,
+        metavar=("Y0", "Y1", "X0", "X1"),
+        help="Explicit crop window. Overrides --sizes.",
+    )
+    run.add_argument(
+        "--coh-threshold",
+        type=float,
+        default=0.0,
+        help="Minimum coherence for unwrapping mask.",
+    )
     run.add_argument(
         "--mask-policy",
         choices=["not_127", "zero_is_good", "nonzero_digits", "ignore"],
@@ -112,8 +177,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Experimental: use phase(wrappedInterferogram) instead of rewrapping production unwrappedPhase. Requires same shape/grid; otherwise the run is skipped.",
     )
-    run.add_argument("--plot-downsample", type=int, default=1, help="Stride for PNG plots only.")
-    run.add_argument("--force", action="store_true", help="Rerun even if JSON result exists.")
+    run.add_argument(
+        "--plot-downsample", type=int, default=1, help="Stride for PNG plots only."
+    )
+    run.add_argument(
+        "--force", action="store_true", help="Rerun even if JSON result exists."
+    )
     return p.parse_args()
 
 
@@ -143,7 +212,9 @@ def choose_pol(h5: h5py.File, base: str, requested: str | None) -> str:
     pols = [p for p in pols if p.upper() not in {"MASK", "METADATA"}]
     if requested:
         if requested not in pols:
-            raise KeyError(f"Requested pol {requested!r} not found under {base}; available={pols}")
+            raise KeyError(
+                f"Requested pol {requested!r} not found under {base}; available={pols}"
+            )
         return requested
     if not pols:
         raise KeyError(f"No polarization groups found under {base}")
@@ -165,11 +236,15 @@ def gunw_paths(h5: h5py.File, pol: str | None) -> dict[str, str]:
     }
 
 
-def mask_to_bool(mask_arr: np.ndarray | None, policy: str, shape: tuple[int, int]) -> np.ndarray:
+def mask_to_bool(
+    mask_arr: np.ndarray | None, policy: str, shape: tuple[int, int]
+) -> np.ndarray:
     if mask_arr is None or policy == "ignore":
         return np.ones(shape, dtype=bool)
     if mask_arr.shape != shape:
-        raise ValueError(f"Mask shape {mask_arr.shape} does not match data shape {shape}")
+        raise ValueError(
+            f"Mask shape {mask_arr.shape} does not match data shape {shape}"
+        )
     if policy == "not_127":
         return mask_arr != 127
     if policy == "zero_is_good":
@@ -181,7 +256,9 @@ def mask_to_bool(mask_arr: np.ndarray | None, policy: str, shape: tuple[int, int
     raise ValueError(policy)
 
 
-def center_crop_slices(shape: tuple[int, int], size: int | str) -> tuple[slice, slice, str]:
+def center_crop_slices(
+    shape: tuple[int, int], size: int | str
+) -> tuple[slice, slice, str]:
     ny, nx = shape
     if str(size).lower() == "full":
         return slice(0, ny), slice(0, nx), "full"
@@ -232,14 +309,22 @@ def compute_compare_stats(
     rss_delta_mb: float | None,
     require_prod_cc: bool,
 ) -> tuple[dict[str, Any], np.ndarray, np.ndarray, np.ndarray]:
-    valid = mask & np.isfinite(ig) & np.isfinite(coh) & np.isfinite(prod_unw) & np.isfinite(ww_unw)
+    valid = (
+        mask
+        & np.isfinite(ig)
+        & np.isfinite(coh)
+        & np.isfinite(prod_unw)
+        & np.isfinite(ww_unw)
+    )
     if require_prod_cc:
         valid &= prod_cc > 0
     if valid.sum() == 0:
         raise ValueError("No valid pixels for comparison after masking.")
 
     # Align a global 2pi offset before measuring ambiguity differences.
-    global_cycle_offset = int(np.rint(np.nanmedian((ww_unw[valid] - prod_unw[valid]) / TWOPI)))
+    global_cycle_offset = int(
+        np.rint(np.nanmedian((ww_unw[valid] - prod_unw[valid]) / TWOPI))
+    )
     ww_aligned = ww_unw - global_cycle_offset * TWOPI
 
     # Per-pixel ambiguity integers relative to the exact wrapped input supplied to ww.
@@ -279,12 +364,18 @@ def compute_compare_stats(
         "residual_std_rad": float(np.nanstd(resid_valid)),
         "residual_rmse_rad": float(np.sqrt(np.nanmean(resid_valid**2))),
         "residual_wrapped_rmse_rad": float(np.sqrt(np.nanmean(resid_wrap_valid**2))),
-        "residual_wrapped_p95_abs_rad": safe_percentiles(np.abs(resid_wrap_valid), [95])[0],
-        "ww_wrap_consistency_p95_abs_rad": safe_percentiles(np.abs(wrap_consistency[valid]), [95])[0],
+        "residual_wrapped_p95_abs_rad": safe_percentiles(
+            np.abs(resid_wrap_valid), [95]
+        )[0],
+        "ww_wrap_consistency_p95_abs_rad": safe_percentiles(
+            np.abs(wrap_consistency[valid]), [95]
+        )[0],
     }
     stats |= {f"prod_{k}": v for k, v in component_summary(prod_cc, valid).items()}
     if ww_cc is not None:
-        stats |= {f"ww_{k}": v for k, v in component_summary(np.asarray(ww_cc), valid).items()}
+        stats |= {
+            f"ww_{k}": v for k, v in component_summary(np.asarray(ww_cc), valid).items()
+        }
     return stats, ww_aligned, residual_wrapped, amb_diff
 
 
@@ -301,25 +392,45 @@ def plot_result(
     stride: int = 1,
 ) -> None:
     s = (slice(None, None, stride), slice(None, None, stride))
-    arrays = [ig[s], coh[s], prod_unw[s], ww_aligned[s], residual_wrapped[s], amb_diff[s]]
-    names = ["wrapped input (rad)", "coherence", "NISAR GUNW unwrapped", "whirlwind aligned", "wrapped residual", "ambiguity diff (cycles)"]
+    arrays = [
+        ig[s],
+        coh[s],
+        prod_unw[s],
+        ww_aligned[s],
+        residual_wrapped[s],
+        amb_diff[s],
+    ]
+    names = [
+        "wrapped input (rad)",
+        "coherence",
+        "NISAR GUNW unwrapped",
+        "whirlwind aligned",
+        "wrapped residual",
+        "ambiguity diff (cycles)",
+    ]
     cmaps = ["twilight", "gray", "viridis", "viridis", "RdBu", "RdBu"]
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8), constrained_layout=True)
     fig.suptitle(title)
     for ax, arr, name, cmap in zip(axes.ravel(), arrays, names, cmaps, strict=True):
         arrp = np.asarray(arr, dtype=float)
-        arrp = np.where(valid[s], arrp, np.nan) if arrp.shape == valid[s].shape else arrp
+        arrp = (
+            np.where(valid[s], arrp, np.nan) if arrp.shape == valid[s].shape else arrp
+        )
         if name == "wrapped input (rad)":
             vmin, vmax = -np.pi, np.pi
         elif name == "coherence":
             vmin, vmax = 0.0, 1.0
         elif name == "wrapped residual":
-            vmax_abs = np.nanpercentile(np.abs(arrp), 98) if np.isfinite(arrp).any() else np.pi
+            vmax_abs = (
+                np.nanpercentile(np.abs(arrp), 98) if np.isfinite(arrp).any() else np.pi
+            )
             vmax_abs = float(max(vmax_abs, 1e-6))
             vmin, vmax = -vmax_abs, vmax_abs
         elif name == "ambiguity diff (cycles)":
-            vmax_abs = np.nanpercentile(np.abs(arrp), 99) if np.isfinite(arrp).any() else 1.0
+            vmax_abs = (
+                np.nanpercentile(np.abs(arrp), 99) if np.isfinite(arrp).any() else 1.0
+            )
             vmax_abs = float(max(vmax_abs, 1.0))
             vmin, vmax = -vmax_abs, vmax_abs
         else:
@@ -347,9 +458,13 @@ def download_with_earthaccess(args: argparse.Namespace) -> list[Path]:
 
     for granule in args.granule:
         # CMR granule_name supports wildcards; the product file may have .h5 appended.
-        r = earthaccess.search_data(short_name=SHORT_NAME, granule_name=f"{granule}*", count=10)
+        r = earthaccess.search_data(
+            short_name=SHORT_NAME, granule_name=f"{granule}*", count=10
+        )
         if not r:
-            raise RuntimeError(f"No earthaccess results found for granule_name={granule!r}")
+            raise RuntimeError(
+                f"No earthaccess results found for granule_name={granule!r}"
+            )
         results.extend(r)
 
     if args.bbox or args.start or args.end:
@@ -365,7 +480,9 @@ def download_with_earthaccess(args: argparse.Namespace) -> list[Path]:
     if not results:
         return []
 
-    downloaded = [Path(p) for p in earthaccess.download(results, local_path=str(args.data_dir))]
+    downloaded = [
+        Path(p) for p in earthaccess.download(results, local_path=str(args.data_dir))
+    ]
     return [p for p in downloaded if is_main_gunw_h5(p)]
 
 
@@ -418,7 +535,11 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
             ig_full = wrap_phase(prod_unw_full).astype(np.float32)
 
     base_mask_full = mask_to_bool(mask_arr_full, args.mask_policy, prod_unw_full.shape)
-    base_mask_full &= np.isfinite(prod_unw_full) & np.isfinite(coh_full) & (coh_full >= args.coh_threshold)
+    base_mask_full &= (
+        np.isfinite(prod_unw_full)
+        & np.isfinite(coh_full)
+        & (coh_full >= args.coh_threshold)
+    )
 
     if args.crop:
         crop_specs = [explicit_crop_slices(args.crop)]
@@ -438,7 +559,7 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
             rows.append(json.loads(result_json.read_text()))
             continue
 
-        # `ig` is the WRAPPED PHASE (real radians) — compute_compare_stats uses
+        # `ig` is the WRAPPED PHASE (real radians) - compute_compare_stats uses
         # it as phase (ww_unw - ig). whirlwind.unwrap wants the COMPLEX igram
         # exp(1j*phase); that is built at the call site below. Coerce dtypes
         # (the pyo3 bindings are dtype-strict: float32 coh, bool mask).
@@ -452,7 +573,10 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
             print(f"  {label}: no valid pixels, skipping", flush=True)
             continue
 
-        print(f"  {label}: running whirlwind on shape={ig.shape}, valid={mask.mean():.3f}", flush=True)
+        print(
+            f"  {label}: running whirlwind on shape={ig.shape}, valid={mask.mean():.3f}",
+            flush=True,
+        )
         import whirlwind as ww  # Delayed import so search/download can work without it.
 
         gc.collect()
@@ -461,16 +585,26 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
         # Current whirlwind API: unwrap() returns ONLY the unwrapped array, and
         # the production path is tiled+anchor+cascade (pass tile_size/overlap) or
         # multilook= for noisy scenes. Whole-image (tile_size=0) is the worse,
-        # memory-heavy path — kept available via --tile-size 0. Conncomp is not
+        # memory-heavy path - kept available via --tile-size 0. Conncomp is not
         # returned by this entry point; the bench compares unwrapped phase /
         # ambiguity, which is what matters for artifact detection.
-        igc = np.ascontiguousarray(np.exp(1j * ig), dtype=np.complex64)  # complex igram for whirlwind
+        igc = np.ascontiguousarray(
+            np.exp(1j * ig), dtype=np.complex64
+        )  # complex igram for whirlwind
         if args.tile_size and args.tile_size > 0:
-            ww_unw, _cc = ww.unwrap(igc, coh, args.nlooks, mask,
-                               tile_size=args.tile_size, tile_overlap=args.tile_overlap,
-                               multilook=args.multilook)
+            ww_unw, _cc = ww.unwrap(
+                igc,
+                coh,
+                args.nlooks,
+                mask,
+                tile_size=args.tile_size,
+                tile_overlap=args.tile_overlap,
+                multilook=args.multilook,
+            )
         elif args.multilook > 1:
-            ww_unw, _cc = ww.unwrap(igc, coh, args.nlooks, mask, multilook=args.multilook)
+            ww_unw, _cc = ww.unwrap(
+                igc, coh, args.nlooks, mask, multilook=args.multilook
+            )
         else:
             ww_unw, _cc = ww.unwrap(igc, coh, args.nlooks, mask)
         ww_cc = None
@@ -501,7 +635,9 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
                 "nlooks": args.nlooks,
                 "coh_threshold": args.coh_threshold,
                 "mask_policy": args.mask_policy,
-                "input_phase_source": "phase(wrappedInterferogram)" if args.use_product_wrapped else "wrap(unwrappedPhase)",
+                "input_phase_source": "phase(wrappedInterferogram)"
+                if args.use_product_wrapped
+                else "wrap(unwrappedPhase)",
             }
         )
 
@@ -539,7 +675,17 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
         rows.append(stats)
 
         # Free crop arrays before next run.
-        del ig, coh, prod_unw, prod_cc, mask, ww_unw, ww_aligned, residual_wrapped, amb_diff
+        del (
+            ig,
+            coh,
+            prod_unw,
+            prod_cc,
+            mask,
+            ww_unw,
+            ww_aligned,
+            residual_wrapped,
+            amb_diff,
+        )
         gc.collect()
 
     return rows
@@ -555,7 +701,9 @@ def main() -> None:
     seen: set[Path] = set()
     h5s = [p for p in h5s if not (p.resolve() in seen or seen.add(p.resolve()))]
     if not h5s:
-        raise SystemExit("No GUNW .h5 files found. Pass --local-h5 or --granule/--bbox search options.")
+        raise SystemExit(
+            "No GUNW .h5 files found. Pass --local-h5 or --granule/--bbox search options."
+        )
 
     all_rows: list[dict[str, Any]] = []
     for h5 in h5s:

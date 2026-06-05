@@ -1,4 +1,4 @@
-"""CRLB-path eval on the Mexico City (Capella) dolphin scene — baseline for the
+"""CRLB-path eval on the Mexico City (Capella) dolphin scene - baseline for the
 #35 anchor/cascade refactor.
 
 Runs `ww.unwrap_crlb` on one phase-linked IG (variance = crlb_a + crlb_b),
@@ -19,7 +19,9 @@ from pathlib import Path
 
 import numpy as np
 
-D = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/capella/mexico_city/e2e_output/dolphin")
+D = Path(
+    "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/capella/mexico_city/e2e_output/dolphin"
+)
 IGDIR = D / "interferograms"
 UNWDIR = D / "unwrapped"
 OUT = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/crlb_eval")
@@ -30,6 +32,7 @@ TAU = np.float32(2 * np.pi)
 
 def _read(path, dt):
     import rasterio
+
     with rasterio.open(path) as s:
         return s.read(1).astype(dt)
 
@@ -41,11 +44,15 @@ def coherent_cut_rate(unw, wrapped, coh, valid):
         a = unw
         w = wrapped
         if ax == 1:
-            cE = np.minimum(coh[:, :-1], coh[:, 1:]); vE = valid[:, :-1] & valid[:, 1:] & (cE > COH_CUT_THR)
-            dphi = (w[:, 1:] - w[:, :-1]); flow = np.abs(np.round((a[:, 1:] - a[:, :-1] - _wrap(dphi)) / TAU))
+            cE = np.minimum(coh[:, :-1], coh[:, 1:])
+            vE = valid[:, :-1] & valid[:, 1:] & (cE > COH_CUT_THR)
+            dphi = w[:, 1:] - w[:, :-1]
+            flow = np.abs(np.round((a[:, 1:] - a[:, :-1] - _wrap(dphi)) / TAU))
         else:
-            cE = np.minimum(coh[:-1, :], coh[1:, :]); vE = valid[:-1, :] & valid[1:, :] & (cE > COH_CUT_THR)
-            dphi = (w[1:, :] - w[:-1, :]); flow = np.abs(np.round((a[1:, :] - a[:-1, :] - _wrap(dphi)) / TAU))
+            cE = np.minimum(coh[:-1, :], coh[1:, :])
+            vE = valid[:-1, :] & valid[1:, :] & (cE > COH_CUT_THR)
+            dphi = w[1:, :] - w[:-1, :]
+            flow = np.abs(np.round((a[1:, :] - a[:-1, :] - _wrap(dphi)) / TAU))
         tot += float(np.where(vE & (flow > 0), flow * cE, 0.0).sum())
     return tot / max(nvalid, 1)
 
@@ -56,14 +63,18 @@ def _wrap(x):
 
 def run(label):
     import whirlwind as ww
+
     OUT.mkdir(parents=True, exist_ok=True)
     a, b = STEM.split("_")
     ig = np.ascontiguousarray(_read(IGDIR / f"{STEM}.int.tif", np.complex64))
-    var = (_read(IGDIR / f"crlb_{a}.tif", np.float32) + _read(IGDIR / f"crlb_{b}.tif", np.float32))
+    var = _read(IGDIR / f"crlb_{a}.tif", np.float32) + _read(
+        IGDIR / f"crlb_{b}.tif", np.float32
+    )
     var = np.ascontiguousarray(np.nan_to_num(var, nan=0.0), dtype=np.float32)
     coh = np.ascontiguousarray(_read(IGDIR / f"{STEM}.int.cor.tif", np.float32))
     mask = np.isfinite(coh) & (coh > 0) & (np.abs(ig) > 0) & (var > 0)
     import time
+
     t0 = time.perf_counter()
     unw, cc = ww.unwrap_crlb(ig, var)
     dt = time.perf_counter() - t0
@@ -85,16 +96,22 @@ def run(label):
         km = float((dk - center == 0).sum()) / dk.size * 100
 
     np.savez(OUT / f"{label}.npz", unw=unw, cc=cc)
-    print(f"[{label}] {STEM}  shape={ig.shape}  {dt:.1f}s  n_cc={int(cc.max())}  "
-          f"coverage={(cc>0).mean()*100:.1f}%")
-    print(f"[{label}] coherent_cut_rate(coh>0.7) = {rate:.3e}   K-match vs spurt = {km:.2f}%  "
-          f"(n_common={int(common.sum()):,})")
+    print(
+        f"[{label}] {STEM}  shape={ig.shape}  {dt:.1f}s  n_cc={int(cc.max())}  "
+        f"coverage={(cc>0).mean()*100:.1f}%"
+    )
+    print(
+        f"[{label}] coherent_cut_rate(coh>0.7) = {rate:.3e}   K-match vs spurt = {km:.2f}%  "
+        f"(n_common={int(common.sum()):,})"
+    )
 
 
 def compare():
     a, b = np.load(OUT / "before.npz"), np.load(OUT / "after.npz")
     print("unw bit-identical:", np.array_equal(a["unw"], b["unw"], equal_nan=True))
-    print("(see the per-run coherent_cut_rate / K-match printed above for quality delta)")
+    print(
+        "(see the per-run coherent_cut_rate / K-match printed above for quality delta)"
+    )
 
 
 if __name__ == "__main__":

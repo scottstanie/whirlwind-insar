@@ -1,12 +1,12 @@
 //! Successive Shortest Paths (SSP) fallback, run after the primal-dual loop to
 //! drain any remaining excess. Two variants with very different graph-shape costs:
 //!
-//! * [`run`] — MULTI-source: seeds *every* excess node, runs a full multi-source
+//! * [`run`] - MULTI-source: seeds *every* excess node, runs a full multi-source
 //!   Dijkstra, and augments ONE source→nearest-deficit path per iteration. Fast
 //!   when few residues remain over a small / tiled graph; catastrophic on a
 //!   whole-image graph (a near-graph-wide Dijkstra per single unit of flow).
 //!   Used by the early-exit primal-dual path (`primal_dual::run`).
-//! * [`run_single_source`] — SINGLE-source: one source at a time, early-exiting
+//! * [`run_single_source`] - SINGLE-source: one source at a time, early-exiting
 //!   at the first popped deficit, using **Dial's bucket queue** (not a binary
 //!   heap). ~10x faster on whole-image graphs (single-tile D_077 ≈1472 s →
 //!   ≈158 s) AND robust to the zero-cost masked "sea" on heavily-masked frames,
@@ -103,7 +103,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
 /// early-exits in a tiny neighbourhood (D_077 ≈158 s vs ≈1472 s for the
 /// multi-source [`run`]); on a heavily-masked frame the **zero-cost masked sea**
 /// (masked arcs have cost 0, never forbidden) is traversed in O(nodes) via the
-/// distance-0 bucket — a binary heap instead balloons to millions of equal-
+/// distance-0 bucket - a binary heap instead balloons to millions of equal-
 /// distance entries and blows up memory.
 ///
 /// Scratch (`dist`/`pred`/`popped`, the touched list, and the reusable bucket
@@ -111,11 +111,11 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
 /// bucket count `k = max_edge_reduced_cost + 1` is recomputed per source because
 /// the potentials drift as we augment.
 ///
-/// CORRECTNESS — requires non-negative reduced costs at entry, which the full-
+/// CORRECTNESS - requires non-negative reduced costs at entry, which the full-
 /// completion PD path provides (all reachable nodes popped → exact potentials).
 /// The per-source potential update preserves the invariant: popped nodes get
 /// their exact distance (`π += d_sink − dist[v]`); non-popped nodes keep a zero
-/// shift, which is exactly "cap at `d_sink`" in that frame — valid because any
+/// shift, which is exactly "cap at `d_sink`" in that frame - valid because any
 /// unpopped node has `dist ≥ d_sink` by pop order. The `debug_assert` proves it:
 /// it must NEVER fire on the full path. Do **not** use this after the early-exit
 /// `run` (its `d_max`-capped potentials can be negative on frontier arcs); use
@@ -134,7 +134,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     // detected on pop. FIFO (`VecDeque`, pop FRONT) to match ww-orig's
     // `std::queue` Dial buckets: equal-distance ties across the cost-0 masked
     // sea must resolve BFS/fewest-hops first (short cuts), not LIFO/DFS (long
-    // cuts) — see `shortest_path::dial::run_full_into` decl comment.
+    // cuts) - see `shortest_path::dial::run_full_into` decl comment.
     let mut buckets: Vec<VecDeque<(usize, i64)>> = Vec::new();
 
     let sources: Vec<usize> = net.excess_nodes().collect();
@@ -161,10 +161,10 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     // deficit. In a BALANCED, connected residual graph every remaining excess
     // node provably has an augmenting path to some deficit (residual reverse
     // arcs included), so a stranded source is a REACHABILITY/SSP BUG, not
-    // expected control flow — surfaced here instead of being silently skipped.
+    // expected control flow - surfaced here instead of being silently skipped.
     let mut stranded = 0_usize;
     let mut scan_ns: u128 = 0; // time in max_reduced_cost_par (now only on k-overflow)
-    // Maintained ACROSS sources (was rescanned every source — ~half of D_077's
+    // Maintained ACROSS sources (was rescanned every source - ~half of D_077's
     // runtime). A valid upper bound on every arc's reduced cost; grows lazily (a
     // source that hits rc >= k recomputes it tight + retries). One tight scan here.
     let mut max_rc = {
@@ -192,7 +192,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         // Dial circular-bucket count k = max edge reduced cost + 1. max_rc is
         // carried across sources (not rescanned each one). If a relaxation finds
         // rc >= k, potentials grew past the bound: discard this source's partial
-        // Dijkstra, recompute max_rc tight (the ONLY O(E) rescan), and retry — so
+        // Dijkstra, recompute max_rc tight (the ONLY O(E) rescan), and retry - so
         // an under-estimated k can never commit an aliased (wrong) path.
         let mut sink_found: Option<(usize, i64)> = None;
         // Captured at loop exit (the only exit is the success `break`) for the
@@ -331,7 +331,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                 }
             }
         } else {
-            // No deficit reachable from this source — in a balanced problem this
+            // No deficit reachable from this source - in a balanced problem this
             // is a reachability/SSP bug. Dump the first few so we can see WHY:
             // how much of the graph the source's Dijkstra reached, and whether
             // any deficit still exists globally (i.e. is it unreached, hence a

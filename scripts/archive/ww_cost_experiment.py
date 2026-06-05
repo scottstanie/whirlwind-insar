@@ -5,9 +5,9 @@ by ``scripts/nisar_ww_vs_snaphu.py --stage prep``) and a reference unwrap
 from ``/tmp/nisar-comparison/snaphu_plain/{unw,conncomp}.npy``. Runs ww once,
 compares against snaphu_plain on the common-conncomp mask, and saves:
 
-* ``<out>/<label>/unw.npy``, ``conncomp.npy`` — ww outputs
-* ``<out>/<label>/metrics.json`` — RMS, frac-within-π/2, frac-at-2π/4π/6π
-* ``<out>/<label>/diff.png`` — error map + histogram
+* ``<out>/<label>/unw.npy``, ``conncomp.npy`` - ww outputs
+* ``<out>/<label>/metrics.json`` - RMS, frac-within-π/2, frac-at-2π/4π/6π
+* ``<out>/<label>/diff.png`` - error map + histogram
 * appends a row to ``<out>/experiments_summary.csv``
 
 Example::
@@ -15,6 +15,7 @@ Example::
     python scripts/ww_cost_experiment.py --label baseline --threshold 10
     python scripts/ww_cost_experiment.py --label exp1_scale10k --threshold 10
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,7 +81,9 @@ def make_diff_plot(
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), constrained_layout=True)
 
     d_show = np.where(eval_mask, diff, np.nan)
-    axes[0].imshow(d_show, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, interpolation="none")
+    axes[0].imshow(
+        d_show, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, interpolation="none"
+    )
     axes[0].set_title(
         f"{label}: snaphu_plain − ww  ({metrics['n_eval'] / 1e6:.1f}M px)\n"
         f"RMS={metrics['rms_rad']:.2f} rad  "
@@ -122,7 +125,9 @@ def main():
     ap.add_argument("--label", required=True, help="experiment name (subdir)")
     ap.add_argument("--reference", default="snaphu_plain")
     ap.add_argument("--nlooks", type=float, default=100.0)
-    ap.add_argument("--threshold", type=int, default=10, help="ww conncomp cost_threshold")
+    ap.add_argument(
+        "--threshold", type=int, default=10, help="ww conncomp cost_threshold"
+    )
     ap.add_argument("--note", default="", help="free-text note saved into metrics.json")
     args = ap.parse_args()
 
@@ -168,10 +173,20 @@ def main():
 
     summary = args.out / "experiments_summary.csv"
     cols = [
-        "label", "reference", "threshold", "elapsed_sec", "peak_rss_gb",
-        "ww_coverage", "eval_coverage",
-        "rms_rad", "frac_within_pi_2", "frac_within_pi",
-        "frac_at_2pi", "frac_at_4pi", "frac_at_6pi_plus", "note",
+        "label",
+        "reference",
+        "threshold",
+        "elapsed_sec",
+        "peak_rss_gb",
+        "ww_coverage",
+        "eval_coverage",
+        "rms_rad",
+        "frac_within_pi_2",
+        "frac_within_pi",
+        "frac_at_2pi",
+        "frac_at_4pi",
+        "frac_at_6pi_plus",
+        "note",
     ]
     append_summary(summary, metrics, cols)
     print(f"[{args.label}] wrote {out_dir} and appended {summary.name}")

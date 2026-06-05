@@ -5,9 +5,9 @@
 //! arcs (one per Carballo direction). We label each pixel-edge as a *cut*
 //! when at least one of its underlying arcs is unreliable:
 //!
-//! 1. The arc is forbidden (both directions saturated — masked-out pixel).
+//! 1. The arc is forbidden (both directions saturated - masked-out pixel).
 //! 2. The minimum raw forward cost across the two directions is below
-//!    `cost_threshold` — the noise model is uninformative here, so any
+//!    `cost_threshold` - the noise model is uninformative here, so any
 //!    routing decision across this edge wasn't strongly supported by data.
 //!
 //! Then BFS the remaining pixels through non-cut edges to label connected
@@ -16,7 +16,7 @@
 //!
 //! This is the gridded adaptation of `GrowConnCompsMask` in SNAPHU's
 //! `snaphu_tile.c`. SNAPHU works with convex piecewise costs and tests
-//! `min(negcost, poscost)` — the local cost-function flatness around the
+//! `min(negcost, poscost)` - the local cost-function flatness around the
 //! chosen flow. In our linear unit-capacity setting that collapses to the
 //! raw arc cost (no curvature anywhere), and MCF flow placement is
 //! deliberately *not* a cut signal: a high-cost branch cut means MCF paid
@@ -37,7 +37,7 @@ pub struct ConnCompParams {
     /// arcs is ≤ this. Higher → fewer/larger components.
     pub cost_threshold: i32,
     /// Drop components smaller than this many pixels. This ABSOLUTE floor is the
-    /// binding control: at 80 m it is 0.8 km/side, at 30 m 0.3 km — scene-size-
+    /// binding control: at 80 m it is 0.8 km/side, at 30 m 0.3 km - scene-size-
     /// and pixel-spacing-invariant (matches SNAPHU's `minregionsize`). A small
     /// coherent island stays a usable, self-consistent component the caller can
     /// re-reference into; only sub-floor speckle is dropped.
@@ -45,7 +45,7 @@ pub struct ConnCompParams {
     /// Vestigial fractional floor, kept only as an anti-pathology cap on huge
     /// frames (it can only RAISE `min_size_px`, never lower it). At the default
     /// 1e-4 it stays negligible (<100 px below ~1M valid). Do NOT raise toward
-    /// 0.01 — on a NISAR frame 1% is a ~25 km minimum feature, which orphans
+    /// 0.01 - on a NISAR frame 1% is a ~25 km minimum feature, which orphans
     /// every island a user might want to reference into. The effective floor is
     /// `max(min_size_px, ceil(min_size_frac * n_valid))`, so this fraction only
     /// bites when it exceeds the absolute `min_size_px` control.
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(labels[(0, 0)], 0);
         // ...the 12x12 island (144 px >= 100) SURVIVES as its own component
         // (the whole point: a small coherent island is NOT dropped for being
-        // disconnected — the caller can re-reference into it)...
+        // disconnected - the caller can re-reference into it)...
         assert!(labels[(9, 9)] > 0);
         // ...and the main body is labeled.
         assert!(labels[(40, 40)] > 0);

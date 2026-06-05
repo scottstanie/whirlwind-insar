@@ -46,7 +46,7 @@ SECTION9 = r"""## 9. Implementation Details
 
 Whirlwind is implemented in **Rust**, with a small Python binding layer:
 
-- **`crates/whirlwind-core`** (Rust): all algorithms — residue computation,
+- **`crates/whirlwind-core`** (Rust): all algorithms - residue computation,
   cost build, MCF solver, integration, tiling/robustness, connected components,
   synthetic-ifg simulator. Parallelism via `rayon`.
 - **`crates/whirlwind-cli`** (Rust): `whirlwind` binary (`simulate`, `unwrap`).
@@ -133,7 +133,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
   masked endpoint (§4.2). Without this, `0+0j` masked pixels generate a wall of
   spurious residues at every mask boundary.
 - **Network construction**: *two* mechanisms (§6.3). Arc-forbidding
-  (`forbid_masked_arcs`) pre-saturates both directions of masked-edge arcs —
+  (`forbid_masked_arcs`) pre-saturates both directions of masked-edge arcs -
   used by the CRLB, convex, conncomp, ground and tiled paths. The **default
   coherence solver `unwrap_reuse` and the parity `unwrap_linear` deliberately do
   NOT forbid** masked arcs; they pass `mask = None` to construction, rely on the
@@ -162,8 +162,8 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
    an accurate effective number of looks.
 3. **Filter size**: 7x7 smoothing (Carballo's original used 5x5).
 4. **Tiled robustness layer is heuristic**: the default large-frame path
-   (`unwrap_tiled_robust`) — seam reconciliation, coarse anchor + multi-scale
-   cascade, sliver healing, gated multi-shift re-solve — is empirically tuned
+   (`unwrap_tiled_robust`) - seam reconciliation, coarse anchor + multi-scale
+   cascade, sliver healing, gated multi-shift re-solve - is empirically tuned
    against benchmark scenes, **not proven optimal**, and can produce invalid
    (fast-but-wrong) results on fragmented NISAR scenes. It carries environment
    escape hatches (`WHIRLWIND_NO_ANCHOR`, `WHIRLWIND_NO_HEAL`). Only the
@@ -183,7 +183,7 @@ baseline.
 | `unwrap_reuse` (whole-image default) | reuse | `compute_carballo_costs` | early-exit, 50 it | cost-zero + NaN | reaches its cost optimum |
 | `unwrap_linear` (single-tile) | unit-capacity | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP | cost-zero + NaN | **verified (Python parity)** |
 | `unwrap_convex` | convex | `compute_snaphu_smooth_costs` | heap | forbid | research prototype (#65) |
-| `components_only` | unit-capacity | `compute_carballo_costs` | forbid | no MCF solve | — |
+| `components_only` | unit-capacity | `compute_carballo_costs` | forbid | no MCF solve | - |
 
 **Single-tile benchmark (D_077, 4176x4257, vs production GUNW = SNAPHU).** The
 single-tile kernel is both faster and more accurate than single-tile SNAPHU:
@@ -199,26 +199,26 @@ Peak RSS ≈6.4 GB (no swap). Reference SNAPHU/PHASS timings are in
 `scripts/bench_nisar_gunw_whirlwind.py --solver linear --nlooks 16`.
 
 **SSP-fallback cost (a known sharp edge).** `unwrap_linear` runs 8 full-Dijkstra
-PD iterations *then falls through to SSP* — and on D_077 it does reach SSP (the
+PD iterations *then falls through to SSP* - and on D_077 it does reach SSP (the
 PD iterations alone reach only ≈11 %; the SSP fallback routes the bulk). The SSP
 fallback's runtime therefore dominates, and it depends critically on the SSP
 *algorithm*:
 
 - The multi-source `ssp::run` seeds every excess node, runs to
-  all-deficits-popped, and augments **one** path per iteration —
+  all-deficits-popped, and augments **one** path per iteration -
   i.e. effectively a near-whole-image Dijkstra *per single unit of flow*. On the
   D_077 whole-image graph this costs ≈1472 s.
 - A **single-source** SSP (early-exit per source) routes the same flow in ≈160 s.
 
 The fast figure above is with the single-source SSP. **Dual-SSP fix
 (implemented):** the multi-source `ssp::run` is kept for the early-exit/tiled
-path (where it is fast — it is catastrophic only on large *whole-image* graphs),
+path (where it is fast - it is catastrophic only on large *whole-image* graphs),
 and `ssp::run_single_source` is used only by `run_full_dijkstra` (single-tile),
 restoring D_077 from ≈1472 s back to **≈160 s / 99.49 %** (verified post-fix).
 The single-source potential update keeps reduced costs non-negative after every
-early-exit Dijkstra — popped nodes get their exact distance; unpopped nodes keep
+early-exit Dijkstra - popped nodes get their exact distance; unpopped nodes keep
 a zero shift, which is exactly "cap at the sink distance" since any unpopped node
-has `dist ≥ d_sink` by Dijkstra pop order — so `debug_assert!(rc >= 0)` holds
+has `dist ≥ d_sink` by Dijkstra pop order - so `debug_assert!(rc >= 0)` holds
 with **no clamp**. The invariant is guarded by the debug test
 `single_source_ssp_keeps_nonnegative_reduced_costs` (a steep noisy ramp that
 reaches the SSP fallback); the tiled/default path is byte-unchanged (only
@@ -238,7 +238,7 @@ S24_NEW = """**Properties:**
 
 - Residues are integers, typically in $\\{-1, 0, +1\\}$
 - The sum over the **entire augmented grid** (interior nodes *plus* the signed
-  boundary frame, §4.2–4.3) is exactly zero by Stokes' theorem — the boundary
+  boundary frame, §4.2–4.3) is exactly zero by Stokes' theorem - the boundary
   deposits balance the interior winding. (For a smooth non-wrapping image every
   residue is zero.)
 - Positive residues act as flow **sources**, negative as **sinks** in the network formulation"""
@@ -257,7 +257,7 @@ $$
 
 The raw LLR is negative (a $2\\pi$ correction is favored near a wrapping
 discontinuity), but **the implementation clamps every forward-arc cost to
-$\\ge 0$** — the \"encourage a cut\" signal is expressed as a *near-zero* cost on
+$\\ge 0$** - the \"encourage a cut\" signal is expressed as a *near-zero* cost on
 the cut direction together with the asymmetric $\\alpha\\le 0\\Rightarrow c_{\\max}$
 rule on the opposite direction (§5.4), not as a literal negative number."""
 
@@ -279,11 +279,11 @@ The **flow-reuse** mode is intentionally not this fixed linear objective. It is 
 FALLBACK_LINE_OLD = """3. **Fallback**: after `max_iter` iterations, or on no-progress, route any remaining excess with successive shortest paths. (A separate `run_no_ssp` variant omits this fallback for NISAR-scale problems where SSP on residual residues is prohibitively slow.)"""
 FALLBACK_LINE_NEW = """3. **Fallback**: after `max_iter` iterations, or on no-progress, route any remaining excess with successive shortest paths. The fallback variant depends on the PD mode: early-exit PD uses multi-source SSP; full-completion PD (`unwrap_linear`) uses single-source SSP. A separate `run_no_ssp` variant exists only as a diagnostic to measure how much routing the fallback contributes."""
 
-SSP_SECTION_OLD = """After the primal-dual loop terminates — either on hitting `max_iter` (default 8) or on a no-progress stall — any remaining excess is drained by a **successive shortest paths (SSP)** fallback (`ssp::run`). This fall-through is unconditional inside the shared primal-dual driver, so it is reached from *both* the early-exit (`run`) and full-completion (`run_full_dijkstra`) entry points. (The `run_no_ssp` variant exists precisely to *skip* this fallback when matching Python ww-orig behavior; see §7.7.)
+SSP_SECTION_OLD = """After the primal-dual loop terminates - either on hitting `max_iter` (default 8) or on a no-progress stall - any remaining excess is drained by a **successive shortest paths (SSP)** fallback (`ssp::run`). This fall-through is unconditional inside the shared primal-dual driver, so it is reached from *both* the early-exit (`run`) and full-completion (`run_full_dijkstra`) entry points. (The `run_no_ssp` variant exists precisely to *skip* this fallback when matching Python ww-orig behavior; see §7.7.)
 
 Each SSP iteration:
 
-1. Runs a **full multi-source Dijkstra** over the residual graph — every positive-excess node is seeded at distance 0 (the same routine the primal-dual phase uses), relaxing the entire reachable graph.
+1. Runs a **full multi-source Dijkstra** over the residual graph - every positive-excess node is seeded at distance 0 (the same routine the primal-dual phase uses), relaxing the entire reachable graph.
 2. Selects the single reached deficit node with the smallest distance, and traces predecessor arcs back to its source seed.
 3. Augments **one unit** of flow along that **one** source→deficit path, adjusting the two endpoints' excess.
 4. Applies the same potential update as the primal-dual phase, $\\pi_i \\gets \\pi_i - d_i$ (capped at $d_{\\max}$ for nodes not finalized by an early-exit Dijkstra), keeping reduced costs non-negative.
@@ -291,11 +291,11 @@ Each SSP iteration:
 A safety counter caps the loop at $4|V|$ iterations and asserts convergence (panicking with `\"SSP did not converge\"` otherwise).
 
 Because a full graph-wide Dijkstra is re-run for *every single unit* of augmentation, SSP is correct but expensive: its cost scales with the residual flow $F$ left after the primal-dual phase. On whole-image, NISAR-scale graphs (tens of millions of arcs) this is prohibitively slow, which is why production paths rely on the primal-dual phase to route essentially all flow and treat SSP only as a small-residue safety net."""
-SSP_SECTION_NEW = """After the primal-dual loop terminates — either on hitting `max_iter` or on a no-progress stall — any remaining excess is drained by a **successive shortest paths (SSP)** fallback. The shared driver chooses the fallback by PD mode: early-exit `run` falls through to multi-source `ssp::run`, while full-completion `run_full_dijkstra` falls through to single-source `ssp::run_single_source`.
+SSP_SECTION_NEW = """After the primal-dual loop terminates - either on hitting `max_iter` or on a no-progress stall - any remaining excess is drained by a **successive shortest paths (SSP)** fallback. The shared driver chooses the fallback by PD mode: early-exit `run` falls through to multi-source `ssp::run`, while full-completion `run_full_dijkstra` falls through to single-source `ssp::run_single_source`.
 
 Each **multi-source SSP** iteration:
 
-1. Runs an early-exit multi-source Dijkstra over the residual graph — every positive-excess node is seeded at distance 0, and the search stops after all currently reachable deficits are finalized.
+1. Runs an early-exit multi-source Dijkstra over the residual graph - every positive-excess node is seeded at distance 0, and the search stops after all currently reachable deficits are finalized.
 2. Selects the single reached deficit node with the smallest distance, and traces predecessor arcs back to its source seed.
 3. Augments **one unit** of flow along that **one** source→deficit path, adjusting the two endpoints' excess.
 4. Applies the same potential update as the primal-dual phase, $\\pi_i \\gets \\pi_i - d_i$ (capped at $d_{\\max}$ for nodes not finalized by an early-exit Dijkstra), keeping reduced costs non-negative.
@@ -306,7 +306,7 @@ The **single-source SSP** variant instead snapshots the current source list, ski
 
 Because one Dijkstra search is re-run for *every single unit* of augmentation, SSP is correct but expensive: its cost scales with the residual flow $F$ left after the primal-dual phase. The multi-source variant is appropriate for tiled/small graphs but can approach a near-whole-image search per unit on NISAR-scale single-tile graphs. The single-source variant avoids that case by searching from one source only and stopping at the first popped deficit; it is used only after full-completion PD."""
 
-COMPLEXITY_OLD = """- **SSP fallback**: $O(F \\cdot (|E| + |V| \\log |V|))$, where $F$ is the residual flow remaining after the primal-dual phase — one full multi-source Dijkstra per unit augmented. This dominates if much flow reaches SSP.
+COMPLEXITY_OLD = """- **SSP fallback**: $O(F \\cdot (|E| + |V| \\log |V|))$, where $F$ is the residual flow remaining after the primal-dual phase - one full multi-source Dijkstra per unit augmented. This dominates if much flow reaches SSP.
 - **Space**: $O(|V| + |E|)$
 
 In practice the primal-dual phase routes essentially all flow, leaving SSP a small residue; on very large graphs the SSP fallback is bypassed entirely (`run_no_ssp`) because a per-unit Dijkstra is catastrophically slow at NISAR scale."""
@@ -353,7 +353,7 @@ t = replace_once(t, SSP_SECTION_OLD, SSP_SECTION_NEW, "§7.6 SSP")
 t = replace_once(t, COMPLEXITY_OLD, COMPLEXITY_NEW, "§7.7 complexity")
 t = replace_once(t, APPC_OLD, APPC_NEW, "AppendixC")
 version_text = (
-    "*Document Version: 3.0 — algorithm sections audited against the code "
+    "*Document Version: 3.0 - algorithm sections audited against the code "
     "(see §9.6 for verified-vs-WIP status and benchmarks).*  \n"
     "*Last Updated: 2026-06-03*"
 )

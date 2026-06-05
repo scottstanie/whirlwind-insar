@@ -14,7 +14,7 @@
 # Assumes:
 #   - uv sync && uv run maturin develop --release  (done once)
 #   - The dolphin output dir at $DOLPHIN_DIR below (override via env var).
-#     Public users without the Capella stack can't reproduce verbatim — the
+#     Public users without the Capella stack can't reproduce verbatim - the
 #     pipeline itself runs on any dolphin output dir with the same layout.
 
 set -euo pipefail
@@ -66,9 +66,9 @@ if [[ $FULL -eq 1 ]]; then
     THREADS=2
     REF=dolphin
     if [[ $TILE_SIZE -gt 0 ]]; then
-        echo "[reproduce] FULL SCENE, tiled ${TILE_SIZE} — caps per-IG memory; wall clock comparable to non-tiled"
+        echo "[reproduce] FULL SCENE, tiled ${TILE_SIZE} - caps per-IG memory; wall clock comparable to non-tiled"
     else
-        echo "[reproduce] FULL SCENE, single-piece — this takes 2-4 hours and ~25 GB peak RAM"
+        echo "[reproduce] FULL SCENE, single-piece - this takes 2-4 hours and ~25 GB peak RAM"
     fi
 else
     OUT="$OUT_BASE/tile-1024${NAME_SUFFIX}"
@@ -76,7 +76,7 @@ else
     MAX_IGS_ARG=(--max-igs 60)
     THREADS=4
     REF=auto
-    echo "[reproduce] 1024^2 tile, 60 IGs — should finish in ~30 s"
+    echo "[reproduce] 1024^2 tile, 60 IGs - should finish in ~30 s"
 fi
 
 NAME="palos_verdes"

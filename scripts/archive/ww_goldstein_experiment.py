@@ -1,4 +1,5 @@
 """Pre-filter the wrapped phase with Goldstein, then run ww."""
+
 from __future__ import annotations
 
 import argparse
@@ -11,7 +12,9 @@ from pathlib import Path
 import numpy as np
 
 
-def goldstein_filter(ig: np.ndarray, alpha: float = 0.5, win: int = 32, step: int = 16) -> np.ndarray:
+def goldstein_filter(
+    ig: np.ndarray, alpha: float = 0.5, win: int = 32, step: int = 16
+) -> np.ndarray:
     """Standard Goldstein adaptive phase filter.
 
     Operates on overlapping blocks, multiplying the FFT magnitude by
@@ -76,7 +79,7 @@ def main():
     mask = np.load(inp / "mask.npy")
     print(f"[{args.label}] input loaded")
 
-    # Normalize ig so Goldstein operates on unit-magnitude phase only —
+    # Normalize ig so Goldstein operates on unit-magnitude phase only -
     # otherwise SLC amplitude dominates the FFT and Goldstein becomes a
     # low-pass that smears phase.
     mag = np.abs(ig)
@@ -90,7 +93,11 @@ def main():
 
     t0 = time.perf_counter()
     unw, cc = ww.unwrap(
-        ig_filt, coh, float(args.nlooks), mask=mask, cost_threshold=args.threshold,
+        ig_filt,
+        coh,
+        float(args.nlooks),
+        mask=mask,
+        cost_threshold=args.threshold,
         goldstein_alpha=0.7,
     )
     elapsed = time.perf_counter() - t0
@@ -126,20 +133,31 @@ def main():
     print(json.dumps(metrics, indent=2))
 
     import matplotlib.pyplot as plt
+
     fig, axes = plt.subplots(1, 3, figsize=(18, 5), constrained_layout=True)
-    axes[0].imshow(np.angle(np.where(mask, ig_filt, np.nan)), cmap="twilight",
-                   vmin=-np.pi, vmax=np.pi, interpolation="none")
+    axes[0].imshow(
+        np.angle(np.where(mask, ig_filt, np.nan)),
+        cmap="twilight",
+        vmin=-np.pi,
+        vmax=np.pi,
+        interpolation="none",
+    )
     axes[0].set_title(f"Goldstein-filtered phase  α={args.alpha}")
     d_show = np.where(eval_mask, diff, np.nan)
-    axes[1].imshow(d_show, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, interpolation="none")
-    axes[1].set_title(f"snaphu - ww  RMS={metrics['rms_rad']:.2f}  "
-                      f"within±π/2={100 * metrics['frac_within_pi_2']:.1f}%")
+    axes[1].imshow(
+        d_show, cmap="RdBu_r", vmin=-2 * np.pi, vmax=2 * np.pi, interpolation="none"
+    )
+    axes[1].set_title(
+        f"snaphu - ww  RMS={metrics['rms_rad']:.2f}  "
+        f"within±π/2={100 * metrics['frac_within_pi_2']:.1f}%"
+    )
     axes[2].hist(v, bins=200, range=(-4 * np.pi, 4 * np.pi), log=True)
     for k in (-2, -1, 0, 1, 2):
         axes[2].axvline(2 * np.pi * k, color="r", lw=0.5, alpha=0.4)
     axes[2].set_title("diff hist")
     for ax in axes[:2]:
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
     fig.savefig(out_dir / "diff.png", dpi=130)
     plt.close(fig)
 

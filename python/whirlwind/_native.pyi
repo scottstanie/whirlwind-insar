@@ -27,13 +27,13 @@ def _unwrap_native(
     """Engine behind :func:`whirlwind.unwrap`: single-tile linear coherence-cost
     unwrap returning ``(phase, conn_components)``.
 
-    Prefer the Python :func:`whirlwind.unwrap` wrapper — it adds the
+    Prefer the Python :func:`whirlwind.unwrap` wrapper - it adds the
     integration-component "bridge" gauge post-pass + the K-transfer back onto the
     original phase. This bare native call does neither (and no Goldstein, which
     is OFF by default in the wrapper too).
 
     Phase: ``tile_size=0`` (default) is single-tile linear MCF on the WHOLE frame
-    — the verified ww-orig-parity path (Carballo Lee-1994 cost, capacity-1
+    - the verified ww-orig-parity path (Carballo Lee-1994 cost, capacity-1
     min-cost-flow, adaptive PD→SSP fallback for masked frames); matches ww-orig
     on all 13 validated NISAR GUNW frames. The TILED pipeline is OPT-IN and NOT
     VALIDATED (fails on most scenes, ~65-89% vs single-tile ~99-100%): select it
@@ -44,7 +44,7 @@ def _unwrap_native(
     down-looks xL first and routes through the opt-in tiled path.
 
     Components: grown GLOBALLY from the Carballo cost grid, independent of the
-    (tiled) phase solve — a pixel edge is a cut when an underlying arc is
+    (tiled) phase solve - a pixel edge is a cut when an underlying arc is
     mask-forbidden or its raw cost is ≤ ``cost_threshold``. uint32, 0 =
     background (cut/masked/below ``min_size_px``), renumbered 1..=K by size,
     capped at ``max_ncomps``. ``min_size_px`` (default 100, ≈0.8 km at 80 m) is
@@ -57,7 +57,7 @@ def unwrap_reuse(
     nlooks: float = ...,
     mask: NDArray[np.bool_] | None = ...,
 ) -> NDArray[np.float32]:
-    """PHASS-style flow-reuse solver — experimental/research, NOT the default
+    """PHASS-style flow-reuse solver - experimental/research, NOT the default
     (the public ``unwrap`` default is single-tile linear; reuse is opt-in via
     ``WHIRLWIND_UNWRAP_SOLVER=reuse``).
 
@@ -79,7 +79,7 @@ def unwrap_crlb(
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """CRLB-weighted unwrap (phase-linked IGs) → ``(phase, conn_components)``.
 
-    The phase-linked twin of :func:`whirlwind.unwrap`. **EXPERIMENTAL / WIP — not
+    The phase-linked twin of :func:`whirlwind.unwrap`. **EXPERIMENTAL / WIP - not
     validated.** This CRLB path rides the same TILED pipeline that was never
     brought to useful results (neither the coherence nor the CRLB tiling was
     validated): ``tile_size=0`` tiles frames > 512 px + a gated multi-shift
@@ -137,7 +137,7 @@ def interpolate(
     min_radius: int = ...,
     alpha: float = ...,
 ) -> NDArray[np.complex64]:
-    """Spiral PS phase interpolator — Rust port of dolphin ``interpolation.interpolate``.
+    """Spiral PS phase interpolator - Rust port of dolphin ``interpolation.interpolate``.
 
     Replaces low-weight pixels' phase with a Gaussian-distance-weighted average of
     the nearest ``num_neighbors`` high-weight pixels; amplitude preserved.
@@ -176,7 +176,7 @@ def closure_correct(
 
 class RefineResult(TypedDict):
     corrected: NDArray[np.float32]  # (E, m, n)
-    corrections: NDArray[np.int16]  # (E, m, n) — additive on top of input
+    corrections: NDArray[np.int16]  # (E, m, n) - additive on top of input
     residual_violations: NDArray[np.uint16]  # (m, n)
     iterations: NDArray[np.uint8]  # (m, n)
 
@@ -218,7 +218,7 @@ def quality_triangles(
 ) -> NDArray[np.uint16]:
     """Per-pixel max |K| over all temporal triangles (3-cycles).
 
-    Local 3-cycle check — recommended over `quality_map` for phase-linked
+    Local 3-cycle check - recommended over `quality_map` for phase-linked
     stacks where short-baseline triangles are the natural redundancy.
     """
 

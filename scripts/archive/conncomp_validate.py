@@ -2,8 +2,8 @@
 
 Compares three component sources on the same scene:
 
-1. ``skimage.label`` on ``coh > threshold`` — what spurt would do upstream.
-2. ``ww.unwrap_with_conncomp`` — components grown from the MCF cost graph.
+1. ``skimage.label`` on ``coh > threshold`` - what spurt would do upstream.
+2. ``ww.unwrap_with_conncomp`` - components grown from the MCF cost graph.
 3. The same MCF components but at multiple ``cost_threshold`` values, to
    show the gradient instead of a single number.
 
@@ -24,6 +24,7 @@ How to rerun::
     uv run python scripts/conncomp_validate.py \\
         --out /tmp/whirlwind-conncomp
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,40 +39,56 @@ import whirlwind as ww
 
 
 def _add_phase_noise(truth, coh, nlooks, rng):
-    sigma = np.sqrt((1 - coh ** 2) / (2 * nlooks * np.maximum(coh ** 2, 1e-3)))
+    sigma = np.sqrt((1 - coh**2) / (2 * nlooks * np.maximum(coh**2, 1e-3)))
     return (truth + sigma * rng.standard_normal(truth.shape)).astype(np.float32)
 
 
 def scene_bridge():
     rng = np.random.default_rng(0)
     m = n = 256
-    truth = (np.arange(n, dtype=np.float32) * (6 * np.pi / n))[None, :] * np.ones((m, 1), dtype=np.float32)
+    truth = (np.arange(n, dtype=np.float32) * (6 * np.pi / n))[None, :] * np.ones(
+        (m, 1), dtype=np.float32
+    )
     yy, xx = np.mgrid[0:m, 0:n].astype(np.float32)
     r = m // 6
     cy, cx1, cx2 = m // 2, n // 4, 3 * n // 4
-    in_b1 = (yy - cy) ** 2 + (xx - cx1) ** 2 < r ** 2
-    in_b2 = (yy - cy) ** 2 + (xx - cx2) ** 2 < r ** 2
+    in_b1 = (yy - cy) ** 2 + (xx - cx1) ** 2 < r**2
+    in_b2 = (yy - cy) ** 2 + (xx - cx2) ** 2 < r**2
     in_br = (np.abs(yy - cy) < 3) & (xx > cx1) & (xx < cx2)
     coh = np.full((m, n), 0.3, dtype=np.float32)
     coh[in_br] = 0.7
     coh[in_b1 | in_b2] = 0.9
     nlooks = 5.0
     igram = np.exp(1j * _add_phase_noise(truth, coh, nlooks, rng)).astype(np.complex64)
-    return {"name": "bridge", "truth": truth, "igram": igram, "coh": coh, "nlooks": nlooks}
+    return {
+        "name": "bridge",
+        "truth": truth,
+        "igram": igram,
+        "coh": coh,
+        "nlooks": nlooks,
+    }
 
 
 def scene_hole():
     rng = np.random.default_rng(1)
     m = n = 256
-    truth = (0.05 * np.pi * (np.arange(m)[:, None] + np.arange(n)[None, :])).astype(np.float32)
+    truth = (0.05 * np.pi * (np.arange(m)[:, None] + np.arange(n)[None, :])).astype(
+        np.float32
+    )
     yy, xx = np.mgrid[0:m, 0:n].astype(np.float32)
     cy, cx, r = m // 2, n // 2, 32
-    in_hole = (yy - cy) ** 2 + (xx - cx) ** 2 < r ** 2
+    in_hole = (yy - cy) ** 2 + (xx - cx) ** 2 < r**2
     coh = np.full((m, n), 0.9, dtype=np.float32)
     coh[in_hole] = 0.2
     nlooks = 5.0
     igram = np.exp(1j * _add_phase_noise(truth, coh, nlooks, rng)).astype(np.complex64)
-    return {"name": "hole", "truth": truth, "igram": igram, "coh": coh, "nlooks": nlooks}
+    return {
+        "name": "hole",
+        "truth": truth,
+        "igram": igram,
+        "coh": coh,
+        "nlooks": nlooks,
+    }
 
 
 def spurt_style_components(coh: np.ndarray, threshold: float) -> np.ndarray:
@@ -98,7 +115,9 @@ def render(scene, out_dir: Path):
         results[thresh] = {"unw": unw, "cc": cc}
 
     # Continuous unwrap (no components) for reference.
-    unw_ref, _cc = ww.unwrap(ig.astype(np.complex64), coh.astype(np.float32), float(nlooks))
+    unw_ref, _cc = ww.unwrap(
+        ig.astype(np.complex64), coh.astype(np.float32), float(nlooks)
+    )
 
     fig, axes = plt.subplots(2, 4, figsize=(18, 9), constrained_layout=True)
     im_kw = dict(interpolation="none")
@@ -111,7 +130,9 @@ def render(scene, out_dir: Path):
     axes[0, 2].imshow(sp_low, cmap="tab20", **im_kw)
     axes[0, 2].set_title(f"spurt-style label(γ̂ > 0.60)\n{int(sp_low.max())} components")
     axes[0, 3].imshow(sp_high, cmap="tab20", **im_kw)
-    axes[0, 3].set_title(f"spurt-style label(γ̂ > 0.85)\n{int(sp_high.max())} components")
+    axes[0, 3].set_title(
+        f"spurt-style label(γ̂ > 0.85)\n{int(sp_high.max())} components"
+    )
 
     for i, thresh in enumerate((50, 150, 250)):
         ax = axes[1, i]
@@ -127,7 +148,9 @@ def render(scene, out_dir: Path):
     sp_cov = (sp_low > 0).astype(int)
     overlay = cc_mid - sp_cov
     axes[1, 3].imshow(overlay, vmin=-1, vmax=1, cmap="bwr", **im_kw)
-    axes[1, 3].set_title("MCF@150 minus spurt@0.6 coverage\n(red: only MCF, blue: only spurt)")
+    axes[1, 3].set_title(
+        "MCF@150 minus spurt@0.6 coverage\n(red: only MCF, blue: only spurt)"
+    )
 
     for ax in axes.ravel():
         ax.set_xticks([])
@@ -155,7 +178,7 @@ def render(scene, out_dir: Path):
 def threshold_sweep(scene, out_dir: Path):
     """Sweep ``cost_threshold`` over a wide range; plot coverage of the
     largest component and #components vs threshold. The point: MCF cost
-    threshold gives a smooth gradient, not a knife-edge — small changes
+    threshold gives a smooth gradient, not a knife-edge - small changes
     don't catastrophically partition the scene.
     """
     name = scene["name"]
@@ -195,10 +218,31 @@ def threshold_sweep(scene, out_dir: Path):
     fig, (axc, axn) = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
 
     axc.plot(thresholds, coverages, "-o", label="MCF: total coverage", color="C0")
-    axc.plot(thresholds, largest_frac, "--", label="MCF: largest component", color="C0", alpha=0.6)
+    axc.plot(
+        thresholds,
+        largest_frac,
+        "--",
+        label="MCF: largest component",
+        color="C0",
+        alpha=0.6,
+    )
     ax2 = axc.twiny()
-    ax2.plot(coh_thresholds, sp_cov, "-s", label="spurt-style: total coverage", color="C3", markersize=4)
-    ax2.plot(coh_thresholds, sp_largest, "--", label="spurt-style: largest", color="C3", alpha=0.6)
+    ax2.plot(
+        coh_thresholds,
+        sp_cov,
+        "-s",
+        label="spurt-style: total coverage",
+        color="C3",
+        markersize=4,
+    )
+    ax2.plot(
+        coh_thresholds,
+        sp_largest,
+        "--",
+        label="spurt-style: largest",
+        color="C3",
+        alpha=0.6,
+    )
     axc.set_xlabel("MCF cost_threshold (integer Carballo units, COST_SCALE=100)")
     ax2.set_xlabel("spurt-style coherence threshold")
     axc.set_ylabel("fraction of pixels")

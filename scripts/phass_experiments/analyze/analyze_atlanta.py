@@ -15,6 +15,7 @@ Two K-match numbers are reported per mode:
 
 Usage:  analyze_atlanta.py [mode ...]   (default: baseline reuse)
 """
+
 from __future__ import annotations
 
 import sys
@@ -50,8 +51,11 @@ def load_ref():
 
     wrapped = np.angle(np.exp(1j * phase)).astype(np.float32)
     mask = (
-        np.isfinite(phase) & np.isfinite(coh) & np.isfinite(disp)
-        & (coh > 0) & (coh < 1.0)
+        np.isfinite(phase)
+        & np.isfinite(coh)
+        & np.isfinite(disp)
+        & (coh > 0)
+        & (coh < 1.0)
     )
     # Displacement -> phase. Auto-detect the sign convention by congruence:
     # the correct sign makes (phase_ref - wrapped)/2pi cluster on integers.
@@ -64,8 +68,11 @@ def load_ref():
         if best is None or spread < best[0]:
             best = (spread, s, phase_ref)
     spread, s, phase_ref = best
-    print(f"[atlanta] displacement->phase sign = {s:+.0f}  "
-          f"(congruence frac-std={spread:.4f} cycles; lower=better)", flush=True)
+    print(
+        f"[atlanta] displacement->phase sign = {s:+.0f}  "
+        f"(congruence frac-std={spread:.4f} cycles; lower=better)",
+        flush=True,
+    )
     k_ref = np.round((phase_ref - wrapped) / TAU).astype(np.int32)
     return dict(wrapped=wrapped, coh=coh, mask=mask, k_ref=k_ref, cc=cc)
 
@@ -78,17 +85,26 @@ def main() -> None:
     main_label = int(labels[np.argmax(counts)]) if labels.size else 0
     region = mask & (cc == main_label)
     n_region = int(region.sum())
-    print(f"[atlanta] OPERA cc={main_label} mainland = {n_region:,} px "
-          f"({n_region/cc.size*100:.1f}% of frame); mask={int(mask.sum()):,}",
-          flush=True)
+    print(
+        f"[atlanta] OPERA cc={main_label} mainland = {n_region:,} px "
+        f"({n_region/cc.size*100:.1f}% of frame); mask={int(mask.sum()):,}",
+        flush=True,
+    )
 
-    header = ("mode", "wall", "K=match%", "|dK|=1%", "|dK|>=2%",
-              "per-cc K=match%", "n_cc(opera)")
+    header = (
+        "mode",
+        "wall",
+        "K=match%",
+        "|dK|=1%",
+        "|dK|>=2%",
+        "per-cc K=match%",
+        "n_cc(opera)",
+    )
     rows = [header, tuple("---" for _ in header)]
     for mode in modes:
         path = OUT / f"atlanta_{mode}.npz"
         if not path.exists():
-            rows.append((mode, "—", "—", "—", "—", "—", "—"))
+            rows.append((mode, "-", "-", "-", "-", "-", "-"))
             continue
         d = np.load(path)
         k_ww = d["k"].astype(np.int32)
@@ -119,8 +135,17 @@ def main() -> None:
             total += n
         m0_cc = (matched / total * 100) if total else float("nan")
 
-        rows.append((mode, f"{elapsed:.1f}s", f"{m0:.2f}", f"{m1:.2f}",
-                     f"{m2:.2f}", f"{m0_cc:.2f}", str(len(cc_in))))
+        rows.append(
+            (
+                mode,
+                f"{elapsed:.1f}s",
+                f"{m0:.2f}",
+                f"{m1:.2f}",
+                f"{m2:.2f}",
+                f"{m0_cc:.2f}",
+                str(len(cc_in)),
+            )
+        )
 
     w = [max(len(str(r[i])) for r in rows) for i in range(len(header))]
     for r in rows:

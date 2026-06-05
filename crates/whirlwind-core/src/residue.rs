@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn unwrapped_phase_has_no_residues() {
         // A non-wrapping phase image (range fits in [-π, π]): no interior
-        // residues *and* no boundary residues — every cycle_diff rounds to 0.
+        // residues *and* no boundary residues - every cycle_diff rounds to 0.
         let n = 64;
         let mut phase = Array2::<f32>::zeros((n, n));
         for i in 0..n {

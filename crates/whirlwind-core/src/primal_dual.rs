@@ -62,7 +62,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     run_impl(g, net, max_iter, false);
 }
 
-/// Primal-dual loop using full-completion Dijkstra — matches Python ww-orig.
+/// Primal-dual loop using full-completion Dijkstra - matches Python ww-orig.
 ///
 /// Python's `dijkstra_pd` runs until the heap is empty: every reachable node
 /// is popped and gets an exact finalized distance. The subsequent potential
@@ -77,7 +77,7 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
     // residual graph on heavily-masked frames → excess nodes trapped in tiny
     // residual components with no deficit). When that leaves the network
     // unbalanced, resume the multi-source PD (which converges to ww-orig's flow
-    // on D_074/A_035 — it doesn't fragment the same way) in chunks, retrying SSP
+    // on D_074/A_035 - it doesn't fragment the same way) in chunks, retrying SSP
     // each round, up to a cap. This is a robustness lever, NOT literal ww-orig
     // parity (ww-orig fixes it in one 8-PD + SSP pass; the remaining trajectory
     // mismatch is still open). The final imbalance is always reported.
@@ -114,7 +114,7 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
                 break;
             }
             if after >= before {
-                // PD made no progress this round AND SSP couldn't finish — the
+                // PD made no progress this round AND SSP couldn't finish - the
                 // residual is genuinely trapped; stop and report rather than spin.
                 break;
             }
@@ -135,7 +135,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     // noisy data; the algorithm will route as much flow as it can and stop
     // when no more excess/deficit pairs are connected.
 
-    // Reusable scratch buffers — kept alive across PD iterations so we don't
+    // Reusable scratch buffers - kept alive across PD iterations so we don't
     // pay a ~n_nodes x 4-byte allocation per iter (on 8192² that's 268 MiB
     // each, churned tens of times across the run).
     let n_nodes = net.num_nodes();
@@ -144,7 +144,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
     let mut deficits: Vec<usize> = Vec::new();
     let mut sp = ShortestPaths::new(n_nodes);
-    // Epoch counter persists across PD iterations too — wrap-on-zero handles
+    // Epoch counter persists across PD iterations too - wrap-on-zero handles
     // the (vanishingly rare) ~4B-walk overflow.
     let mut epoch: u32 = 0;
 
@@ -174,7 +174,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
             if dbg {
                 eprintln!("[{tag}] no progress, falling to SSP");
             }
-            // No progress this iter — give up to avoid spinning.
+            // No progress this iter - give up to avoid spinning.
             break;
         }
         last_excess_total = excess_total;
@@ -207,7 +207,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         // pred_arc<0 node (a seed source). Also remember the path arcs.
         //
         // Cycle detection: a `visited_epoch[v] == epoch` marks v as on the
-        // current sink's path — replacing the per-sink HashSet (heap alloc
+        // current sink's path - replacing the per-sink HashSet (heap alloc
         // each sink) with one bumped `u32` counter that persists across
         // outer iterations.
         path_info.clear();
@@ -255,11 +255,11 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         //   * full-completion (parity) path: key = Dijkstra DISTANCE, exactly
         //     ww-orig (`distance_to_vertex(sink)`). With the FIFO Dial above,
         //     distances are true min-hop shortest-path distances, so "nearest by
-        //     distance" pairs each residue with its nearest partner — the short
+        //     distance" pairs each residue with its nearest partner - the short
         //     branch cut that is the correct unwrap on masked frames. (Distance
         //     here is meaningful ONLY because the Dijkstra is FIFO; the two are a
-        //     pair — hop-count sort or LIFO distances both diverge from ww-orig.)
-        //   * early-exit path (default/convex/reuse production): keep hop count —
+        //     pair - hop-count sort or LIFO distances both diverge from ww-orig.)
+        //   * early-exit path (default/convex/reuse production): keep hop count -
         //     distance there breaks the convex probe's SSP non-negativity
         //     invariant, and that path is not a parity path. (item.0 = sink,
         //     item.1 = source.)
@@ -300,7 +300,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         //
         // With full_dijkstra=true all nodes are popped so d_max is unused;
         // the `if popped { d } else { d_max }` always takes the `d` branch
-        // and each node gets its exact shortest-path distance subtracted —
+        // and each node gets its exact shortest-path distance subtracted -
         // matching Python's `update_potential_pd`.
         let d_max = sp
             .dist
@@ -331,7 +331,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     // Fall through to SSP for any remaining excess. Pick the variant that is
     // fast for this path's graph shape (ATBD §9.6): the full-completion path is
     // the single-tile whole-image solve, where the multi-source SSP is
-    // catastrophic (a near-graph-wide Dijkstra per unit) — use single-source
+    // catastrophic (a near-graph-wide Dijkstra per unit) - use single-source
     // there. The early-exit path is tiled / small-graph, where multi-source is
     // fast and robust to its d_max-capped potentials.
     record_ssp_call();
@@ -360,7 +360,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
 /// Like [`run`] but stops after the primal-dual loop without SSP fallback.
 ///
 /// Python `whirlwind_orig` does `primal_dual(network, maxiter=8)` and then
-/// integrates immediately — it never calls SSP. On NISAR-scale problems
+/// integrates immediately - it never calls SSP. On NISAR-scale problems
 /// (71M arcs) SSP on remaining residues is catastrophically slow. Use this
 /// when matching Python ww-orig behavior: run PD for a fixed number of
 /// iterations, leave any unmatched residues as-is, and let the integration
@@ -400,7 +400,7 @@ pub fn run_no_ssp<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
             if dbg {
                 eprintln!("[pd_no_ssp] no progress, stopping (no SSP fallback)");
             }
-            return; // stop here — no SSP
+            return; // stop here - no SSP
         }
         last_excess_total = excess_total;
         let t0 = std::time::Instant::now();
@@ -459,7 +459,7 @@ pub fn run_no_ssp<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
             if dbg {
                 eprintln!("[pd_no_ssp] hit max_iter, stopping (no SSP fallback)");
             }
-            return; // stop here — no SSP
+            return; // stop here - no SSP
         }
     }
 }

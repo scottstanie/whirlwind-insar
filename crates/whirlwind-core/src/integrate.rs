@@ -12,8 +12,8 @@
 //! `wrap(a - b) = (a - b) + wrap_n_cycle(a, b) · 2π`, and `net_flow` the MCF
 //! arc flow (the cycle correction MCF assigned to that edge).
 //!
-//! Doing this with integers — rather than accumulating the float quantity
-//! `dpsi + 2π · net_flow` along the path — keeps the output exactly
+//! Doing this with integers - rather than accumulating the float quantity
+//! `dpsi + 2π · net_flow` along the path - keeps the output exactly
 //! congruent with the wrapped input modulo float rounding of the *single*
 //! final multiplication `2π · K[p]`. The float-accumulator formulation
 //! (whirlwind's old version, and SNAPHU's original `IntegratePhase`) has
@@ -61,7 +61,7 @@ pub fn integrate(
     for i in 0..m {
         if i > 0 {
             // Vertical step (i-1, 0) → (i, 0). Pixel edge between
-            // (i-1, 0) and (i, 0) is *vertical* — its residue arcs are
+            // (i-1, 0) and (i, 0) is *vertical* - its residue arcs are
             // RIGHT (forward = j increasing) between residues (i, 0)
             // and (i, 1).
             let n_cyc = wrap_n_cycle(wrapped_phase[(i, 0)], wrapped_phase[(i - 1, 0)]);
@@ -92,7 +92,7 @@ pub fn integrate(
 /// Like [`integrate`] but skips masked-out pixels.
 ///
 /// BFS-walks every 4-connected valid component, seeding each at its first
-/// raster-order pixel (with arbitrary integer cycle K=0 — components are
+/// raster-order pixel (with arbitrary integer cycle K=0 - components are
 /// integrated independently and the relative 2π offset between components
 /// is unobservable from the wrapped data). Masked pixels are left as NaN.
 pub fn integrate_with_mask(
@@ -305,7 +305,7 @@ mod tests {
     use rand::SeedableRng;
 
     /// Unwrapped output must be congruent to the wrapped input modulo 2π
-    /// up to f32 ULP at the unwrapped magnitude — by construction, since
+    /// up to f32 ULP at the unwrapped magnitude - by construction, since
     /// `unw[p] = wrapped[p] + 2π · K[p]` with `K` integer. This guards
     /// against any future regression to a float-accumulator integrator
     /// (SNAPHU's classic "millions of arcs sum drifts" bug; see Geoff
@@ -390,7 +390,7 @@ mod tests {
                 if mask[(i, j)] {
                     assert!(
                         unw[(i, j)].is_finite(),
-                        "valid pixel ({i}, {j}) left as NaN — component not integrated"
+                        "valid pixel ({i}, {j}) left as NaN - component not integrated"
                     );
                 } else {
                     assert!(unw[(i, j)].is_nan(), "masked pixel ({i}, {j}) must be NaN");

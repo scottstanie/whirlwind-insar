@@ -1,10 +1,10 @@
-"""NISAR 40 MHz HH 50 m posting (~6.8k x 6.9k) — ww vs SNAPHU comparison.
+"""NISAR 40 MHz HH 50 m posting (~6.8k x 6.9k) - ww vs SNAPHU comparison.
 
 Three methods on the same interferogram (10 x 10 boxcar looks):
 
-* ``ww``           — ``ww.unwrap_with_conncomp`` (whirlwind-rs MCF).
-* ``snaphu_plain`` — ``snaphu.unwrap`` single-tile, ``cost='smooth'``.
-* ``snaphu_tiled`` — ``snaphu.unwrap`` with ``ntiles=(3, 3)``.
+* ``ww``           - ``ww.unwrap_with_conncomp`` (whirlwind-rs MCF).
+* ``snaphu_plain`` - ``snaphu.unwrap`` single-tile, ``cost='smooth'``.
+* ``snaphu_tiled`` - ``snaphu.unwrap`` with ``ntiles=(3, 3)``.
 
 Each runs in its own subprocess so we can measure peak RSS cleanly via
 ``resource.getrusage``. After all three finish, the orchestrator builds
@@ -261,7 +261,7 @@ def stage_run_all(out_dir: Path, nlooks: float, methods: list[str]) -> None:
 def stage_plot(out_dir: Path, methods: list[str]) -> None:
     import matplotlib.pyplot as plt
 
-    # Wait — the masks differ between methods because some pixels are not
+    # Wait - the masks differ between methods because some pixels are not
     # covered by any conncomp. The fair eval mask is the *intersection* of
     # the per-method conncomp > 0 masks AND the input data mask.
     input_mask = np.load(out_dir / "input" / "mask.npy")
@@ -356,7 +356,7 @@ def stage_plot(out_dir: Path, methods: list[str]) -> None:
     fig.savefig(out_path / "overview.png", dpi=200)
     plt.close(fig)
 
-    # Diff histograms — show whether method disagreement is structured at
+    # Diff histograms - show whether method disagreement is structured at
     # integer multiples of 2π (true topology disagreement) or continuous noise.
     if diffs:
         fig, axes = plt.subplots(

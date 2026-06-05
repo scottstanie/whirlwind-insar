@@ -5,6 +5,7 @@ scattered, and shows the decorrelation neck geometry.
 
 Outputs a PNG; path printed at the end.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,7 +25,7 @@ def load(variant_dir: Path):
 
 
 def main() -> None:
-    t512 = load(LEARN / "ww_gunw_bench")          # tile512 linear, 57%
+    t512 = load(LEARN / "ww_gunw_bench")  # tile512 linear, 57%
     t2048 = load(LEARN / "ww_gunw_variants/tile2048")  # tile2048, 97%
 
     coh = t512["coh"]
@@ -44,29 +45,38 @@ def main() -> None:
     ax[0, 1].set_title(f"production connectedComponents (n={int(np.nanmax(pccm))})")
     fig.colorbar(im1, ax=ax[0, 1], shrink=0.7)
     im2 = ax[1, 0].imshow(amb512[s], cmap="RdBu", vmin=-2, vmax=2)
-    ax[1, 0].set_title("ambiguity diff: tile512 (57% match) — RED/BLUE = wrong integer")
+    ax[1, 0].set_title("ambiguity diff: tile512 (57% match) - RED/BLUE = wrong integer")
     fig.colorbar(im2, ax=ax[1, 0], shrink=0.7)
     im3 = ax[1, 1].imshow(amb2048[s], cmap="RdBu", vmin=-2, vmax=2)
     ax[1, 1].set_title("ambiguity diff: tile2048 (97% match)")
     fig.colorbar(im3, ax=ax[1, 1], shrink=0.7)
     for a in ax.ravel():
-        a.set_xticks([]); a.set_yticks([])
+        a.set_xticks([])
+        a.set_yticks([])
     p = OUT / "a016_failure_geometry.png"
     fig.savefig(p, dpi=130)
     plt.close(fig)
 
     # quantify: per-column fraction wrong at tile512, to locate the drift frontier
     wrong = np.abs(amb512) >= 0.5
-    colwrong = np.nansum(np.where(mask, wrong, 0), axis=0) / np.maximum(1, mask.sum(axis=0))
+    colwrong = np.nansum(np.where(mask, wrong, 0), axis=0) / np.maximum(
+        1, mask.sum(axis=0)
+    )
     # report the column ranges where >50% of valid pixels are wrong
     bad_cols = np.where(colwrong > 0.5)[0]
     if bad_cols.size:
-        print(f"tile512: columns with >50% wrong: {bad_cols.min()}..{bad_cols.max()} "
-              f"({bad_cols.size} cols of {mask.shape[1]})", flush=True)
+        print(
+            f"tile512: columns with >50% wrong: {bad_cols.min()}..{bad_cols.max()} "
+            f"({bad_cols.size} cols of {mask.shape[1]})",
+            flush=True,
+        )
     # coherence valley: per-column mean coherence
     colcoh = np.nansum(np.where(mask, coh, 0), axis=0) / np.maximum(1, mask.sum(axis=0))
     valley = np.argsort(colcoh)[:10]
-    print(f"lowest-coherence columns (neck candidates): {sorted(valley.tolist())}", flush=True)
+    print(
+        f"lowest-coherence columns (neck candidates): {sorted(valley.tolist())}",
+        flush=True,
+    )
     print(f"PLOT: {p}", flush=True)
 
 

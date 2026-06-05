@@ -79,7 +79,7 @@ def main() -> None:
         ax.set_xticks([])
         ax.set_yticks([])
         plt.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
-    fig.suptitle("nisar: integer cycles K — dolphin PHASS vs SNAPHU 9x9", fontsize=11)
+    fig.suptitle("nisar: integer cycles K - dolphin PHASS vs SNAPHU 9x9", fontsize=11)
     fig.tight_layout()
     PLOTS.mkdir(parents=True, exist_ok=True)
     out = PLOTS / "nisar_dolphin_phass_vs_snaphu.png"

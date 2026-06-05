@@ -29,7 +29,7 @@ Conda-forge then auto-updates from PyPI (see below).
 
 ### PyPI trusted publishing
 
-The release workflow authenticates to PyPI via OIDC — no API token in
+The release workflow authenticates to PyPI via OIDC - no API token in
 GitHub secrets. To set it up:
 
 1. Reserve the project name by uploading at least one release manually,
@@ -111,7 +111,7 @@ and after acceptance the feedstock auto-updates on every PyPI release.
    and grants you maintainer rights.
 
 After the feedstock exists, **no further action is needed in this
-repo** — `regro-cf-autotick-bot` opens an automatic PR to the feedstock
+repo** - `regro-cf-autotick-bot` opens an automatic PR to the feedstock
 on every new PyPI release. Merge it (or wait for the maintainer team to
 merge) and conda-forge ships the new build.
 
@@ -142,11 +142,11 @@ merge) and conda-forge ships the new build.
 ## Re-running a failed release
 
 `pypa/gh-action-pypi-publish` is invoked with `skip-existing: true`, so
-re-running the workflow after a partial failure is safe — already
+re-running the workflow after a partial failure is safe - already
 uploaded artifacts are skipped, missing ones are uploaded.
 
 If the tag itself needs to be moved (don't do this once PyPI has
-accepted a release — bump the version instead):
+accepted a release - bump the version instead):
 
 ```bash
 git tag -d v$(VERSION)
@@ -160,5 +160,5 @@ git push origin v$(VERSION)
 Run the `Release` workflow via *Actions* → *Release* → *Run workflow*.
 On `workflow_dispatch` the publish job is skipped (`if:` guard on the
 tag ref), but every wheel/sdist artifact is still produced and
-downloadable from the run page — useful for validating wheel builds
+downloadable from the run page - useful for validating wheel builds
 before tagging.

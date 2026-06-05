@@ -20,7 +20,7 @@ windowed wrapped gradient `α_smooth`:
 | Arc capacity                  | **1** (unit)                                       | Many cycles (network sized to allow it)      |
 | Coherence weighting           | γ, raw                                             | `(1−ρ)^rhopow` (rhopow ≈ 8.4 at L=100)       |
 | Phase-gradient input          | `α_smooth` (7x7 box of wrapped gradient)           | `offset = round(avgdpsi · nshortcycle / 2π)` |
-| Role of the smoothed gradient | **Cost modifier**: arcs in regions with `          | α_smooth                                     | ≈ π` get low cost — "this region looks like a wrap line" | **Cost offset**: the arc actively wants `flow ≈ offset` |
+| Role of the smoothed gradient | **Cost modifier**: arcs in regions with `          | α_smooth                                     | ≈ π` get low cost - "this region looks like a wrap line" | **Cost offset**: the arc actively wants `flow ≈ offset` |
 | Solver                        | SSP / primal-dual Dijkstra, integer cost           | MCM-flavoured convex MCF                     |
 
 ## Why a "use SNAPHU's exact numbers" port fails in our solver
@@ -36,12 +36,12 @@ single integer cost-per-unit-flow:
    minimum at `flow = offset`. The arc actively *wants* a particular
    non-zero flow set by the local windowed gradient. A linear cost can
    only ever say "flow=0 is cheapest, with a per-unit deviation
-   penalty" — it cannot pull `k` toward an offset value.
+   penalty" - it cannot pull `k` toward an offset value.
 
 Worse: linearising the quadratic on the *per-unit-flow* axis (slope at
 `k=0`, no offset) gives an arc cost proportional to `|offset| / σ²`.
 With the proper `(1−ρ)^8.4` weighting and high coherence, `1/σ²` is
-*very large* — so a high-coherence smooth arc, on which we want flow=0,
+*very large* - so a high-coherence smooth arc, on which we want flow=0,
 ends up with a *low* per-unit cost in the linearisation (because the
 parabola is shallow near its minimum at `k=offset`). MCF then gleefully
 routes flow through coherent smooth regions, which is the opposite of
@@ -49,13 +49,13 @@ the desired behaviour. **Match the numbers, lose the shape, get a
 worse answer.** This is what happened in the first
 `scripts/ww_cost_experiment.py` attempt.
 
-## The "use deviation as cost input" patch — tested, also worse
+## The "use deviation as cost input" patch - tested, also worse
 
 Hypothesis: since whirlwind's `α_smooth` is a cost *modifier* but
 SNAPHU's `avgdpsi` is a cost *offset*, maybe whirlwind should feed
 the *per-arc deviation* `wrap(dpsi_arc − dpsi_smoothed_7x7)` into its
 `(π − |α|)` formula. Single-arc noise outliers inside a coherent ramp
-would then become locally cheap routing channels — emulating SNAPHU's
+would then become locally cheap routing channels - emulating SNAPHU's
 "this arc's preferred flow is non-zero" without changing the solver.
 
 Result on the NISAR 9x9 reference scene at α=0 (no Goldstein):
@@ -66,7 +66,7 @@ Result on the NISAR 9x9 reference scene at α=0 (no Goldstein):
 | deviation input             | 87 s |        1.71 % |                          **86.50 %** ↓ |
 
 Why it loses: the substitution does succeed in making noise arcs cheap
-to route through — but in a smooth coherent ramp with random per-arc
+to route through - but in a smooth coherent ramp with random per-arc
 noise, *those noise arcs have no geometric link to true wrap-line
 topology*. MCF routes 2π discontinuities through them and creates
 K-flips in the wrong places.
@@ -78,7 +78,7 @@ arcs). Replacing it with raw-minus-smoothed destroys that regional
 preference.
 
 (The toggle is preserved as `WHIRLWIND_DEVIATION_COST=1` for the
-documented negative result — see `crates/whirlwind-core/src/cost/mod.rs`.)
+documented negative result - see `crates/whirlwind-core/src/cost/mod.rs`.)
 
 ## What about PHASS?
 
@@ -88,7 +88,7 @@ zero-cost cuts** in two places.
 
 1. **Phase-gradient cuts**: any arc with `|wrap(Δphase_raw)| ≥ 1.0 rad`
    gets cost = 0. This is the equivalent of SNAPHU's "this arc has a
-   non-zero preferred flow" — except instead of a quadratic that pulls
+   non-zero preferred flow" - except instead of a quadratic that pulls
    `k` toward `offset`, PHASS just declares the arc free so MCF will
    use it preferentially.
 2. **Amplitude edge cuts** (when amplitude data is provided): a Canny
@@ -122,13 +122,13 @@ work. To close the no-filter gap in whirlwind without copying SNAPHU's
 solver, the practical paths are (in order of how much code they need):
 
 - **Hard cuts at large `|wrap(dpsi_raw)|`** (PHASS-style). Smallest
-  intervention — just modify the cost computation. Tested in
+  intervention - just modify the cost computation. Tested in
   [[phass-experiments]]; doesn't help in our solver.
 - **Saturated coherence cost** (also PHASS-style). Replace the
   `(π − |α|)` modulation with a flat 255 ceiling above some γ. Tested
   in [[phass-experiments]]; doesn't help in our solver. (But the
   *actual* PHASS algorithm via `dolphin --unwrap-method PHASS` hits
-  97.9 % K-match with SNAPHU at α=0 — so the idea works, our port of
+  97.9 % K-match with SNAPHU at α=0 - so the idea works, our port of
   it doesn't.)
 - **Iterative-recost SSP**: re-evaluate per-arc marginal cost
   `c(f+1) − c(f)` before each Dijkstra in `ssp.rs`. Lets the solver

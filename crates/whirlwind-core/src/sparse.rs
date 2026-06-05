@@ -5,7 +5,7 @@
 //! MCF solver is whirlwind's own primal-dual rather than a generic LP).
 //!
 //! Caller supplies:
-//!   * `points`: 2D coordinates of the valid pixels (row, col — units only
+//!   * `points`: 2D coordinates of the valid pixels (row, col - units only
 //!     affect edge-length terms in optional cost weights).
 //!   * `wrapped_phase`: per-pixel wrapped phase, length matches `points`.
 //!   * `variance`: per-pixel CRLB phase variance, length matches `points`.
@@ -33,7 +33,7 @@ use std::f32::consts::TAU;
 /// Top-level sparse phase unwrap.
 ///
 /// * `points`: `(x, y)` of each valid pixel; length `n`. Coordinates can be
-///   floats — they only enter the Delaunay triangulation, not the cost.
+///   floats - they only enter the Delaunay triangulation, not the cost.
 /// * `wrapped_phase`: wrapped phase per pixel, length `n`.
 /// * `variance`: CRLB phase variance per pixel (rad²), length `n`. Used to
 ///   build per-edge integer arc costs via the same `(σ²_a + σ²_b) / 2`
@@ -41,7 +41,7 @@ use std::f32::consts::TAU;
 /// * `max_edge_length`: optional cutoff. Triangulation edges longer than
 ///   this are treated as boundary edges (to the outer face) and integration
 ///   does not cross them. Required when the input point set has long convex-
-///   hull spans relative to the phase gradient — without it, multi-wrap
+///   hull spans relative to the phase gradient - without it, multi-wrap
 ///   edges can't be handled by the unit-capacity MCF and the unwrap is
 ///   garbage. Pass `None` (or a very large value) only when you've already
 ///   filtered the input to ensure bounded edge lengths.
@@ -111,7 +111,7 @@ pub fn compute_triangle_residues(g: &TriangulatedGraph, wrapped_phase: &[f32]) -
     }
     // Outer face absorbs the rest so total residue == 0 (the MCF invariant).
     // Conservation: by Stokes, the integer winding around the convex hull
-    // equals the sum of interior triangle windings — so outer = -total puts
+    // equals the sum of interior triangle windings - so outer = -total puts
     // the boundary deposit where wrap lines exiting the hull terminate.
     excess[g.outer_face()] = -total;
     excess
@@ -122,7 +122,7 @@ pub fn compute_triangle_residues(g: &TriangulatedGraph, wrapped_phase: &[f32]) -
 /// pre-saturated so MCF cannot route flow through them).
 ///
 /// Length of `costs` = `num_forward = 2 * E`, with the canonical and reversed
-/// forward arcs each getting the same cost (symmetric — there is no α term
+/// forward arcs each getting the same cost (symmetric - there is no α term
 /// on the sparse triangulation edges; direction-dependent costs are reserved
 /// for a future Carballo-style implementation that needs the smoothed phase
 /// gradient on each triangulation edge).
@@ -195,7 +195,7 @@ pub fn integrate_triangulated(
     // Build pixel-level adjacency from the dual graph's edge list, skipping
     // long edges (those that were carved out as outer-face boundary).
     // Integration BFS must not cross long edges because the unit-capacity
-    // MCF can carry at most one cycle per arc — and long edges typically
+    // MCF can carry at most one cycle per arc - and long edges typically
     // span multiple wraps.
     let n_edges = g.num_edges();
     let mut pix_degree = vec![0_u32; n_pix];
@@ -366,7 +366,7 @@ mod tests {
     /// drain interior residues (none here, since smooth wraps generate only
     /// hull-residues against the outer face) and integration should recover
     /// the original ramp up to a constant. This is the strongest correctness
-    /// check — sign convention in the integrator has to match the dual-graph
+    /// check - sign convention in the integrator has to match the dual-graph
     /// flow direction or this test fails by 2π·k.
     #[test]
     fn wrapping_ramp_recovers_truth_on_dense_subset() {

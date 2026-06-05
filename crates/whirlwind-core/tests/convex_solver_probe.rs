@@ -2,17 +2,17 @@
 //! whole-image because of the SOLVER (not the cost)? We confirm the precise
 //! mechanism with tiny synthetic cases (NOT a NISAR frame):
 //!
-//!  1. `negative_rc_occurs_after_preload` — directly demonstrates that after
+//!  1. `negative_rc_occurs_after_preload` - directly demonstrates that after
 //!     `preload_convex_min`, the FIRST SSP augmentation pushes an arc past its
 //!     k*, after which a residual marginal toward k* is NEGATIVE. We replay the
 //!     primal-dual augment by hand and check raw marginals on residual arcs.
 //!
-//!  2. `convex_matches_brute_force_optimum` — a tiny grid whose true convex
+//!  2. `convex_matches_brute_force_optimum` - a tiny grid whose true convex
 //!     MCF optimum we enumerate by exhaustive search over integer flows on the
 //!     active arcs, then compare the solver's converged flow cost. A gap proves
 //!     the solver does not reach the convex optimum.
 //!
-//!  3. `debug_asserts_or_wrong_on_noisy_ramp` — a small noisy steep ramp run
+//!  3. `debug_asserts_or_wrong_on_noisy_ramp` - a small noisy steep ramp run
 //!     through `unwrap_convex`; in debug this trips the rc>=0 debug_assert if
 //!     negative reduced costs reach Dijkstra.
 
@@ -46,7 +46,7 @@ fn has_negative_residual_cycle(
         let c = raw_marginal(a, nf, flow, offsets, weights);
         edges.push((t, h, c));
     }
-    // Bellman-Ford from a virtual super-source (all dist 0) — detects any
+    // Bellman-Ford from a virtual super-source (all dist 0) - detects any
     // negative cycle reachable in the residual graph.
     let mut dist = vec![0_i64; num_nodes];
     for _ in 0..num_nodes - 1 {
@@ -162,7 +162,7 @@ fn negative_rc_occurs_after_preload() {
     // KEY CHECK: in the CONVERGED flow, is there any unsaturated residual arc
     // whose RAW marginal (toward k*) is negative? If yes, a NEGATIVE reduced
     // cost existed in the residual graph during the solve unless potentials
-    // exactly compensated — and the Johnson update (which subtracts shortest-
+    // exactly compensated - and the Johnson update (which subtracts shortest-
     // path distances computed under the assumption of FIXED arc costs) cannot
     // track a cost that CHANGED when we pushed the arc.
     let mut neg_raw = 0;
@@ -413,7 +413,7 @@ fn debug_asserts_or_wrong_on_noisy_ramp() {
 /// restricted to a small active-arc set (so brute force is tractable), compare
 /// the solver's converged convex cost to the TRUE brute-forced optimum. ANY
 /// instance with a positive gap is a definitive proof the existing SSP solver
-/// does NOT reach the convex optimum (the cost is identical in both — only the
+/// does NOT reach the convex optimum (the cost is identical in both - only the
 /// solver differs).
 #[test]
 fn randomized_convex_optimality_differential() {
@@ -478,7 +478,7 @@ fn randomized_convex_optimality_differential() {
         // Place a random balanced multi-source/multi-sink charge on touched
         // nodes: assign each touched node a random excess in {-2..2}, then
         // re-balance so sum == 0. This creates MULTI-PATH demands that share
-        // arcs in a single primal-dual Dijkstra iteration — the regime where
+        // arcs in a single primal-dual Dijkstra iteration - the regime where
         // the batched-augment marginal staleness (if it mattered) would bite.
         let mut charges: Vec<i32> = touched.iter().map(|_| rng.gen_range(-2..=2)).collect();
         let sum: i32 = charges.iter().sum();
@@ -708,13 +708,13 @@ fn certificate_detects_known_suboptimal_flow() {
     }
     let residues = Array2::<i32>::zeros((3, 3));
     let net = Network::new_convex_with_mask(&g, residues.view(), &offsets, &weights, None);
-    // DO NOT preload — leave flow at 0 (sub-optimal: the loop wants +1).
+    // DO NOT preload - leave flow at 0 (sub-optimal: the loop wants +1).
     let flow = vec![0_i32; nf];
     let neg = has_negative_residual_cycle(&g, &net, &flow, &offsets, &weights);
     eprintln!("[probe7] certificate on known-suboptimal flow=0 (loop wants +1): neg_cycle={neg}");
     assert!(
         neg,
-        "certificate FAILED to detect a known negative cycle — probe5 conclusion would be unreliable"
+        "certificate FAILED to detect a known negative cycle - probe5 conclusion would be unreliable"
     );
 
     // And after preloading to k*, the certificate must NOT fire (optimal).
@@ -728,7 +728,7 @@ fn certificate_detects_known_suboptimal_flow() {
 
 /// PROBE 8: the COST mechanism on a CLEAN (high-coherence) steep ramp. SNAPHU's
 /// deviation offset is ~0 on a smooth ramp (raw gradient ~= box-mean), so the
-/// convex parabola minimum k* = 0 everywhere — the standalone convex solve has
+/// convex parabola minimum k* = 0 everywhere - the standalone convex solve has
 /// NO drive to lay down the wrap lines a steep ramp needs. We compare the
 /// number of wrap discontinuities the convex unwrap produces vs the truth.
 /// This isolates COST behavior from SOLVER behavior (a clean ramp has near-zero
@@ -740,7 +740,7 @@ fn clean_steep_ramp_cost_under_wraps() {
 
     let m = 64;
     let n = 64;
-    // 6 cycles across — every adjacent-pixel gradient is well under pi, but the
+    // 6 cycles across - every adjacent-pixel gradient is well under pi, but the
     // ramp spans 12*pi total. (A clean ramp Itoh-integrates exactly; the test
     // is whether the convex COST agrees that no flow is needed AND whether the
     // offsets carry any absolute-ramp signal.)

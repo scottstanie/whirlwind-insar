@@ -10,6 +10,7 @@ unit-magnitude wrapped interferogram (no amplitude, no filtering).
 Usage (must be the isce2 env, which injects mroipac onto sys.path via `import isce`):
     /Users/staniewi/miniforge3/envs/test-isce2/bin/python scripts/icu_isce2_run.py A_013
 """
+
 import sys
 import glob
 import time
@@ -26,17 +27,27 @@ wrap = lambda x: (x + np.pi) % TWOPI - np.pi
 SCRATCH = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/icu_scratch"
 
 frame = sys.argv[1] if len(sys.argv) > 1 else "A_013"
-h5path = glob.glob(f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5")[0]
+h5path = glob.glob(
+    f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
+)[0]
 base = "/science/LSAR/GUNW/grids/frequencyA/unwrappedInterferogram"
 with h5py.File(h5path, "r") as h:
     grp = h[base]
-    pol = sorted(k for k, v in grp.items() if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"})[0]
+    pol = sorted(
+        k
+        for k, v in grp.items()
+        if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"}
+    )[0]
     prod_unw = h[f"{base}/{pol}/unwrappedPhase"][()].astype(np.float32)
     coh = h[f"{base}/{pol}/coherenceMagnitude"][()].astype(np.float32)
     prod_cc = h[f"{base}/{pol}/connectedComponents"][()].astype(np.int64)
     mask_arr = h[f"{base}/mask"][()] if "mask" in grp else None
 
-mask = (mask_arr != 255) & ((mask_arr // 100) % 10 == 0) if mask_arr is not None else np.ones(prod_unw.shape, bool)
+mask = (
+    (mask_arr != 255) & ((mask_arr // 100) % 10 == 0)
+    if mask_arr is not None
+    else np.ones(prod_unw.shape, bool)
+)
 mask &= np.isfinite(prod_unw) & np.isfinite(coh)
 # ICU estimates coherence internally from local phase variance (PHASESIGMA), so
 # we cannot hand it an external mask. Zeroing masked/water phase makes a giant
@@ -44,12 +55,15 @@ mask &= np.isfinite(prod_unw) & np.isfinite(coh)
 # frame to -> corrupts the land. Fill masked pixels with RANDOM phase instead so
 # ICU reads them as decorrelated and skips them.
 rng = np.random.default_rng(0)
-wrapped = np.where(mask, wrap(prod_unw), rng.uniform(-np.pi, np.pi, prod_unw.shape)).astype(np.float32)
+wrapped = np.where(
+    mask, wrap(prod_unw), rng.uniform(-np.pi, np.pi, prod_unw.shape)
+).astype(np.float32)
 igram = np.exp(1j * wrapped).astype(np.complex64)
 length, width = igram.shape
 print(f"{frame}: shape=({length},{width}) valid={mask.mean()*100:.1f}%", flush=True)
 
 import os
+
 os.makedirs(SCRATCH, exist_ok=True)
 int_file = f"{SCRATCH}/{frame}.int"
 unw_file = f"{SCRATCH}/{frame}.unw"
@@ -75,9 +89,9 @@ objUnw.setAccessMode("write")
 objUnw.createImage()
 
 icuObj = Icu()
-icuObj.filteringFlag = False        # no PS/LP prefilter -- unwrap raw wrapped phase
-icuObj.useAmplitudeFlag = False     # no amplitude provided/needed
-icuObj.singlePatch = True           # whole frame in one patch (no azimuth tiling)
+icuObj.filteringFlag = False  # no PS/LP prefilter -- unwrap raw wrapped phase
+icuObj.useAmplitudeFlag = False  # no amplitude provided/needed
+icuObj.singlePatch = True  # whole frame in one patch (no azimuth tiling)
 icuObj.unwrappingFlag = True
 
 t0 = time.perf_counter()
@@ -112,9 +126,15 @@ valid_strict = mask & np.isfinite(icu_unw)
 valid_done = valid_strict & icu_done
 pc_strict = percomp_match(icu_unw, valid_strict)
 pc_done = percomp_match(icu_unw, valid_done)
-print(f"{frame}: icu(isce2) {dt:6.1f}s  per-comp(strict mask)={pc_strict*100:5.1f}%  "
-      f"per-comp(ICU-connected only)={pc_done*100:5.1f}%  coverage={cov*100:4.1f}%", flush=True)
+print(
+    f"{frame}: icu(isce2) {dt:6.1f}s  per-comp(strict mask)={pc_strict*100:5.1f}%  "
+    f"per-comp(ICU-connected only)={pc_done*100:5.1f}%  coverage={cov*100:4.1f}%",
+    flush=True,
+)
 # Sweep-compatible line: score ICU like the other engines (per-comp over the
-# pixels it actually connected — gaps excluded, as for PHASS), + coverage note.
-print(f"{frame}: icu        {dt:6.1f}s  per-comp-match-vs-prod={pc_done*100:5.1f}%  "
-      f"ncc=0  shape={prod_unw.shape}  coverage={cov*100:.0f}%", flush=True)
+# pixels it actually connected - gaps excluded, as for PHASS), + coverage note.
+print(
+    f"{frame}: icu        {dt:6.1f}s  per-comp-match-vs-prod={pc_done*100:5.1f}%  "
+    f"ncc=0  shape={prod_unw.shape}  coverage={cov*100:.0f}%",
+    flush=True,
+)

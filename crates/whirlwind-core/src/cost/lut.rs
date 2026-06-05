@@ -78,7 +78,7 @@ pub fn get_or_build(nlooks: f32) -> &'static Lut {
     if let Some(l) = map.get(&key) {
         return l;
     }
-    // Leak the LUT — it's a ~512 KiB one-time cost, and we want 'static.
+    // Leak the LUT - it's a ~512 KiB one-time cost, and we want 'static.
     let lut: &'static Lut = Box::leak(Box::new(Lut::build(nlooks)));
     map.insert(key, lut);
     lut
@@ -89,7 +89,7 @@ pub fn get_or_build(nlooks: f32) -> &'static Lut {
 // =============================================================================
 
 const N_GAMMA_VAR: usize = 1024;
-/// Sample γ across `[0, 0.999]` — same upper bound as the 2D PDF LUT.
+/// Sample γ across `[0, 0.999]` - same upper bound as the 2D PDF LUT.
 const GAMMA_VAR_LO: f32 = 0.0;
 const GAMMA_VAR_HI: f32 = 0.999;
 
@@ -182,7 +182,7 @@ pub fn get_or_build_variance(nlooks: f32) -> &'static VarianceLut {
 // For α ≤ 0:             p1 = 0 by construction        → cost = MAX_CARBALLO_COST.
 //
 // The LUT is indexed by (gamma, alpha) with bilinear interpolation. Built once
-// per nlooks (rounded to 0.1) and leaked to 'static — ~160 KB per nlooks.
+// per nlooks (rounded to 0.1) and leaked to 'static - ~160 KB per nlooks.
 
 const N_ALPHA_CARB: usize = 501;
 const N_GAMMA_CARB: usize = 101;

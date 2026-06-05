@@ -6,7 +6,7 @@ the comparison is the *cost model*, not parallelism.
 
   uv run python scripts/cost_model_bench.py
 
-Deterministic (seed 0). Synthetic Goodman-noise cones — see the doc's caveats
+Deterministic (seed 0). Synthetic Goodman-noise cones - see the doc's caveats
 about i.i.d. noise vs real spatially-correlated scenes.
 """
 
@@ -76,7 +76,13 @@ def main():
         t = cone((512, 512), 0.15 * np.pi)
         ig, co = ww.simulate_ifg(t, np.full((512, 512), gamma, np.float32), 8, 0)
         ig = ig.astype(np.complex64)
-        row(ig, co.astype(np.float32), t, f"gamma={gamma:.1f}", extra=f" res={res_count(ig):6d}")
+        row(
+            ig,
+            co.astype(np.float32),
+            t,
+            f"gamma={gamma:.1f}",
+            extra=f" res={res_count(ig):6d}",
+        )
 
 
 if __name__ == "__main__":

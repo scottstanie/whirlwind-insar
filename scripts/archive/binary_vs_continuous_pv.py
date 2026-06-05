@@ -3,15 +3,15 @@
 Runs the existing 3D unwrap pipeline on the same 1024² PV subset used in
 ``reproduce.sh``, but under three different cost configurations:
 
-  - ``continuous``  — current default. CRLB-weighted continuous cost per
+  - ``continuous``  - current default. CRLB-weighted continuous cost per
                        IG; no mask applied beyond what the IG-level
                        ``.int.mask.tif`` already encodes.
-  - ``binary-0.6``  — mask = (temporal_coherence_average > 0.6). The IG-
+  - ``binary-0.6``  - mask = (temporal_coherence_average > 0.6). The IG-
                        level mask is intersected. Edges touching bad
-                       pixels get cost 0 (cheap-to-cut) — the closest
+                       pixels get cost 0 (cheap-to-cut) - the closest
                        analog to spurt's hard exclusion of pixels with
                        ``temp_coh < threshold``.
-  - ``binary-0.9``  — same with threshold 0.9 (very strict).
+  - ``binary-0.9``  - same with threshold 0.9 (very strict).
 
 For each variant the script writes a `(n_dates, m, n)` date-phase cube to
 ``<out>/<variant>/date_phases.npy`` plus a JSON of metadata. The companion
@@ -69,10 +69,16 @@ from unwrap_stack import (  # type: ignore
 
 def find_temp_coh(dolphin: Path) -> Path:
     """Dolphin emits ``temporal_coherence_average_<a>_<b>.tif`` (one file)."""
-    candidates = list((dolphin / "interferograms").glob("temporal_coherence_average_*.tif"))
+    candidates = list(
+        (dolphin / "interferograms").glob("temporal_coherence_average_*.tif")
+    )
     if not candidates:
         # Some dolphin versions stash it under phase_linking/linked_phase/.
-        candidates = list((dolphin / "phase_linking" / "linked_phase").glob("temporal_coherence_average_*.tif"))
+        candidates = list(
+            (dolphin / "phase_linking" / "linked_phase").glob(
+                "temporal_coherence_average_*.tif"
+            )
+        )
     if not candidates:
         raise FileNotFoundError(
             "no temporal_coherence_average_*.tif in dolphin output; "
@@ -112,8 +118,10 @@ def run_variant(
         assert temp_coh is not None, "binary variant needs temp_coh raster"
         variant_mask = (temp_coh > mask_threshold).astype(bool)
         kept = int(variant_mask.sum())
-        print(f"[{label}]   variant mask: {kept:,} / {variant_mask.size:,} pixels "
-              f"({100 * kept / variant_mask.size:.1f}%) kept at temp_coh > {mask_threshold}")
+        print(
+            f"[{label}]   variant mask: {kept:,} / {variant_mask.size:,} pixels "
+            f"({100 * kept / variant_mask.size:.1f}%) kept at temp_coh > {mask_threshold}"
+        )
     else:
         variant_mask = None
 
@@ -144,8 +152,10 @@ def run_variant(
     nan_mask_per_ig = np.isnan(unw_stack)
     if nan_mask_per_ig.any():
         n_nan = int(nan_mask_per_ig.sum())
-        print(f"[{label}]   {n_nan:,} NaN pixels in unwrap stack "
-              f"({100 * n_nan / unw_stack.size:.2f}% across IGs); replacing with 0 for closure")
+        print(
+            f"[{label}]   {n_nan:,} NaN pixels in unwrap stack "
+            f"({100 * n_nan / unw_stack.size:.2f}% across IGs); replacing with 0 for closure"
+        )
         unw_stack_for_closure = np.where(nan_mask_per_ig, 0.0, unw_stack)
     else:
         unw_stack_for_closure = unw_stack
@@ -153,14 +163,19 @@ def run_variant(
     # Closure correction over the temporal graph.
     t0 = time.perf_counter()
     closure = ww.closure_correct(
-        unw_stack_for_closure, edges_from, edges_to, len(dates), 0, edge_priority,
+        unw_stack_for_closure,
+        edges_from,
+        edges_to,
+        len(dates),
+        0,
+        edge_priority,
     )
     print(f"[{label}]   closure: {time.perf_counter() - t0:.1f}s")
 
     # Re-mark the NaN pixels so they're visibly missing downstream.
     closure["corrected"][nan_mask_per_ig] = np.nan
     # date_phases: NaN any date where any IG involving it was masked at that
-    # pixel — conservative.
+    # pixel - conservative.
     bad_per_date = np.zeros((len(dates), m, n), dtype=bool)
     for i, (a, b) in enumerate([(e.date_a, e.date_b) for e in igs]):
         bad_per_date[date_idx[a]] |= nan_mask_per_ig[i]
@@ -172,13 +187,15 @@ def run_variant(
     # ref_vals NaN; subtracting NaN propagates it to the entire IG. Fall
     # back per-IG to the median of finite values so the surviving
     # connected component still shows meaningful relative phase. This is
-    # purely a visualization choice — for cross-variant comparison the
+    # purely a visualization choice - for cross-variant comparison the
     # absolute offsets aren't directly meaningful anyway.
     ref_vals = closure["corrected"][:, ref_i, ref_j].copy()
     n_ref_nan = int(np.isnan(ref_vals).sum())
     if n_ref_nan:
-        print(f"[{label}]   reference pixel ({ref_i}, {ref_j}) was NaN in {n_ref_nan}/{n_edges} IGs; "
-              f"falling back to per-IG finite-median anchor for those.")
+        print(
+            f"[{label}]   reference pixel ({ref_i}, {ref_j}) was NaN in {n_ref_nan}/{n_edges} IGs; "
+            f"falling back to per-IG finite-median anchor for those."
+        )
         for i in range(n_edges):
             if np.isnan(ref_vals[i]):
                 finite = closure["corrected"][i][np.isfinite(closure["corrected"][i])]
@@ -189,7 +206,9 @@ def run_variant(
     if n_date_nan:
         for k in range(len(dates)):
             if np.isnan(ref_dates[k]):
-                finite = closure["date_phases"][k][np.isfinite(closure["date_phases"][k])]
+                finite = closure["date_phases"][k][
+                    np.isfinite(closure["date_phases"][k])
+                ]
                 ref_dates[k] = float(np.median(finite)) if finite.size > 0 else 0.0
     closure["date_phases"] -= ref_dates[:, None, None]
 
@@ -217,16 +236,26 @@ def run_variant(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--dolphin", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--window", type=int, nargs=4, default=None,
-                    help="i0 j0 i1 j1 — same convention as unwrap_stack.py")
+    ap.add_argument(
+        "--window",
+        type=int,
+        nargs=4,
+        default=None,
+        help="i0 j0 i1 j1 - same convention as unwrap_stack.py",
+    )
     ap.add_argument("--max-igs", type=int, default=None)
     ap.add_argument("--thresholds", type=float, nargs="+", default=[0.6, 0.9])
     ap.add_argument("--threads", type=int, default=4)
-    ap.add_argument("--reference", default="auto",
-                    help="pixel anchor: auto | dolphin | 'i,j' (window-local)")
+    ap.add_argument(
+        "--reference",
+        default="auto",
+        help="pixel anchor: auto | dolphin | 'i,j' (window-local)",
+    )
     args = ap.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -260,8 +289,10 @@ def main() -> None:
 
     temp_coh = _read_f32(temp_coh_path, win)
     np.save(args.out / "temp_coh.npy", temp_coh)
-    print(f"[temp_coh] median={np.median(temp_coh):.3f} mean={float(temp_coh.mean()):.3f} "
-          f"max={float(temp_coh.max()):.3f}")
+    print(
+        f"[temp_coh] median={np.median(temp_coh):.3f} mean={float(temp_coh.mean()):.3f} "
+        f"max={float(temp_coh.max()):.3f}"
+    )
 
     edges_from = np.array([date_idx[e.date_a] for e in igs], dtype=np.uint32)
     edges_to = np.array([date_idx[e.date_b] for e in igs], dtype=np.uint32)
@@ -276,19 +307,26 @@ def main() -> None:
     # The reference pixel must be in the kept set of EVERY variant; otherwise
     # binary variants NaN that pixel and reference subtraction propagates NaN
     # to the entire IG. Pick the pixel with the largest temp_coh in the
-    # window — guaranteed to survive every threshold up to that value.
+    # window - guaranteed to survive every threshold up to that value.
     if args.reference == "auto":
         flat_idx = int(np.argmax(temp_coh))
-        ref_i, ref_j = int(flat_idx // temp_coh.shape[1]), int(flat_idx % temp_coh.shape[1])
+        ref_i, ref_j = (
+            int(flat_idx // temp_coh.shape[1]),
+            int(flat_idx % temp_coh.shape[1]),
+        )
         ref_mode = f"auto (max temp_coh = {float(temp_coh[ref_i, ref_j]):.3f})"
     else:
-        ref_i, ref_j, ref_mode = _resolve_reference(args.reference, args.dolphin, crlb_cube, win)
-    print(f"[reference] ({ref_i}, {ref_j}) — {ref_mode}")
+        ref_i, ref_j, ref_mode = _resolve_reference(
+            args.reference, args.dolphin, crlb_cube, win
+        )
+    print(f"[reference] ({ref_i}, {ref_j}) - {ref_mode}")
     # Sanity check: reference is above the strictest threshold we'll use.
     max_t = max(args.thresholds) if args.thresholds else 0.0
     if temp_coh[ref_i, ref_j] <= max_t:
-        print(f"[reference] WARNING: ref temp_coh={float(temp_coh[ref_i, ref_j]):.3f} "
-              f"is ≤ max threshold {max_t}; binary variants will NaN it out.")
+        print(
+            f"[reference] WARNING: ref temp_coh={float(temp_coh[ref_i, ref_j]):.3f} "
+            f"is ≤ max threshold {max_t}; binary variants will NaN it out."
+        )
 
     # Persist a top-level summary so the plot script can find every variant.
     summary = {
@@ -306,21 +344,41 @@ def main() -> None:
     # continuous: no mask threshold
     meta = run_variant(
         label="continuous",
-        out_dir=args.out, igs=igs, dates=dates, date_idx=date_idx,
-        crlb_cube=crlb_cube, win=win, ig_dir=args.dolphin / "interferograms",
-        mask_threshold=None, temp_coh=None,
-        edges_from=edges_from, edges_to=edges_to, edge_priority=edge_priority,
-        n_threads=args.threads, ref_i=ref_i, ref_j=ref_j,
+        out_dir=args.out,
+        igs=igs,
+        dates=dates,
+        date_idx=date_idx,
+        crlb_cube=crlb_cube,
+        win=win,
+        ig_dir=args.dolphin / "interferograms",
+        mask_threshold=None,
+        temp_coh=None,
+        edges_from=edges_from,
+        edges_to=edges_to,
+        edge_priority=edge_priority,
+        n_threads=args.threads,
+        ref_i=ref_i,
+        ref_j=ref_j,
     )
     summary["variants"].append(meta)
     for t in args.thresholds:
         meta = run_variant(
             label=f"binary_T{t:.2f}",
-            out_dir=args.out, igs=igs, dates=dates, date_idx=date_idx,
-            crlb_cube=crlb_cube, win=win, ig_dir=args.dolphin / "interferograms",
-            mask_threshold=t, temp_coh=temp_coh,
-            edges_from=edges_from, edges_to=edges_to, edge_priority=edge_priority,
-            n_threads=args.threads, ref_i=ref_i, ref_j=ref_j,
+            out_dir=args.out,
+            igs=igs,
+            dates=dates,
+            date_idx=date_idx,
+            crlb_cube=crlb_cube,
+            win=win,
+            ig_dir=args.dolphin / "interferograms",
+            mask_threshold=t,
+            temp_coh=temp_coh,
+            edges_from=edges_from,
+            edges_to=edges_to,
+            edge_priority=edge_priority,
+            n_threads=args.threads,
+            ref_i=ref_i,
+            ref_j=ref_j,
         )
         summary["variants"].append(meta)
 

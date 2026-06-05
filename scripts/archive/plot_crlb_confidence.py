@@ -1,8 +1,8 @@
 """Plots for the #58 CRLB work:
-  Row 1 — .cor-as-confidence vs pseudo-coherence on IG 20240626_20240629
+  Row 1 - .cor-as-confidence vs pseudo-coherence on IG 20240626_20240629
           (from saved crlb_eval/after.npz [pseudo-coh] and after_cor.npz [.cor]).
-  Row 2 — CRLB cost vs coherence cost on IG 20240626_20240705, the case where the
-          coherence cost is 50x worse (cut-rate 3.3e-2 vs 6.4e-4) — re-run live.
+  Row 2 - CRLB cost vs coherence cost on IG 20240626_20240705, the case where the
+          coherence cost is 50x worse (cut-rate 3.3e-2 vs 6.4e-4) - re-run live.
 
     env -u CONDA_PREFIX uv run --with rasterio --with matplotlib \
         python scripts/plot_crlb_confidence.py

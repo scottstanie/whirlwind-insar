@@ -4,7 +4,7 @@
 //! `n_phase+1`), the *residual* graph has 4 directional arcs per node where
 //! applicable: down, up, right, left. Each base (forward) arc gets a residual
 //! reverse partner (used by min-cost flow to undo decisions), giving 8 arc
-//! slots per interior pair — but only because each pair has 2 *forward* arcs
+//! slots per interior pair - but only because each pair has 2 *forward* arcs
 //! (the two directions are independent Carballo decisions), not because we
 //! invented extra arcs.
 //!
@@ -34,8 +34,8 @@ pub enum Dir {
 pub struct RectangularGridGraph {
     pub m: usize,
     pub n: usize,
-    pub n_v: usize, // (m-1) * n  — vertical pairs
-    pub n_h: usize, // m * (n-1)  — horizontal pairs
+    pub n_v: usize, // (m-1) * n  - vertical pairs
+    pub n_h: usize, // m * (n-1)  - horizontal pairs
     pub num_forward: usize,
 }
 
@@ -229,7 +229,7 @@ impl ResidualGraph for RectangularGridGraph {
     }
 }
 
-/// A tiny inline vector — outdegree of any residue node is ≤ 8 (4 forward + 4 reverse).
+/// A tiny inline vector - outdegree of any residue node is ≤ 8 (4 forward + 4 reverse).
 #[derive(Default)]
 pub struct SmallVec8 {
     pub data: [(usize, usize); 8],
@@ -281,11 +281,11 @@ mod tests {
     fn outgoing_makes_sense_for_corner() {
         let g = RectangularGridGraph::new(3, 3);
         // Top-left (0, 0): forward DOWN + RIGHT (2). Reverses of forward UP
-        // from (1, 0) and forward LEFT from (0, 1) — both exist (they're the
+        // from (1, 0) and forward LEFT from (0, 1) - both exist (they're the
         // ones pointing INTO (0, 0)). So total = 4.
         let out = g.outgoing_ij(0, 0);
         assert_eq!(out.len, 4);
-        // Bottom-right (2, 2): symmetric — also 4.
+        // Bottom-right (2, 2): symmetric - also 4.
         let out = g.outgoing_ij(2, 2);
         assert_eq!(out.len, 4);
     }

@@ -1,4 +1,4 @@
-"""Benchmark whirlwind-rs (Rust) vs whirlwind (C++) — the WW author asked.
+"""Benchmark whirlwind-rs (Rust) vs whirlwind (C++) - the WW author asked.
 
 Single-IG 2D unwrap only. Stage 2 (closure correction) has no C++ counterpart,
 so it's out of scope here.
@@ -9,8 +9,8 @@ Comparison axes:
   - Peak RSS (best effort via resource.getrusage)
 
 Datasets:
-  (1) Synthetic ramps at several sizes — pixel-perfect agreement expected
-  (2) A small Palos Verdes tile of phase-linked IGs — realistic noise
+  (1) Synthetic ramps at several sizes - pixel-perfect agreement expected
+  (2) A small Palos Verdes tile of phase-linked IGs - realistic noise
 
 Run:
     uv run python scripts/bench_vs_whirlwind_cpp.py
@@ -44,7 +44,7 @@ DOLPHIN = Path(
     "palos-verdes/Palos_Verdes_C13_RO23_SP/e2e_output_20260519/dolphin"
 )
 SYNTHETIC_SIZES = [256, 512, 1024, 2048]
-REAL_TILE = (1000, 1500, 2024, 2524)  # (i0, j0, i1, j1) — 1024x1024
+REAL_TILE = (1000, 1500, 2024, 2524)  # (i0, j0, i1, j1) - 1024x1024
 REAL_MAX_IGS = 10
 
 

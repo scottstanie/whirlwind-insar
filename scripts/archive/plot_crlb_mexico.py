@@ -15,7 +15,9 @@ from pathlib import Path
 
 import numpy as np
 
-D = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/capella/mexico_city/e2e_output/dolphin")
+D = Path(
+    "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/capella/mexico_city/e2e_output/dolphin"
+)
 IGDIR = D / "interferograms"
 UNWDIR = D / "unwrapped"
 EVAL = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/crlb_eval")
@@ -26,6 +28,7 @@ TAU = float(2 * np.pi)
 
 def rd(p, dt):
     import rasterio
+
     with rasterio.open(p) as s:
         return s.read(1).astype(dt)
 
@@ -55,13 +58,32 @@ def main():
 
     s = (slice(None, None, STRIDE), slice(None, None, STRIDE))
     panels = [
-        ("wrapped phase", np.where(mask, wrapped, np.nan)[s], "twilight", (-np.pi, np.pi)),
+        (
+            "wrapped phase",
+            np.where(mask, wrapped, np.nan)[s],
+            "twilight",
+            (-np.pi, np.pi),
+        ),
         ("spurt K (ref)", kfield(spurt, wrapped, spurt_cc)[s], "viridis", None),
         ("coherence-cost K", kfield(coh_unw, wrapped, coh_cc)[s], "viridis", None),
-        ("CRLB before K (BFS-median)", kfield(bef["unw"], wrapped, bef["cc"])[s], "viridis", None),
-        ("CRLB after K (anchor/cascade)", kfield(aft["unw"], wrapped, aft["cc"])[s], "viridis", None),
-        ("CRLB after − before (cycles)",
-         (np.round((aft["unw"] - bef["unw"]) / TAU))[s], "RdBu", (-3, 3)),
+        (
+            "CRLB before K (BFS-median)",
+            kfield(bef["unw"], wrapped, bef["cc"])[s],
+            "viridis",
+            None,
+        ),
+        (
+            "CRLB after K (anchor/cascade)",
+            kfield(aft["unw"], wrapped, aft["cc"])[s],
+            "viridis",
+            None,
+        ),
+        (
+            "CRLB after − before (cycles)",
+            (np.round((aft["unw"] - bef["unw"]) / TAU))[s],
+            "RdBu",
+            (-3, 3),
+        ),
     ]
     # Shared K color range (robust percentiles over the K panels).
     kvals = np.concatenate([p[1][np.isfinite(p[1])].ravel() for p in panels[1:5]])
@@ -76,9 +98,12 @@ def main():
             kw.update(vmin=klo, vmax=khi)
         im = ax.imshow(arr, **kw)
         ax.set_title(name)
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
         fig.colorbar(im, ax=ax, shrink=0.7)
-    fig.suptitle(f"Capella Mexico City {STEM} — CRLB #35 verification (stride {STRIDE})")
+    fig.suptitle(
+        f"Capella Mexico City {STEM} - CRLB #35 verification (stride {STRIDE})"
+    )
     EVAL.mkdir(parents=True, exist_ok=True)
     out = EVAL / "crlb_mexico_verification.png"
     fig.savefig(out, dpi=130)

@@ -13,7 +13,7 @@
 //!    this, bright SLC pixels (urban) dominate the spectrum and
 //!    `|F|^alpha` enhances amplitude structure rather than phase.
 //! 2. Hann overlap-add window (smoother slope at the block centre than
-//!    the dolphin/snaphu triangle window — fewer cross-block phase
+//!    the dolphin/snaphu triangle window - fewer cross-block phase
 //!    artifacts on the gradient estimate).
 //!
 //! Block iteration is parallelised over independent FFTs via rayon and
@@ -27,12 +27,12 @@ use std::sync::Arc;
 
 /// Apply Goldstein adaptive filtering to a complex interferogram.
 ///
-/// * `igram` — wrapped complex IG of shape `(m, n)`. Pixels that are
+/// * `igram` - wrapped complex IG of shape `(m, n)`. Pixels that are
 ///   `0+0j` or non-finite are flagged as "empty" and preserved as
 ///   `0+0j` in the output.
-/// * `alpha` — filter strength in `[0, 1]`. `0` = identity (returns a
+/// * `alpha` - filter strength in `[0, 1]`. `0` = identity (returns a
 ///   unit-magnitude copy of the input).
-/// * `psize` — square FFT patch size. Must be even and ≥ 4.
+/// * `psize` - square FFT patch size. Must be even and ≥ 4.
 pub fn goldstein(igram: ArrayView2<Complex32>, alpha: f32, psize: usize) -> Array2<Complex32> {
     assert!(alpha >= 0.0, "alpha must be >= 0, got {alpha}");
     assert!(
@@ -71,7 +71,7 @@ pub fn goldstein(igram: ArrayView2<Complex32>, alpha: f32, psize: usize) -> Arra
     // 2D Hann window (separable outer product).
     let weight = hann_2d(psize);
 
-    // FFT planner — Arc<dyn Fft<f32>> is Send + Sync.
+    // FFT planner - Arc<dyn Fft<f32>> is Send + Sync.
     let mut planner = FftPlanner::<f32>::new();
     let fft_fwd: Arc<dyn Fft<f32>> = planner.plan_fft_forward(psize);
     let fft_inv: Arc<dyn Fft<f32>> = planner.plan_fft_inverse(psize);

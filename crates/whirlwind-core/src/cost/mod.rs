@@ -57,7 +57,7 @@ pub fn smooth_phase_gradients(igram: ArrayView2<Complex32>) -> (Array2<f32>, Arr
 /// Raw per-arc wrapped phase gradients (no smoothing).
 ///
 /// Returns `(phase_dy, phase_dx)` with shapes `(m-1, n)` and `(m, n-1)`
-/// respectively — the same shapes as [`smooth_phase_gradients`]. Each
+/// respectively - the same shapes as [`smooth_phase_gradients`]. Each
 /// entry is `arg(igram[h] * conj(igram[t]))` for the corresponding arc.
 pub fn phase_gradients_raw(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2<f32>) {
     let (m, n) = igram.dim();
@@ -89,7 +89,7 @@ pub fn phase_gradients_raw(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2
 /// Same as [`smooth_phase_gradients`] but mask-aware: at pixels whose
 /// 7x7 window overlaps masked-out pixels, the average is taken over the
 /// *valid* pixels only (rather than including masked zeros). This is
-/// critical for real-data mask boundaries — without it, masked pixels
+/// critical for real-data mask boundaries - without it, masked pixels
 /// (set to `0+0j`) drag the smoothed gradient toward 0 within 3 pixels
 /// of the boundary, biasing the cost field and inducing block-2π errors
 /// in coherent regions near the boundary.
@@ -206,7 +206,7 @@ pub fn smooth_phase_gradients_with_mask(
 }
 
 /// Separable box filter with size `k` (must be odd), nearest-edge replication.
-/// O(k) per output pixel (no rolling-sum trick — kept simple; cost is ~1% of total).
+/// O(k) per output pixel (no rolling-sum trick - kept simple; cost is ~1% of total).
 pub fn box_filter_2d(a: ArrayView2<f32>, k: usize) -> Array2<f32> {
     assert!(k % 2 == 1);
     let half = (k / 2) as isize;
@@ -268,11 +268,11 @@ pub fn compute_carballo_costs(
 
     // Note on mask handling for smoothing: empirically the *biased*
     // smoothing (averaging in the 0+0j values from masked pixels) acts as
-    // an implicit boundary penalty — it pulls the smoothed gradient
+    // an implicit boundary penalty - it pulls the smoothed gradient
     // toward 0 near the boundary, which makes the Carballo cost
     // ~γ·π there (high), discouraging MCF from routing through the
-    // boundary. Using mask-aware (unbiased) smoothing — see
-    // `smooth_phase_gradients_with_mask` — removes that implicit fence
+    // boundary. Using mask-aware (unbiased) smoothing - see
+    // `smooth_phase_gradients_with_mask` - removes that implicit fence
     // and worsens 2π block errors on real NISAR data. Kept here for
     // possible future use; not the default.
     let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
@@ -415,7 +415,7 @@ pub fn compute_carballo_costs(
     cost
 }
 
-/// Parity cost mode — matches Python `_cost.compute_carballo_costs` exactly:
+/// Parity cost mode - matches Python `_cost.compute_carballo_costs` exactly:
 ///
 /// * Scale = 100.0 (matching Python's `100 * -log(p1/p0)`)
 /// * Cost zeroed only where **both** endpoint pixels are invalid
@@ -437,7 +437,7 @@ pub fn compute_carballo_costs_parity(
     let n = n_phase + 1;
     let g = RectangularGridGraph::new(m, n);
 
-    // Biased (non-mask-aware) smoothing — matches Python's uniform_filter.
+    // Biased (non-mask-aware) smoothing - matches Python's uniform_filter.
     let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
 
     let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase));
@@ -461,7 +461,7 @@ pub fn compute_carballo_costs_parity(
             }
         });
 
-    // "Both invalid" per-edge masks — True where NEITHER pixel is valid.
+    // "Both invalid" per-edge masks - True where NEITHER pixel is valid.
     // This matches Python's `mask_dy = logical_and(~valid[a], ~valid[b])`.
     let mask_dy_bi = mask.map(|m_| {
         let mut out = Array2::<bool>::from_elem((m_phase - 1, n_phase), false);
@@ -494,12 +494,12 @@ pub fn compute_carballo_costs_parity(
 
     // DE-DEGENERATION KNOB (`WHIRLWIND_SEA_COST`, default 0 = ww-orig parity).
     // Masked "sea" arcs are cost-0 in ww-orig, so routing residue-pairing flow
-    // across the masked sea is FREE — on heavily-masked frames (e.g. D_074 at
+    // across the masked sea is FREE - on heavily-masked frames (e.g. D_074 at
     // 5.8% valid) the min-cost flow then prefers long sea branch cuts over short
     // cuts pairing nearby residues, which is an equally-cheap but WRONG unwrap
     // (the cost under-determines the answer; ww-orig only lands the right one by
     // FIFO ordering luck). A small positive sea cost penalizes long sea
-    // traversal so short (correct) cuts win — a robust de-degeneration that does
+    // traversal so short (correct) cuts win - a robust de-degeneration that does
     // not depend on tie-break order. See paper/handoff.md (2026-06-03).
     let sea = sea_cost_parity();
 
@@ -606,7 +606,7 @@ pub fn compute_carballo_costs_parity(
 
 /// Minimum CRLB variance accepted, in rad². Anything below this gets clamped
 /// so the inverse-variance weight stays finite. 1e-3 corresponds to
-/// γ_equiv ≈ 0.999 — essentially noiseless.
+/// γ_equiv ≈ 0.999 - essentially noiseless.
 pub const CRLB_VARIANCE_FLOOR: f32 = 1e-3;
 
 /// Variance assumed for missing CRLB (≤0 or non-finite). Phase linking
@@ -635,11 +635,11 @@ fn per_pixel_var(v: f32) -> f32 {
 
 /// Compute integer costs from CRLB-derived per-IG phase variance.
 ///
-/// * `igram`     — complex IG, shape (m_phase, n_phase).
-/// * `variance`  — per-pixel phase variance for this IG (σ²_a + σ²_b),
+/// * `igram`     - complex IG, shape (m_phase, n_phase).
+/// * `variance`  - per-pixel phase variance for this IG (σ²_a + σ²_b),
 ///                 same shape, in rad². NoData = 0 (or NaN, or ≤0) is
 ///                 mapped to `CRLB_VARIANCE_NODATA` (cheap to cut through).
-/// * `mask`      — optional valid-pixel mask.
+/// * `mask`      - optional valid-pixel mask.
 pub fn compute_crlb_costs(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
@@ -694,7 +694,7 @@ pub fn compute_crlb_costs(
     // Direction-aware Carballo cost shape with inverse-variance weight:
     //   c_{+}(α, w) = w · max(0, π − α)
     //   c_{−}(α, w) = c_{+}(−α, w) = w · max(0, π + α)
-    // See `compute_carballo_costs` for the topological motivation — the
+    // See `compute_carballo_costs` for the topological motivation - the
     // symmetric `w · (π − |α|)` form was used here previously, but it makes
     // both directions equal at a pixel edge and recreates the degenerate
     // tie-breaking issue described in the Carballo path comment.
@@ -803,7 +803,7 @@ fn just_bamler_variance(gamma: f32, nlooks: f32) -> f32 {
 /// in flow sign relative to the offset; the *marginal* cost in each
 /// direction is computed at use time by [`Network::marginal_cost`]).
 ///
-/// Masked-out pixel edges get `(offset = 0, weight = 0)` — a flat zero
+/// Masked-out pixel edges get `(offset = 0, weight = 0)` - a flat zero
 /// cost regardless of flow, equivalent to a free arc. Combined with
 /// the pre-existing mask-arc forbidding in `Network::new_*_with_mask`,
 /// these arcs are never traversed anyway, but zero weight keeps the
@@ -817,7 +817,7 @@ fn just_bamler_variance(gamma: f32, nlooks: f32) -> f32 {
 ///     cost(k=-1) = w · (-100 − O)²   (large unless O is near -50)
 ///
 ///   The minimum integer is `argmin_k (k · 100 − O)²` which is `0` for
-///   `O ∈ (-50, 50]` — so every arc *individually* prefers k=0, but the
+///   `O ∈ (-50, 50]` - so every arc *individually* prefers k=0, but the
 ///   strength of that preference varies. Near a wrap line (O ≈ ±50)
 ///   the cost difference between k=0 and k=±1 is small ("soft" arc,
 ///   easy routing channel); in a smooth interior (O ≈ 0) it's the
@@ -851,15 +851,15 @@ pub fn compute_snaphu_smooth_costs(
     // wrap line (raw ≈ ±π while the box-mean ≈ 0) yet is ≈0 in smooth regions,
     // which is exactly the routing signal the convex cost needs. The earlier
     // implementation fed the *smoothed* gradient alone (`avgdpsi`), which the
-    // 7x7 box washes to ≈0 both in smooth areas AND across wrap lines — leaving
+    // 7x7 box washes to ≈0 both in smooth areas AND across wrap lines - leaving
     // |offset| ≲ 22 with no wrap-line information and the convex cost degenerate
     // to pure `w·k²` (paper/convex_cost_design.md Suspect 5; the doc's prose
-    // mis-stated SNAPHU's offset as `avgdpsi` — the source uses the deviation).
+    // mis-stated SNAPHU's offset as `avgdpsi` - the source uses the deviation).
     //
     // The difference is NOT re-wrapped: SNAPHU leaves `dpsi − avgdpsi` free to
     // exceed ½ cycle so the parabola minimum can sit at k = ±1. The absolute
     // (ramp-scale) flow is supplied separately by the coarse anchor / cascade,
-    // mirroring SNAPHU's `unwrappedest` offset shift (snaphu_cost.c:1127-1132) —
+    // mirroring SNAPHU's `unwrappedest` offset shift (snaphu_cost.c:1127-1132) -
     // so this cost belongs in the per-tile solve of the tiled+anchor pipeline,
     // not a standalone whole-image solve.
     let (raw_dy, raw_dx) = phase_gradients_raw(igram);
@@ -942,7 +942,7 @@ pub fn compute_snaphu_smooth_costs(
     // the true variance at low γ and moderate L (the NISAR regime).
     //
     // At γ → 0 the variance saturates near π²/3 ≈ 3.29 (the wrapped phase
-    // becomes uniform on (-π, π]), so weights stay bounded — no need for
+    // becomes uniform on (-π, π]), so weights stay bounded - no need for
     // a low-γ floor. At γ ≈ 0.999 the variance is small and the weight
     // can spike; clamp the resulting weight to a sane integer range to
     // protect downstream arithmetic.
@@ -1099,7 +1099,7 @@ mod crlb_tests {
         // Phase-linking writes 0 to CRLB rasters for pixels it didn't pick
         // (PS/DS thresholding) and for true nodata at scene edges. Those
         // pixels are *unreliable*, not noiseless, and must get LOW per-edge
-        // cost (≈ free to route 2π discontinuities through them) — the
+        // cost (≈ free to route 2π discontinuities through them) - the
         // opposite of the pre-fix behavior, which clamped 0 → 1e-3 → highest
         // possible cost and caused MCF to route flow through actual PS
         // pixels (cheaper), corrupting the few good measurements.
@@ -1170,7 +1170,7 @@ mod convex_tests {
     /// SNAPHU's offset is the DEVIATION of the raw wrapped gradient from its
     /// local box-mean (`dpsi − avgdpsi`), not the smoothed gradient. So a
     /// *uniform* ramp (where every arc's gradient equals its neighborhood mean)
-    /// gives ≈zero offsets — the absolute slope is the coarse anchor's job, not
+    /// gives ≈zero offsets - the absolute slope is the coarse anchor's job, not
     /// the per-arc cost's. The offset spikes only where the gradient deviates
     /// locally: a wrap line / discontinuity. This replaces the earlier test,
     /// which asserted nonzero offsets on a uniform ramp under the (wrong)

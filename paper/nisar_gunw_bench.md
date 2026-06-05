@@ -1,4 +1,4 @@
-# NISAR GUNW benchmark — whirlwind vs production (2026-06)
+# NISAR GUNW benchmark - whirlwind vs production (2026-06)
 
 Tool: [`scripts/bench_nisar_gunw_whirlwind.py`](../scripts/bench_nisar_gunw_whirlwind.py).
 Downloads NISAR L2 GUNW beta products via `earthaccess` (`NISAR_L2_GUNW_BETA_V1`),

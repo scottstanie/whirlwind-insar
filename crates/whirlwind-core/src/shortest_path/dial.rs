@@ -3,7 +3,7 @@
 //! Reduced costs in primal-dual are non-negative integers bounded by some
 //! `C_max`. A circular bucket queue of size `K = C_max + 1` lets us pop the
 //! minimum in amortized O(1) and gives O(V + E + max_dist) total work per call
-//! — competitive with the binary heap when C_max is small relative to V.
+//! - competitive with the binary heap when C_max is small relative to V.
 //!
 //! Two implementations live here:
 //! - [`run`]: single-threaded reference version.
@@ -12,7 +12,7 @@
 //!   thread atomically claims `u` via `visited[u]`; phase 2 (serial) applies
 //!   them. This avoids racing writes to `sp.dist / pred_arc / pred_node /
 //!   source` and is provably equivalent to the serial Dial on any
-//!   single-shortest-path ties — each (u, qd) pair is processed at most once.
+//!   single-shortest-path ties - each (u, qd) pair is processed at most once.
 
 use super::ShortestPaths;
 use crate::network::Network;
@@ -22,7 +22,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Compute the per-arc bucket count `k = max_unsaturated_reduced_cost + 1`.
-/// Parallelized via rayon — O(E) but trivially data-parallel and ~5x faster
+/// Parallelized via rayon - O(E) but trivially data-parallel and ~5x faster
 /// at 4096² where E ≈ 32M.
 pub(crate) fn max_reduced_cost_par<G: ResidualGraph>(g: &G, net: &Network) -> i64 {
     use rayon::prelude::*;
@@ -65,7 +65,7 @@ fn collect_sinks(net: &Network) -> (Vec<bool>, usize) {
 
 /// Multi-source Dijkstra over the residual graph using Dial's bucket queue.
 ///
-/// Early-exit: stops as soon as every deficit (sink) has been popped — any
+/// Early-exit: stops as soon as every deficit (sink) has been popped - any
 /// further relaxation can't change a finalized distance. On scenes where
 /// sinks cluster (real interferograms) this trims a large tail off late
 /// primal-dual iterations.
@@ -86,7 +86,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
     let mut sinks_left = total_sinks;
 
     // Buckets store (node, queued_dist). queued_dist disambiguates stale
-    // entries — when we pop a node whose sp.dist[u] no longer matches the
+    // entries - when we pop a node whose sp.dist[u] no longer matches the
     // entry we pushed, we skip it.
     let mut buckets: Vec<Vec<(usize, i64)>> = vec![Vec::new(); k];
     let mut pending: usize = 0;
@@ -134,7 +134,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
         if is_sink[u] {
             sinks_left -= 1;
             if sinks_left == 0 {
-                // All sinks finalized — any further relaxation only affects
+                // All sinks finalized - any further relaxation only affects
                 // non-sinks and is wasted work for the augment phase.
                 return;
             }
@@ -186,7 +186,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
 
 /// Multi-source Dijkstra over the residual graph using Dial's bucket queue.
 ///
-/// Full-completion variant: runs until the heap is empty — every reachable node
+/// Full-completion variant: runs until the heap is empty - every reachable node
 /// is popped and gets an exact finalized distance. Matches Python ww-orig's
 /// `dijkstra_pd` which runs `while (!dijkstra.done())` with no early-exit.
 ///
@@ -215,9 +215,9 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
         );
     }
 
-    // FIFO buckets (`VecDeque`, pop FRONT) — matches ww-orig's C++ Dial
-    // (`std::queue` per bucket, pops `front()`). Equal-distance ties — which
-    // dominate the cost-0 masked "sea" on heavily-masked frames — must resolve
+    // FIFO buckets (`VecDeque`, pop FRONT) - matches ww-orig's C++ Dial
+    // (`std::queue` per bucket, pops `front()`). Equal-distance ties - which
+    // dominate the cost-0 masked "sea" on heavily-masked frames - must resolve
     // BFS/fewest-hops first (pairing nearby residues, short branch cuts), NOT
     // LIFO/DFS (long snaking cuts that pair distant residues). Both are equally
     // cost-optimal, but only the FIFO one matches ww-orig / the correct unwrap;
@@ -275,7 +275,7 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
         }
         sp.popped[u] = true;
         real_pops += 1;
-        // No early-exit — keep going until all reachable nodes are finalized.
+        // No early-exit - keep going until all reachable nodes are finalized.
 
         let pot_u = net.potential[u];
         let src_u = sp.source[u];
@@ -345,7 +345,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
     let mut sinks_left = total_sinks;
 
     let mut buckets: Vec<Vec<(usize, i64)>> = vec![Vec::new(); k];
-    // AtomicBool per node — used to claim `u` in phase 1; one CAS per node
+    // AtomicBool per node - used to claim `u` in phase 1; one CAS per node
     // across the whole Dijkstra call.
     let visited: Vec<AtomicBool> = (0..n_nodes).map(|_| AtomicBool::new(false)).collect();
     let mut pending: usize = 0;
@@ -378,11 +378,11 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
         let current = std::mem::take(&mut buckets[cur_bucket]);
         pending -= current.len();
 
-        // Result of relaxing this bucket — either path mutates these.
+        // Result of relaxing this bucket - either path mutates these.
         let mut sinks_popped_this_bucket: usize = 0;
 
         if current.len() < PAR_THRESHOLD {
-            // Serial fast path — same logic as `run`.
+            // Serial fast path - same logic as `run`.
             let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
             for (u, qd) in current {
                 if visited[u].load(Ordering::Relaxed) {

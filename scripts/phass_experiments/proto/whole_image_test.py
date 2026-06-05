@@ -1,4 +1,4 @@
-"""Whole-image (single-tile, NO reconcile) test — the 'best-quality default'
+"""Whole-image (single-tile, NO reconcile) test - the 'best-quality default'
 hypothesis (S.S.): like SNAPHU single-tile, solve the whole frame in one MCF so
 there are no tiles to reconcile and the distributed-drift mechanism cannot exist.
 
@@ -9,6 +9,7 @@ Tests whole-image under BOTH costs:
 Strictly ONE unwrap at a time. Prints match (cc>0), runtime, peak RSS. A_016
 (the fragmented problem frame) runs FIRST to gauge memory before the rest.
 """
+
 from __future__ import annotations
 
 import gc
@@ -53,7 +54,11 @@ def modal(x):
 def read_frame(path: Path):
     with h5py.File(path, "r") as h5:
         grp = h5[UNW]
-        pols = [k for k, v in grp.items() if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"}]
+        pols = [
+            k
+            for k, v in grp.items()
+            if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"}
+        ]
         pol = sorted(pols)[0]
         prod = h5[f"{UNW}/{pol}/unwrappedPhase"][()].astype(np.float32)
         coh = h5[f"{UNW}/{pol}/coherenceMagnitude"][()].astype(np.float32)
@@ -82,7 +87,9 @@ def main() -> None:
             if cost == "reuse":
                 unw = ww.unwrap_reuse(igc, cohc, NLOOKS, maskc)
             else:
-                unw, _cc = ww.unwrap(igc, cohc, NLOOKS, maskc, tile_size=HUGE, tile_overlap=64)
+                unw, _cc = ww.unwrap(
+                    igc, cohc, NLOOKS, maskc, tile_size=HUGE, tile_overlap=64
+                )
             dt = time.perf_counter() - t0
             rss1 = proc.memory_info().rss / 1e6
             u = np.asarray(unw, np.float64)
@@ -90,11 +97,20 @@ def main() -> None:
             a = np.rint((u - prod) / TAU)[r]
             a = a - modal(a)
             match = 100.0 * float(np.mean(np.abs(a) < 0.5))
-            row = {"frame": name, "cost": cost, "match_cc": round(match, 2),
-                   "runtime_s": round(dt, 1), "peak_rss_mb": round(rss1, 0),
-                   "avail_gb_before": round(avail0, 1), "shape": list(u.shape)}
+            row = {
+                "frame": name,
+                "cost": cost,
+                "match_cc": round(match, 2),
+                "runtime_s": round(dt, 1),
+                "peak_rss_mb": round(rss1, 0),
+                "avail_gb_before": round(avail0, 1),
+                "shape": list(u.shape),
+            }
             rows.append(row)
-            print(f"  WHOLE  {name}  {cost:6s}: match={match:6.2f}%  {dt:7.1f}s  rss={rss1:7.0f}MB  (avail {avail0:.1f}GB)", flush=True)
+            print(
+                f"  WHOLE  {name}  {cost:6s}: match={match:6.2f}%  {dt:7.1f}s  rss={rss1:7.0f}MB  (avail {avail0:.1f}GB)",
+                flush=True,
+            )
             del unw, u, a
             gc.collect()
         del ig, coh, valid, prod, pcc, igc, cohc, maskc, reg

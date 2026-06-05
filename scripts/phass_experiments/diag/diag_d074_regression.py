@@ -5,6 +5,7 @@ locate the breakage (region flip? seam? anchor mis-level?).
 
 Outputs a PNG; path printed at the end.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,7 +36,11 @@ def modal(x):
 def main() -> None:
     with h5py.File(GUNW / FN, "r") as h5:
         grp = h5[UNW]
-        pol = sorted(k for k, v in grp.items() if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"})[0]
+        pol = sorted(
+            k
+            for k, v in grp.items()
+            if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"}
+        )[0]
         prod = h5[f"{UNW}/{pol}/unwrappedPhase"][()].astype(np.float32)
         coh = h5[f"{UNW}/{pol}/coherenceMagnitude"][()].astype(np.float32)
         pcc = h5[f"{UNW}/{pol}/connectedComponents"][()].astype(np.int64)
@@ -47,11 +52,16 @@ def main() -> None:
     cohc = np.ascontiguousarray(coh, dtype=np.float32)
     maskc = np.ascontiguousarray(valid, dtype=bool)
     reg = valid & (pcc > 0)
-    print(f"D_074 {prod.shape}  valid_frac={valid.mean():.3f}  prod_ncc={int(pcc[reg].max())}", flush=True)
+    print(
+        f"D_074 {prod.shape}  valid_frac={valid.mean():.3f}  prod_ncc={int(pcc[reg].max())}",
+        flush=True,
+    )
 
     amb = {}
     for size in (512, 1024):
-        unw_phase, _cc = ww.unwrap(igc, cohc, 16.0, maskc, tile_size=size, tile_overlap=64)
+        unw_phase, _cc = ww.unwrap(
+            igc, cohc, 16.0, maskc, tile_size=size, tile_overlap=64
+        )
         unw = np.asarray(unw_phase, np.float64)
         a = np.rint((unw - prod) / TAU)
         g = modal(a[reg])
@@ -64,22 +74,31 @@ def main() -> None:
         colw = wrong.sum(0) / np.maximum(1, reg.sum(0))
         bad = np.where(colw > 0.5)[0]
         if bad.size:
-            print(f"    tile{size}: >50%-wrong column span {bad.min()}..{bad.max()} ({bad.size} cols)", flush=True)
+            print(
+                f"    tile{size}: >50%-wrong column span {bad.min()}..{bad.max()} ({bad.size} cols)",
+                flush=True,
+            )
 
     s = (slice(None, None, 3), slice(None, None, 3))
     fig, ax = plt.subplots(2, 2, figsize=(15, 14), constrained_layout=True)
     im = ax[0, 0].imshow(np.where(valid, coh, np.nan)[s], cmap="gray", vmin=0, vmax=1)
-    ax[0, 0].set_title("coherence"); fig.colorbar(im, ax=ax[0, 0], shrink=0.7)
+    ax[0, 0].set_title("coherence")
+    fig.colorbar(im, ax=ax[0, 0], shrink=0.7)
     im = ax[0, 1].imshow(np.where(reg, pcc, np.nan)[s], cmap="tab10")
-    ax[0, 1].set_title(f"prod conncomps (n={int(pcc[reg].max())})"); fig.colorbar(im, ax=ax[0, 1], shrink=0.7)
+    ax[0, 1].set_title(f"prod conncomps (n={int(pcc[reg].max())})")
+    fig.colorbar(im, ax=ax[0, 1], shrink=0.7)
     im = ax[1, 0].imshow(amb[512][s], cmap="RdBu", vmin=-2, vmax=2)
-    ax[1, 0].set_title("ambiguity diff: tile512 (98%)"); fig.colorbar(im, ax=ax[1, 0], shrink=0.7)
+    ax[1, 0].set_title("ambiguity diff: tile512 (98%)")
+    fig.colorbar(im, ax=ax[1, 0], shrink=0.7)
     im = ax[1, 1].imshow(amb[1024][s], cmap="RdBu", vmin=-2, vmax=2)
-    ax[1, 1].set_title("ambiguity diff: tile1024 (81% — what flipped?)"); fig.colorbar(im, ax=ax[1, 1], shrink=0.7)
+    ax[1, 1].set_title("ambiguity diff: tile1024 (81% - what flipped?)")
+    fig.colorbar(im, ax=ax[1, 1], shrink=0.7)
     for a in ax.ravel():
-        a.set_xticks([]); a.set_yticks([])
+        a.set_xticks([])
+        a.set_yticks([])
     p = OUT / "d074_regression.png"
-    fig.savefig(p, dpi=130); plt.close(fig)
+    fig.savefig(p, dpi=130)
+    plt.close(fig)
     print(f"PLOT: {p}", flush=True)
 
 

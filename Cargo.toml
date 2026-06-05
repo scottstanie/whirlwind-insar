@@ -5,7 +5,7 @@ members = [
     "crates/whirlwind-cli",
     "crates/whirlwind-py",
 ]
-# whirlwind-py is built via `maturin develop`, not `cargo build` — pyo3's
+# whirlwind-py is built via `maturin develop`, not `cargo build` - pyo3's
 # extension-module feature relies on maturin to link against libpython.
 default-members = [
     "crates/whirlwind-core",

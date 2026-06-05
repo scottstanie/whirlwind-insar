@@ -13,6 +13,7 @@ panel is downsampled anyway), then components relabelled largest-first.
 Reads the .npy arrays saved by run_nisar_anchor.py / run_nisar_cascade.py /
 run_atlanta_anchor.py. Usage:  make_report_figures.py [nisar] [atlanta]
 """
+
 from __future__ import annotations
 
 import sys
@@ -50,12 +51,15 @@ def ww_conncomp(unw, mask, stride):
     # right edges
     a = m[:, :-1] & m[:, 1:] & (np.abs(u[:, :-1] - u[:, 1:]) < np.pi)
     ia, ib = idx[:, :-1][a], idx[:, 1:][a]
-    rows.append(ia); cols.append(ib)
+    rows.append(ia)
+    cols.append(ib)
     # down edges
     b = m[:-1, :] & m[1:, :] & (np.abs(u[:-1, :] - u[1:, :]) < np.pi)
     ja, jb = idx[:-1, :][b], idx[1:, :][b]
-    rows.append(ja); cols.append(jb)
-    r = np.concatenate(rows); c = np.concatenate(cols)
+    rows.append(ja)
+    cols.append(jb)
+    r = np.concatenate(rows)
+    c = np.concatenate(cols)
     g = coo_matrix((np.ones(r.size, np.uint8), (r, c)), shape=(nnodes, nnodes))
     ncomp, lab = connected_components(g, directed=False)
 
@@ -78,8 +82,11 @@ def comp_show(cc, ncolors=12):
     return disp
 
 
-def plot_scene(name, ref_unw, ref_cc, ww_unw, wrapped, mask, kref, title, stride, dpi=130):
+def plot_scene(
+    name, ref_unw, ref_cc, ww_unw, wrapped, mask, kref, title, stride, dpi=130
+):
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -88,26 +95,35 @@ def plot_scene(name, ref_unw, ref_cc, ww_unw, wrapped, mask, kref, title, stride
     kww[~mask] = np.nan
     c = modal((kww - kref)[region])
     kww_c = kww - c
-    match = float((np.abs((kww_c - kref)[region]) < 0.5).sum()) / int(region.sum()) * 100
+    match = (
+        float((np.abs((kww_c - kref)[region]) < 0.5).sum()) / int(region.sum()) * 100
+    )
     # Honest full-image match (same mainland-aligned global offset). The full
     # number is much lower than mainland because cc<1 / low-coh pixels are
     # per-pixel-noisy and the reference itself is uncertain there.
     fm = (kww_c - kref)[mask]
-    full_match = float((np.abs(fm[np.isfinite(fm)]) < 0.5).sum()) / int(np.isfinite(fm).sum()) * 100
+    full_match = (
+        float((np.abs(fm[np.isfinite(fm)]) < 0.5).sum())
+        / int(np.isfinite(fm).sum())
+        * 100
+    )
 
-    sk_disp = kref.astype(np.float32).copy(); sk_disp[~mask] = np.nan
+    sk_disp = kref.astype(np.float32).copy()
+    sk_disp[~mask] = np.nan
     lo, hi = np.nanpercentile(sk_disp[mask], [1, 99])
     ds = lambda a: a[::stride, ::stride]
 
     def ref_phase():
-        u = ref_unw.astype(np.float32).copy(); u[~mask] = np.nan
+        u = ref_unw.astype(np.float32).copy()
+        u[~mask] = np.nan
         return u - np.nanmedian(ref_unw[region])
 
     def ww_phase():
         # Median-center only: the two fields are equal up to a global cycle
-        # constant, which the median subtraction removes — do NOT also subtract
+        # constant, which the median subtraction removes - do NOT also subtract
         # TAU*c (that double-counts the constant and blue-shifts the display).
-        u = ww_unw.astype(np.float32).copy(); u[~mask] = np.nan
+        u = ww_unw.astype(np.float32).copy()
+        u[~mask] = np.nan
         return u - np.nanmedian(ww_unw[region])
 
     pr, pw = ref_phase(), ww_phase()
@@ -115,29 +131,58 @@ def plot_scene(name, ref_unw, ref_cc, ww_unw, wrapped, mask, kref, title, stride
 
     fig, axes = plt.subplots(3, 3, figsize=(19, 17))
     # Row 1: K
-    for ax, (t, k, cmap, vlo, vhi) in zip(axes[0], [
+    for ax, (t, k, cmap, vlo, vhi) in zip(
+        axes[0],
+        [
             ("reference K (SNAPHU/OPERA)", sk_disp, "twilight", lo, hi),
-            (f"whirlwind K  ({match:.2f}% mainland / {full_match:.1f}% full image)", kww_c, "twilight", lo, hi),
-            ("|dK| error vs reference (mainland)", None, "inferno", 0, 3)]):
+            (
+                f"whirlwind K  ({match:.2f}% mainland / {full_match:.1f}% full image)",
+                kww_c,
+                "twilight",
+                lo,
+                hi,
+            ),
+            ("|dK| error vs reference (mainland)", None, "inferno", 0, 3),
+        ],
+    ):
         if k is None:
-            e = np.abs(kww_c - kref).astype(np.float32); e[~region] = np.nan
-            im = ax.imshow(ds(e), vmin=vlo, vmax=vhi, cmap=cmap, interpolation="nearest")
+            e = np.abs(kww_c - kref).astype(np.float32)
+            e[~region] = np.nan
+            im = ax.imshow(
+                ds(e), vmin=vlo, vmax=vhi, cmap=cmap, interpolation="nearest"
+            )
         else:
-            im = ax.imshow(ds(k), vmin=vlo, vmax=vhi, cmap=cmap, interpolation="nearest")
-        ax.set_title(t, fontsize=12); ax.set_xticks([]); ax.set_yticks([])
+            im = ax.imshow(
+                ds(k), vmin=vlo, vmax=vhi, cmap=cmap, interpolation="nearest"
+            )
+        ax.set_title(t, fontsize=12)
+        ax.set_xticks([])
+        ax.set_yticks([])
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
     # Row 2: phase
-    for ax, (t, u) in zip(axes[1], [("reference unwrapped phase", pr),
-                                    ("whirlwind unwrapped phase", pw)]):
-        im = ax.imshow(ds(u), vmin=plo, vmax=phi, cmap="twilight", interpolation="nearest")
-        ax.set_title(t, fontsize=12); ax.set_xticks([]); ax.set_yticks([])
+    for ax, (t, u) in zip(
+        axes[1], [("reference unwrapped phase", pr), ("whirlwind unwrapped phase", pw)]
+    ):
+        im = ax.imshow(
+            ds(u), vmin=plo, vmax=phi, cmap="twilight", interpolation="nearest"
+        )
+        ax.set_title(t, fontsize=12)
+        ax.set_xticks([])
+        ax.set_yticks([])
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
     d = pw - pr
-    d -= TAU * round(float(np.nanmedian(d[region])) / TAU)  # strip any residual global cycle
-    im = axes[1, 2].imshow(ds(d), vmin=-TAU, vmax=TAU, cmap="RdBu_r", interpolation="nearest")
-    rms = float(np.sqrt(np.nanmean((d[region])**2)))
-    axes[1, 2].set_title(f"whirlwind - reference  (mainland RMS={rms:.2f} rad)", fontsize=12)
-    axes[1, 2].set_xticks([]); axes[1, 2].set_yticks([])
+    d -= TAU * round(
+        float(np.nanmedian(d[region])) / TAU
+    )  # strip any residual global cycle
+    im = axes[1, 2].imshow(
+        ds(d), vmin=-TAU, vmax=TAU, cmap="RdBu_r", interpolation="nearest"
+    )
+    rms = float(np.sqrt(np.nanmean((d[region]) ** 2)))
+    axes[1, 2].set_title(
+        f"whirlwind - reference  (mainland RMS={rms:.2f} rad)", fontsize=12
+    )
+    axes[1, 2].set_xticks([])
+    axes[1, 2].set_yticks([])
     plt.colorbar(im, ax=axes[1, 2], fraction=0.046, pad=0.02)
     # Row 3: conncomp
     print(f"  [{name}] computing whirlwind conncomp (stride {stride})...", flush=True)
@@ -145,26 +190,39 @@ def plot_scene(name, ref_unw, ref_cc, ww_unw, wrapped, mask, kref, title, stride
     n_ww = int(wwcc.max())
     refcc_d = ref_cc[::stride, ::stride].astype(np.float32)
     n_ref = int(np.unique(ref_cc[ref_cc > 0]).size)
-    for ax, (t, c_disp) in zip(axes[2], [
-            (f"reference conncomp ({n_ref} comps)", comp_show(refcc_d.astype(np.int32))),
-            (f"whirlwind conncomp ({n_ww} comps, largest-first)", comp_show(wwcc))]):
+    for ax, (t, c_disp) in zip(
+        axes[2],
+        [
+            (
+                f"reference conncomp ({n_ref} comps)",
+                comp_show(refcc_d.astype(np.int32)),
+            ),
+            (f"whirlwind conncomp ({n_ww} comps, largest-first)", comp_show(wwcc)),
+        ],
+    ):
         im = ax.imshow(c_disp, cmap="tab20", interpolation="nearest", vmin=0, vmax=12)
-        ax.set_title(t, fontsize=12); ax.set_xticks([]); ax.set_yticks([])
+        ax.set_title(t, fontsize=12)
+        ax.set_xticks([])
+        ax.set_yticks([])
     cov = mask[::stride, ::stride].astype(np.float32)
     axes[2, 2].imshow(cov, cmap="Greys_r", interpolation="nearest")
     axes[2, 2].set_title(f"valid input mask ({100*mask.mean():.1f}%)", fontsize=12)
-    axes[2, 2].set_xticks([]); axes[2, 2].set_yticks([])
+    axes[2, 2].set_xticks([])
+    axes[2, 2].set_yticks([])
 
     fig.suptitle(title, fontsize=15)
     fig.tight_layout()
     PLOTS.mkdir(parents=True, exist_ok=True)
     out = PLOTS / f"report_{name}.png"
-    fig.savefig(out, dpi=dpi, bbox_inches="tight"); plt.close(fig)
+    fig.savefig(out, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
     print(f"wrote {out}", flush=True)
     return match
 
 
 _main_label_cache = {}
+
+
 def _main_label(cc):
     key = id(cc)
     if key not in _main_label_cache:
@@ -182,9 +240,17 @@ def do_nisar():
     # multi-shift re-solve + bounded sliver cleanup (gate no-fire on this scene).
     wwu = np.load(OUT / "nisar_default_unw.npy")
     sunw = sk * TAU + wrapped
-    plot_scene("nisar", sunw, scc, wwu, wrapped, mask, sk,
-               "NISAR no-Goldstein: whirlwind reuse+tiled+anchor+cascade (~30s) vs SNAPHU 9x9 (17 min)",
-               stride=4)
+    plot_scene(
+        "nisar",
+        sunw,
+        scc,
+        wwu,
+        wrapped,
+        mask,
+        sk,
+        "NISAR no-Goldstein: whirlwind reuse+tiled+anchor+cascade (~30s) vs SNAPHU 9x9 (17 min)",
+        stride=4,
+    )
 
 
 def do_atlanta():
@@ -196,9 +262,17 @@ def do_atlanta():
     wrapped = np.load(OUT / "atlanta_rep_wrapped.npy")
     wwu = np.load(OUT / "atlanta_rep_unw.npy")
     refu = np.nan_to_num(kref) * TAU + wrapped
-    plot_scene("atlanta", refu, cc, wwu, wrapped, mask, np.nan_to_num(kref),
-               "Atlanta S-1 OPERA: whirlwind multilook=8 + tiled+anchor+cascade vs OPERA/SNAPHU reference",
-               stride=4)
+    plot_scene(
+        "atlanta",
+        refu,
+        cc,
+        wwu,
+        wrapped,
+        mask,
+        np.nan_to_num(kref),
+        "Atlanta S-1 OPERA: whirlwind multilook=8 + tiled+anchor+cascade vs OPERA/SNAPHU reference",
+        stride=4,
+    )
 
 
 if __name__ == "__main__":

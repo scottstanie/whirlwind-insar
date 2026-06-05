@@ -17,8 +17,8 @@ name: Release
 #
 # pyproject.toml lives at the repo root (maturin build-backend); the Rust
 # crate it points at lives at crates/whirlwind-py/. Because pyo3 is built
-# with abi3-py311 we ship one wheel per (platform, arch) — not one per
-# Python minor — which keeps the matrix small.
+# with abi3-py311 we ship one wheel per (platform, arch) - not one per
+# Python minor - which keeps the matrix small.
 
 on:
   push:

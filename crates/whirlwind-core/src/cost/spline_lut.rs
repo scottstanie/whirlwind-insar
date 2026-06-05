@@ -9,9 +9,9 @@
 //!   p1 = P(Δk = ±1 | observation)   [note: p0 + p1 ≠ 1 in general]
 //!
 //! Grid dimensions (all in C-row-major order in the stored arrays):
-//!   axis 0 — phase_diff α : 31 samples, uniformly spaced in [-π, π]
-//!   axis 1 — coherence γ  : 11 samples, [0.0, 0.1, …, 1.0]
-//!   axis 2 — nlooks L     : 11 samples, log-spaced [1.0, …, 80.0]
+//!   axis 0 - phase_diff α : 31 samples, uniformly spaced in [-π, π]
+//!   axis 1 - coherence γ  : 11 samples, [0.0, 0.1, …, 1.0]
+//!   axis 2 - nlooks L     : 11 samples, log-spaced [1.0, …, 80.0]
 
 use std::{fs, path::Path, sync::OnceLock};
 

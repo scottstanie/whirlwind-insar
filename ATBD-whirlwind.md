@@ -4,9 +4,9 @@
 
 Whirlwind is a Bayesian minimum-cost network flow algorithm for 2D phase unwrapping of interferometric synthetic aperture radar (InSAR) data. The algorithm formulates phase unwrapping as a minimum-cost flow problem on a rectangular grid graph, where edge costs are derived from Bayesian probability densities that account for both coherence and local phase gradient statistics. The network flow problem is solved using a primal-dual algorithm, and the final unwrapped phase is obtained by integrating the unwrapped phase gradients.
 
-> **Default architecture note (updated 2026-06-03).** The MCF + primal-dual core described in this ATBD (Sections 2–8) is correct and unchanged. The public `unwrap` entry point now **defaults to the verified single-tile linear solver** (`unwrap_linear`: ww-orig-parity Carballo cost, capacity-1 MCF, adaptive PD/SSP fallback for masked frames — §7.6.1), which matches Python `ww-orig` across the validated NISAR frame set. A **tiled** pipeline still exists (per-tile MCF → global coarse anchor → multi-scale cascade → feathered seam composite) and is selected opt-in via `multilook>1`, an explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`, but **it is NOT a validated path** — see the status note below before using it. See [`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) and [`paper/tiling.md`](paper/tiling.md).
+> **Default architecture note (updated 2026-06-03).** The MCF + primal-dual core described in this ATBD (Sections 2–8) is correct and unchanged. The public `unwrap` entry point now **defaults to the verified single-tile linear solver** (`unwrap_linear`: ww-orig-parity Carballo cost, capacity-1 MCF, adaptive PD/SSP fallback for masked frames - §7.6.1), which matches Python `ww-orig` across the validated NISAR frame set. A **tiled** pipeline still exists (per-tile MCF → global coarse anchor → multi-scale cascade → feathered seam composite) and is selected opt-in via `multilook>1`, an explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`, but **it is NOT a validated path** - see the status note below before using it. See [`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) and [`paper/tiling.md`](paper/tiling.md).
 >
-> **Verified-vs-WIP (see §9.6).** The single-tile linear kernel is the *validated* core and the default: `unwrap_linear` is checked against the Python `ww-orig` reference (99.49 % on D_077; matches ww-orig across the masked-frame set, §9.6) and beats single-tile SNAPHU on **both** speed and accuracy (≈37 s / 99.49 % vs ≈588 s / 99.30 %). **The tiled + anchor pipeline is NOT working and NOT validated.** It produced good numbers on *select* scenes but **failed on most**, and there is **no working version at present** — it was not salvageable until ww-original quality was re-matched on the single-tile path (now done); any tiled benchmark elsewhere (e.g. "99.84 % NISAR") is from those select scenes and must not be read as a product claim. Treat §9.6 as the canonical status/benchmark table.
+> **Verified-vs-WIP (see §9.6).** The single-tile linear kernel is the *validated* core and the default: `unwrap_linear` is checked against the Python `ww-orig` reference (99.49 % on D_077; matches ww-orig across the masked-frame set, §9.6) and beats single-tile SNAPHU on **both** speed and accuracy (≈37 s / 99.49 % vs ≈588 s / 99.30 %). **The tiled + anchor pipeline is NOT working and NOT validated.** It produced good numbers on *select* scenes but **failed on most**, and there is **no working version at present** - it was not salvageable until ww-original quality was re-matched on the single-tile path (now done); any tiled benchmark elsewhere (e.g. "99.84 % NISAR") is from those select scenes and must not be read as a product claim. Treat §9.6 as the canonical status/benchmark table.
 
 ## Table of Contents
 
@@ -92,7 +92,7 @@ $$
 
 This requires a probability model for the phase gradient conditioned on the integer ambiguity. Carballo's approach integrates over the unknown true coherence $\gamma$ using the sample coherence $\hat{\gamma}$ and the phase noise PDF from Lee et al.
 
-**Important principle from Geoff's notes**: "Don't rewrap!" — the algorithm works directly with wrapped gradients and integer cycle corrections, never rewrapping intermediate results.
+**Important principle from Geoff's notes**: "Don't rewrap!" - the algorithm works directly with wrapped gradients and integer cycle corrections, never rewrapping intermediate results.
 
 ### 2.4 Residues
 
@@ -108,7 +108,7 @@ Residues are topological defects indicating phase inconsistency. For any continu
 
 - Residues are integers, typically in $\{-1, 0, +1\}$
 - The sum over the **entire augmented grid** (interior nodes *plus* the signed
-  boundary frame, §4.2–4.3) is exactly zero by Stokes' theorem — the boundary
+  boundary frame, §4.2–4.3) is exactly zero by Stokes' theorem - the boundary
   deposits balance the interior winding. (For a smooth non-wrapping image every
   residue is zero.)
 - Positive residues act as flow **sources**, negative as **sinks** in the network formulation
@@ -117,7 +117,7 @@ Residues are topological defects indicating phase inconsistency. For any continu
 
 ## 3. Algorithm Overview
 
-Whirlwind exposes a layered API. The inner kernel — and the public default — is
+Whirlwind exposes a layered API. The inner kernel - and the public default - is
 a single whole-image minimum-cost-flow (MCF) solve (`unwrap_linear`); the public
 entry point also produces connected-component labels and an opt-in tiling
 robustness layer. This section describes both, and which paths are verified
@@ -144,21 +144,21 @@ The default whole-image solver is `unwrap_linear` (`lib.rs`), the verified
 single-tile capacity-1 MCF kernel: a unit-capacity network with the
 ww-orig-parity Carballo cost and `run_full_dijkstra` (8 primal-dual iterations,
 then a single-source SSP and an adaptive PD-resume fallback that re-balances
-masked frames — §7.6.1). It matches the Python `whirlwind_orig` reference across
-the validated NISAR frame set. Masked arcs are **not** forbidden — they are
+masked frames - §7.6.1). It matches the Python `whirlwind_orig` reference across
+the validated NISAR frame set. Masked arcs are **not** forbidden - they are
 given cost 0 so MCF can route through masked regions, and masked pixels are set
 to NaN after integration.
 
 Two other single-tile variants exist (opt-in / non-default):
 
-* `unwrap_reuse` — a PHASS-style whole-image *flow-reuse* solver
+* `unwrap_reuse` - a PHASS-style whole-image *flow-reuse* solver
   (`Network::new_reuse_with_mask`): arcs are multi-unit (no capacity-1
   saturation) and the Dial bucket-queue Dijkstra overrides the reduced cost to 0
   on any arc that already carries flow, so once one wrap-line is laid down
   subsequent demands route along it for free. It reaches its cost optimum (no
   negative cycles remain) but is **experimental/research, not validated** as the
   default; selected only by `WHIRLWIND_UNWRAP_SOLVER=reuse`.
-* `unwrap_convex` — a **research prototype** of a SNAPHU-style convex
+* `unwrap_convex` - a **research prototype** of a SNAPHU-style convex
   (quadratic-in-flow) cost (issue #65). Selected at the whole-image level only
   by `WHIRLWIND_UNWRAP_SOLVER=convex`; solve backend chosen by
   `WHIRLWIND_CONVEX_SOLVE ∈ {pd (default), ssp, cancel}`.
@@ -179,12 +179,12 @@ return (phase, comps)
 `components_only` grows SNAPHU-style components directly from the global Carballo
 cost grid **without running an MCF solve** (labels depend only on mask-forbidden
 arcs and raw arc costs, both fixed at network construction), so it is
-independent of how — or whether — phase was solved, and costs one global cost
+independent of how - or whether - phase was solved, and costs one global cost
 grid in memory (`O(pixels)`).
 
 **Default = single-tile, no auto-tiling** (`unwrap_coherence`): with
 `tile_size == 0` (the default) and `multilook ≤ 1`, the whole image is solved
-single-tile by the verified `unwrap_linear` kernel (§3.1) — there is **no**
+single-tile by the verified `unwrap_linear` kernel (§3.1) - there is **no**
 automatic switch to tiling at any frame size. The **tiled** pipeline is opt-in
 and is selected *only* by an explicit `tile_size ≥ 4`, any `multilook > 1`, or
 `WHIRLWIND_UNWRAP_SOLVER=tiled`. It is **NOT a validated path**: it fails on most
@@ -203,7 +203,7 @@ described as the default/shipped/production path.
      each region's integer cycle level;
   5. bounded coherence-gated sliver healing;
   6. a **gated multi-shift re-solve**: if the result tears coherent terrain
-     (coherent-cut rate above a fixed floor — the signature of a tile-seam
+     (coherent-cut rate above a fixed floor - the signature of a tile-seam
      artifact or a wrong global winding on a fragmented scene), the tile grid
      is re-run shifted by fractions of the tile step and the result with the
      fewest coherent cuts is kept, followed by a localized `seam_repair`.
@@ -219,9 +219,9 @@ coherence path is still pending (issue #35).
 The single-tile `unwrap_linear` kernel of §3.1 is both the validated core **and
 the public default**: it is checked against the Python `ww-orig` reference and
 matches it across the validated NISAR frame set. (The opt-in whole-image
-`unwrap_reuse` solver reaches its cost optimum — no negative cycles remain — but
+`unwrap_reuse` solver reaches its cost optimum - no negative cycles remain - but
 is experimental, not the default.) The **tiled robustness layer of §3.2 is
-opt-in and NOT validated** — an empirically tuned, still-evolving heuristic
+opt-in and NOT validated** - an empirically tuned, still-evolving heuristic
 whose seam reconciliation, anchor/cascade, multi-shift gate, and sliver healing
 are calibrated against benchmark scenes rather than proven optimal (hence the
 environment escape hatches), and it fails on most scenes. Section 9.5 lists its
@@ -281,7 +281,7 @@ NaN/invalid pixels are replaced by zeros upstream and would otherwise generate a
 
 - The residue grid has one more row and one more column than the phase array: $(m+1)\times(n+1)$.
 - Interior residues are integers, typically in $\{-1,0,+1\}$; positive residues act as flow **sources**, negative as **sinks**.
-- The sum over the **entire** grid — interior nodes *and* the signed boundary frame — is exactly zero: $\sum_{r,c} r_{r,c} = 0$. By Stokes' theorem the counter-clockwise boundary contour integral of the wrap rates equals the total interior winding, so the boundary deposits carry the opposite sign and the augmented total balances. This source/sink balance is what makes the MCF problem solvable.
+- The sum over the **entire** grid - interior nodes *and* the signed boundary frame - is exactly zero: $\sum_{r,c} r_{r,c} = 0$. By Stokes' theorem the counter-clockwise boundary contour integral of the wrap rates equals the total interior winding, so the boundary deposits carry the opposite sign and the augmented total balances. This source/sink balance is what makes the MCF problem solvable.
 - For a smooth, non-wrapping image (range within $[-\pi,\pi]$) every `cycle_diff` rounds to $0$, so both interior and boundary residues vanish.
 
 > **Note (diagnostic parity path).** The standard/production unwrap paths (`unwrap_reuse`, convex) keep the boundary frame populated and rely on a single *ground* node connected to every boundary residue for edge drainage. The diagnostic `unwrap_linear` (`crates/whirlwind-core/src/lib.rs`) instead explicitly **zeros** the residue frame (`row 0`, `row -1`, `col 0`, `col -1`) to bit-match the original Python `ww-orig` solver and is not part of the production residue stage.
@@ -311,7 +311,7 @@ where $\hat\alpha$ is the smoothed local phase gradient, $\hat\gamma$ the per-ed
 
 Wrapped per-edge gradients are formed from complex conjugate products (`phase_dy = arg(igram[i+1,j]·conj(igram[i,j]))`, `phase_dx` analogously), then smoothed with a **separable 7x7 box filter** (`box_filter_2d`, nearest-edge replication; Carballo's original paper used 5x5). The smoothed gradient $\hat\alpha$ estimates the underlying signal gradient by averaging over local phase noise.
 
-**Mask handling (important):** both cost paths deliberately use the *biased* `smooth_phase_gradients` (which averages in the `0+0j` of masked pixels) rather than the mask-aware variant. The bias is a feature: it drags $\hat\alpha\to0$ within ~3 px of a mask boundary, raising the Carballo cost there and acting as an implicit fence that discourages MCF from routing 2π errors across the boundary. A mask-aware filter (`smooth_phase_gradients_with_mask`) exists but is intentionally **not** the default — using it worsens 2π block errors on real NISAR data.
+**Mask handling (important):** both cost paths deliberately use the *biased* `smooth_phase_gradients` (which averages in the `0+0j` of masked pixels) rather than the mask-aware variant. The bias is a feature: it drags $\hat\alpha\to0$ within ~3 px of a mask boundary, raising the Carballo cost there and acting as an implicit fence that discourages MCF from routing 2π errors across the boundary. A mask-aware filter (`smooth_phase_gradients_with_mask`) exists but is intentionally **not** the default - using it worsens 2π block errors on real NISAR data.
 
 ### 5.3 Coherence-Based Quality
 
@@ -327,7 +327,7 @@ $$
 
 with $c_{\max} = $ `MAX_CARBALLO_COST = 50` nats. For $\alpha \le 0$ the cost is forced to $c_{\max}$. Limits: at $\alpha=\pi$ (a wrap line) $\text{CDF}(0)=0.5\Rightarrow c=0$ (free to cut); as $\alpha\to0^+$ (smooth interior) $c\to c_{\max}$ (never cut). The $\alpha\le0$ → $c_{\max}$ rule makes the cost **strongly asymmetric in the sign of $\alpha$**, which is load-bearing for the per-direction split in §5.5. The LUT is a 101(γ)x501(α) bilinear table, built once per `nlooks` (rounded to 0.1) and leaked to `'static`; γ is clamped to $[0,0.999]$, α to $[-\pi,\pi]$.
 
-The diagnostic parity path uses pre-computed tables instead — see §5.6.
+The diagnostic parity path uses pre-computed tables instead - see §5.6.
 
 ### 5.5 Cost Computation for Four Directions and Integer Scaling
 
@@ -342,9 +342,9 @@ The float LLR is converted to `i32` via `round(c · CARBALLO_COST_SCALE)` with `
 
 ### 5.6 Parity / single-tile cost (`compute_carballo_costs_parity`)
 
-`unwrap_linear` (the Rust/Python parity replica — *not* a production entry point) uses `compute_carballo_costs_parity`, which reproduces the original ww-orig spline model exactly:
+`unwrap_linear` (the Rust/Python parity replica - *not* a production entry point) uses `compute_carballo_costs_parity`, which reproduces the original ww-orig spline model exactly:
 
-- **Probabilities** come from embedded, pre-sampled tables read via **trilinear** interpolation (`cost/spline_lut.rs`) — there is no tri-cubic B-spline evaluator in Rust; the Python `.npz`/`.pkl` splines were sampled onto a dense grid that the Rust reads directly. The grid is α: 31 uniform pts in $[-\pi,\pi]$; γ: 11 pts $[0,0.1,\dots,1.0]$; $L$: 11 log-spaced pts $[1,\dots,80]$ (clamped at lookup). Tables ship as five little-endian `f32` blobs embedded in the binary: `carballo_grid_phase.bin` (31), `carballo_grid_corr.bin` (11), `carballo_grid_nlooks.bin` (11), `carballo_p0.bin` and `carballo_p1.bin` (each 31·11·11 = 3751). Here $p_0 = P(\Delta k=0)$ and $p_1 = P(\Delta k=\pm1)$, and in general **$p_0 + p_1 \neq 1$**.
+- **Probabilities** come from embedded, pre-sampled tables read via **trilinear** interpolation (`cost/spline_lut.rs`) - there is no tri-cubic B-spline evaluator in Rust; the Python `.npz`/`.pkl` splines were sampled onto a dense grid that the Rust reads directly. The grid is α: 31 uniform pts in $[-\pi,\pi]$; γ: 11 pts $[0,0.1,\dots,1.0]$; $L$: 11 log-spaced pts $[1,\dots,80]$ (clamped at lookup). Tables ship as five little-endian `f32` blobs embedded in the binary: `carballo_grid_phase.bin` (31), `carballo_grid_corr.bin` (11), `carballo_grid_nlooks.bin` (11), `carballo_p0.bin` and `carballo_p1.bin` (each 31·11·11 = 3751). Here $p_0 = P(\Delta k=0)$ and $p_1 = P(\Delta k=\pm1)$, and in general **$p_0 + p_1 \neq 1$**.
 - **Cost** = `round(100 · max(-ln(p_1/p_0), 0))`, with both probabilities floored at `1e-30`. The scale is `100` (matching Python's `100·-log(p1/p0)`), *not* the production path's 6.
 - **Masking** zeros the cost only where **both** endpoint pixels are invalid (matching Python's `mask = ~valid`, zero where `mask[a] && mask[b]`); a boundary arc with one valid pixel keeps a nonzero cost.
 - **Override:** setting `WHIRLWIND_CARBALLO_LUT_DIR` to a directory containing the same five `.bin` files replaces the embedded tables at first use (for experiments).
@@ -371,7 +371,7 @@ Note this differs from the older description: forward-arc costs are clamped non-
 Phase unwrapping is posed as a **minimum-cost flow (MCF) problem** on a rectangular residue grid (`RectangularGridGraph`, `grid.rs`):
 
 - **Nodes**: an $m \times n$ grid with $m = m_{\text{phase}}+1$, $n = n_{\text{phase}}+1$ (one node per 2x2 pixel loop). `node_id(i,j) = i·n + j`.
-- **Arcs**: 4-connected. Each grid edge carries **two independent forward arcs** (one per direction — the two directions are separate Carballo cost decisions), each with its own residual reverse partner, i.e. 4 arc slots per interior pair. Forward arc IDs are partitioned for $O(1)$ transpose:
+- **Arcs**: 4-connected. Each grid edge carries **two independent forward arcs** (one per direction - the two directions are separate Carballo cost decisions), each with its own residual reverse partner, i.e. 4 arc slots per interior pair. Forward arc IDs are partitioned for $O(1)$ transpose:
 
   | Range                 | Direction | Tail → Head         |
   | --------------------- | --------- | ------------------- |
@@ -420,7 +420,7 @@ $$
 
 with $w_e$ an inverse-variance weight, $O_e$ a preferred-flow offset, and $100 = $ `NSHORTCYCLE`. Dijkstra uses the marginal cost $\Delta c_e = w_e\,(\pm 2\cdot100\cdot(k_e\cdot100-O_e) + 100^2)$. Because that marginal is negative at $k_e=0$ whenever $|O_e|>50$, the convex network is first pre-loaded so each arc sits at its parabola minimum $k^\* = \mathrm{round}(O_e/100)$ (`preload_convex_min`, with node excess adjusted to keep conservation); thereafter every residual marginal is $\ge 0$, zero initial potentials are valid, and successive-shortest-paths stays sound (the ordered-parallel-arc reduction of convex-cost MCF).
 
-An optional **virtual ground node** (`new_with_mask_and_ground`) connects every boundary residue to a sink with two unit-capacity arcs of cost `ground_cost`, letting boundary wrap-line terminations drain at the image edge. It is used only by the `*_grounded` diagnostics — it corrupts dense interior-residue real data and is not on the default path.
+An optional **virtual ground node** (`new_with_mask_and_ground`) connects every boundary residue to a sink with two unit-capacity arcs of cost `ground_cost`, letting boundary wrap-line terminations drain at the image edge. It is used only by the `*_grounded` diagnostics - it corrupts dense interior-residue real data and is not on the default path.
 
 ### 6.5 Why This Works
 
@@ -437,8 +437,8 @@ An optional **virtual ground node** (`new_with_mask_and_ground`) connects every 
 
 The primal-dual algorithm solves the min-cost flow problem through repeated multi-source shortest-path computations. A single shared loop (`primal_dual::run_impl`) implements two completion modes:
 
-- **Early-exit mode** (`primal_dual::run`, `max_iter = 50`) — used by the opt-in tiled solve, the opt-in `unwrap_reuse`/`unwrap_convex` solvers, conncomp, and integration. Dijkstra stops as soon as all sinks are finalized.
-- **Full-completion mode** (`primal_dual::run_full_dijkstra`, `max_iter = 8`) — used by the verified public default `unwrap_linear` (and `unwrap_linear_ext_costs`). Dijkstra runs until the queue is empty, matching Python ww-orig's `dijkstra_pd` / `primal_dual(maxiter=8)`.
+- **Early-exit mode** (`primal_dual::run`, `max_iter = 50`) - used by the opt-in tiled solve, the opt-in `unwrap_reuse`/`unwrap_convex` solvers, conncomp, and integration. Dijkstra stops as soon as all sinks are finalized.
+- **Full-completion mode** (`primal_dual::run_full_dijkstra`, `max_iter = 8`) - used by the verified public default `unwrap_linear` (and `unwrap_linear_ext_costs`). Dijkstra runs until the queue is empty, matching Python ww-orig's `dijkstra_pd` / `primal_dual(maxiter=8)`.
 
 Each iteration:
 
@@ -489,15 +489,15 @@ For nodes **not** popped this iteration (unreached, or relaxed-but-not-finalized
 
 $$\pi_v \gets \pi_v - d_{\max} \quad\text{(non-popped nodes)}$$
 
-This cap keeps the potentials valid (Ahuja, Magnanti & Orlin §9): without it, residual arcs crossing the Dijkstra search frontier would acquire negative reduced cost on the next iteration, producing cyclic predecessor chains. In full-completion mode every reachable node is popped, so $d_{\max}$ is never applied and every node receives its exact distance — matching Python's `update_potential_pd` and giving the tight reduced costs that let each iteration route more flow (closing a ~5.5% quality gap on masked single-tile scenes).
+This cap keeps the potentials valid (Ahuja, Magnanti & Orlin §9): without it, residual arcs crossing the Dijkstra search frontier would acquire negative reduced cost on the next iteration, producing cyclic predecessor chains. In full-completion mode every reachable node is popped, so $d_{\max}$ is never applied and every node receives its exact distance - matching Python's `update_potential_pd` and giving the tight reduced costs that let each iteration route more flow (closing a ~5.5% quality gap on masked single-tile scenes).
 
 ### 7.6 Fallback to Successive Shortest Paths
 
-After the primal-dual loop terminates — either on hitting `max_iter` or on a no-progress stall — any remaining excess is drained by a **successive shortest paths (SSP)** fallback. The shared driver chooses the fallback by PD mode: early-exit `run` falls through to multi-source `ssp::run`, while full-completion `run_full_dijkstra` falls through to single-source `ssp::run_single_source`.
+After the primal-dual loop terminates - either on hitting `max_iter` or on a no-progress stall - any remaining excess is drained by a **successive shortest paths (SSP)** fallback. The shared driver chooses the fallback by PD mode: early-exit `run` falls through to multi-source `ssp::run`, while full-completion `run_full_dijkstra` falls through to single-source `ssp::run_single_source`.
 
 Each **multi-source SSP** iteration:
 
-1. Runs an early-exit multi-source Dijkstra over the residual graph — every positive-excess node is seeded at distance 0, and the search stops after all currently reachable deficits are finalized.
+1. Runs an early-exit multi-source Dijkstra over the residual graph - every positive-excess node is seeded at distance 0, and the search stops after all currently reachable deficits are finalized.
 2. Selects the single reached deficit node with the smallest distance, and traces predecessor arcs back to its source seed.
 3. Augments **one unit** of flow along that **one** source→deficit path, adjusting the two endpoints' excess.
 4. Applies the same potential update as the primal-dual phase, $\pi_i \gets \pi_i - d_i$ (capped at $d_{\max}$ for nodes not finalized by an early-exit Dijkstra), keeping reduced costs non-negative.
@@ -510,9 +510,9 @@ Because one Dijkstra search is re-run for *every single unit* of augmentation, S
 
 #### 7.6.1 Masked-frame stranding and the guarded adaptive fallback
 
-On **heavily-masked** frames (e.g. NISAR D_074 at ~6 % valid), the masked "sea" is a vast cost-0 region (both-invalid arcs cost 0 and are not forbidden, matching ww-orig). The single-source SSP processes its source list once and augments greedily one source at a time; on such frames this can **fragment the residual graph** so that a few remaining excess nodes end up trapped in tiny residual components that contain no deficit. Those sources are then **stranded** — the network never reaches balance, and the leftover ±2π discontinuities corrupt large regions of the integrated phase. (The single-tile parity path bisects cleanly to this: residues and costs are byte-identical to ww-orig — feeding ww-orig's exact costs through the Rust solver reproduces the Rust output exactly — so the divergence is purely in the flow the solver builds.) Python `ww-orig` does **not** hit this: it runs `primal_dual(maxiter=8)` and its SSP completes; the Rust single-source SSP's greedy one-pass does not, on these frames.
+On **heavily-masked** frames (e.g. NISAR D_074 at ~6 % valid), the masked "sea" is a vast cost-0 region (both-invalid arcs cost 0 and are not forbidden, matching ww-orig). The single-source SSP processes its source list once and augments greedily one source at a time; on such frames this can **fragment the residual graph** so that a few remaining excess nodes end up trapped in tiny residual components that contain no deficit. Those sources are then **stranded** - the network never reaches balance, and the leftover ±2π discontinuities corrupt large regions of the integrated phase. (The single-tile parity path bisects cleanly to this: residues and costs are byte-identical to ww-orig - feeding ww-orig's exact costs through the Rust solver reproduces the Rust output exactly - so the divergence is purely in the flow the solver builds.) Python `ww-orig` does **not** hit this: it runs `primal_dual(maxiter=8)` and its SSP completes; the Rust single-source SSP's greedy one-pass does not, on these frames.
 
-The fix is a **guarded adaptive fallback** in `run_full_dijkstra` (used only by `unwrap_linear`): run the usual PD(8) + SSP; if any excess remains, **resume the multi-source primal-dual** (which does not fragment the residual graph the way the single-source SSP does) in chunks, retrying the SSP each round, up to a cap (`WHIRLWIND_LINEAR_PD_CAP`, default 512 iterations). Because the first SSP already drains the easy residues, the resume typically finishes in ~16 more PD iterations. The final imbalance is always reported. Crucially the order matters: SSP-first-then-resume-PD converges far faster than running many PD iterations up front (which on D_075 left the network unbalanced after 300 iterations / 415 s, whereas PD(8)+SSP+resume balances in ~90 s). This is a **robustness lever, not literal ww-orig parity** — ww-orig fixes the same frames in a single PD(8)+SSP pass; the remaining trajectory difference (why the Rust single-source SSP strands where ww-orig's completes) is documented but not yet closed. The change is confined to the parity path; the production reuse/tiled solvers are untouched.
+The fix is a **guarded adaptive fallback** in `run_full_dijkstra` (used only by `unwrap_linear`): run the usual PD(8) + SSP; if any excess remains, **resume the multi-source primal-dual** (which does not fragment the residual graph the way the single-source SSP does) in chunks, retrying the SSP each round, up to a cap (`WHIRLWIND_LINEAR_PD_CAP`, default 512 iterations). Because the first SSP already drains the easy residues, the resume typically finishes in ~16 more PD iterations. The final imbalance is always reported. Crucially the order matters: SSP-first-then-resume-PD converges far faster than running many PD iterations up front (which on D_075 left the network unbalanced after 300 iterations / 415 s, whereas PD(8)+SSP+resume balances in ~90 s). This is a **robustness lever, not literal ww-orig parity** - ww-orig fixes the same frames in a single PD(8)+SSP pass; the remaining trajectory difference (why the Rust single-source SSP strands where ww-orig's completes) is documented but not yet closed. The change is confined to the parity path; the production reuse/tiled solvers are untouched.
 
 ### 7.7 Complexity
 
@@ -540,7 +540,7 @@ where $\psi[p]$ is the wrapped input. Carrying `K` as an integer is what keeps t
 
 There are two paths, selected by whether a validity mask is supplied:
 
-- **Unmasked fast path** (`integrate`, `integrate_with_flow`). Seeds `K = 0` at $(0,0)$ and sweeps the whole pixel grid in fixed order — down column 0, then left-to-right across each row — so every pixel is reached exactly once. `K` is propagated as a single running integer (the column-0 head count plus a per-row interior count).
+- **Unmasked fast path** (`integrate`, `integrate_with_flow`). Seeds `K = 0` at $(0,0)$ and sweeps the whole pixel grid in fixed order - down column 0, then left-to-right across each row - so every pixel is reached exactly once. `K` is propagated as a single running integer (the column-0 head count plus a per-row interior count).
 - **Masked path** (`integrate_with_mask`, `integrate_with_flow_masked`). 4-connected BFS over valid pixels. The grid is swept in raster order; at the first still-unvisited valid pixel of **each** connected component a fresh BFS is started with `K = 0`. Every disconnected valid component is therefore integrated independently, and the absolute $2\pi$ offset between components is left unconstrained (it is unobservable from the wrapped data). Masked pixels are returned as `NaN`; the `is_nan()` state doubles as the BFS visited-marker.
 
 `integrate_with_mask` with a `None` mask delegates to the unmasked `integrate`.
@@ -596,7 +596,7 @@ for i in 0..m:
 
 ### 8.6 Numerical Precision
 
-The output is exactly congruent to the wrapped input modulo $2\pi$, independent of image size. Because `K` is an integer, the only floating-point operations per pixel are the single multiply-and-add `psi[p] + 2*pi * (K as f32)`; error does **not** accumulate along the integration path. This is single precision (`f32`, `std::f32::consts::TAU`) — double-precision accumulation is unnecessary and is not used. The earlier float-accumulator integrator (`phi_accum += d_phi`, as in SNAPHU's original `IntegratePhase`) had error growing with path length and was replaced by this integer formulation (cf. the isce3/SNAPHU fix, commit fe6cba72). A regression test (`unwrap_is_congruent_to_wrapped_input`) asserts $|\mathrm{wrap}(\phi_{\text{unwrapped}} - \psi)| < 10^{-4}$ rad.
+The output is exactly congruent to the wrapped input modulo $2\pi$, independent of image size. Because `K` is an integer, the only floating-point operations per pixel are the single multiply-and-add `psi[p] + 2*pi * (K as f32)`; error does **not** accumulate along the integration path. This is single precision (`f32`, `std::f32::consts::TAU`) - double-precision accumulation is unnecessary and is not used. The earlier float-accumulator integrator (`phi_accum += d_phi`, as in SNAPHU's original `IntegratePhase`) had error growing with path length and was replaced by this integer formulation (cf. the isce3/SNAPHU fix, commit fe6cba72). A regression test (`unwrap_is_congruent_to_wrapped_input`) asserts $|\mathrm{wrap}(\phi_{\text{unwrapped}} - \psi)| < 10^{-4}$ rad.
 
 ---
 
@@ -606,7 +606,7 @@ The output is exactly congruent to the wrapped input modulo $2\pi$, independent 
 
 Whirlwind is implemented in **Rust**, with a small Python binding layer:
 
-- **`crates/whirlwind-core`** (Rust): all algorithms — residue computation,
+- **`crates/whirlwind-core`** (Rust): all algorithms - residue computation,
   cost build, MCF solver, integration, tiling/robustness, connected components,
   synthetic-ifg simulator. Parallelism via `rayon`.
 - **`crates/whirlwind-cli`** (Rust): `whirlwind` binary (`simulate`, `unwrap`).
@@ -693,7 +693,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
   masked endpoint (§4.2). Without this, `0+0j` masked pixels generate a wall of
   spurious residues at every mask boundary.
 - **Network construction**: *two* mechanisms (§6.3). Arc-forbidding
-  (`forbid_masked_arcs`) pre-saturates both directions of masked-edge arcs —
+  (`forbid_masked_arcs`) pre-saturates both directions of masked-edge arcs -
   used by the CRLB, convex, conncomp, ground and tiled paths. The **default
   solver `unwrap_linear` and the opt-in `unwrap_reuse` deliberately do
   NOT forbid** masked arcs; they pass `mask = None` to construction, rely on the
@@ -722,8 +722,8 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
    an accurate effective number of looks.
 3. **Filter size**: 7x7 smoothing (Carballo's original used 5x5).
 4. **Tiled robustness layer is heuristic (opt-in, not validated)**: the opt-in
-   tiled path (`unwrap_tiled_robust`) — seam reconciliation, coarse anchor +
-   multi-scale cascade, sliver healing, gated multi-shift re-solve — is
+   tiled path (`unwrap_tiled_robust`) - seam reconciliation, coarse anchor +
+   multi-scale cascade, sliver healing, gated multi-shift re-solve - is
    empirically tuned against benchmark scenes, **not proven optimal**, and can
    produce invalid (fast-but-wrong) results on fragmented NISAR scenes. It
    carries environment
@@ -740,12 +740,12 @@ baseline.
 
 | Public fn                                                                                               | Network          | Cost                            | Dijkstra                                                                | Mask            | Status                                                                          |
 | ------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------- | ----------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------- |
-| `unwrap` **(public default → `unwrap_linear`)**                                                         | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)** — default since 2026-06-03                         |
-| `unwrap` *tiled path* (opt-in: `multilook>1`, explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`) | reuse (per tile) | `compute_carballo_costs`        | early-exit, 50 it + multi-source SSP                                    | forbid (tiled)  | **NOT validated** — worked on select scenes, failed on most; no working version |
+| `unwrap` **(public default → `unwrap_linear`)**                                                         | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)** - default since 2026-06-03                         |
+| `unwrap` *tiled path* (opt-in: `multilook>1`, explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`) | reuse (per tile) | `compute_carballo_costs`        | early-exit, 50 it + multi-source SSP                                    | forbid (tiled)  | **NOT validated** - worked on select scenes, failed on most; no working version |
 | `unwrap_reuse` (whole-image reuse)                                                                      | reuse            | `compute_carballo_costs`        | early-exit, 50 it                                                       | cost-zero + NaN | reaches its cost optimum; **not validated** as default (PHASS path, opt-in)     |
 | `unwrap_linear` (single-tile; the default kernel)                                                       | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)**; masked frames balanced via adaptive fallback      |
 | `unwrap_convex`                                                                                         | convex           | `compute_snaphu_smooth_costs`   | heap                                                                    | forbid          | research prototype (#65)                                                        |
-| `components_only`                                                                                       | unit-capacity    | `compute_carballo_costs`        | forbid                                                                  | no MCF solve    | —                                                                               |
+| `components_only`                                                                                       | unit-capacity    | `compute_carballo_costs`        | forbid                                                                  | no MCF solve    | -                                                                               |
 
 **Single-tile benchmark (D_077, 4176x4257, vs production GUNW = SNAPHU).** The
 single-tile kernel is both faster and more accurate than single-tile SNAPHU:
@@ -760,7 +760,7 @@ Peak RSS ≈6.4 GB (no swap). Reference SNAPHU/PHASS timings are in
 `snaphu_ref/D_077.log` / `phass_ref.log`. Benchmark the verified path with
 `scripts/bench_nisar_gunw_whirlwind.py --solver linear --nlooks 16`.
 
-**Full 13-frame NISAR GUNW sweep — whirlwind vs ww-orig vs PHASS vs ICU (2026-06-03).**
+**Full 13-frame NISAR GUNW sweep - whirlwind vs ww-orig vs PHASS vs ICU (2026-06-03).**
 Per-component match vs the production GUNW unwrap (= snaphu), runtime, and peak
 RSS, single-tile, one heavy unwrap at a time. `whirlwind` = the public `unwrap`
 default (single-tile linear + the adaptive PD/SSP fallback of §7.6.1).
@@ -771,42 +771,42 @@ and `scripts/tophu_compare.py` (PHASS / ICU / snaphu, in an isce3+tophu env).
 | frame | ww %  | ww s | ww GB | ww-orig % | orig s | PHASS % | ph s | ICU %/s     |
 | ----- | ----- | ---- | ----- | --------- | ------ | ------- | ---- | ----------- |
 | A_013 | 100.0 | 13.5 | 3.2   | 100.0     | 35.5   | 99.3    | 6.3  | 100.0 / 525 |
-| A_016 | 100.0 | 19.8 | 3.6   | 100.0     | 44.0   | 99.6    | 12.5 | —           |
-| A_018 | 100.0 | 18.0 | 3.4   | 100.0     | 39.6   | 85.7    | 4.7  | —           |
-| A_020 | 99.8  | 27.6 | 3.7   | 99.8      | 52.0   | 99.4    | 7.3  | —           |
-| A_022 | 100.0 | 25.3 | 3.7   | 100.0     | 48.3   | 99.4    | 6.4  | —           |
-| A_025 | 58.0  | 30.2 | 3.8   | **70.3**  | 54.5   | 67.0    | 5.6  | —           |
-| A_028 | 100.0 | 33.4 | 3.6   | 100.0     | 55.3   | 92.9    | 11.5 | —           |
-| A_030 | 100.0 | 35.5 | 4.1   | 100.0     | 63.1   | 75.4    | 6.1  | —           |
+| A_016 | 100.0 | 19.8 | 3.6   | 100.0     | 44.0   | 99.6    | 12.5 | -           |
+| A_018 | 100.0 | 18.0 | 3.4   | 100.0     | 39.6   | 85.7    | 4.7  | -           |
+| A_020 | 99.8  | 27.6 | 3.7   | 99.8      | 52.0   | 99.4    | 7.3  | -           |
+| A_022 | 100.0 | 25.3 | 3.7   | 100.0     | 48.3   | 99.4    | 6.4  | -           |
+| A_025 | 58.0  | 30.2 | 3.8   | **70.3**  | 54.5   | 67.0    | 5.6  | -           |
+| A_028 | 100.0 | 33.4 | 3.6   | 100.0     | 55.3   | 92.9    | 11.5 | -           |
+| A_030 | 100.0 | 35.5 | 4.1   | 100.0     | 63.1   | 75.4    | 6.1  | -           |
 | D_074 | 98.8  | 18.5 | 3.5   | 98.8      | 37.4   | 91.2    | 5.7  | 86.3 / 0.6  |
-| D_075 | 88.2  | 82.4 | 3.9   | 88.2      | 106.3  | 48.4    | 15.4 | —           |
-| D_077 | 99.5  | 61.9 | 3.5   | 99.5      | 85.7   | 94.7    | 16.8 | —           |
-| D_078 | 99.8  | 37.9 | 3.5   | 99.9      | 59.1   | 96.9    | 10.5 | —           |
-| A_035 | 100.0 | 22.5 | 3.2   | 100.0     | 46.7   | 94.6    | 8.5  | —           |
+| D_075 | 88.2  | 82.4 | 3.9   | 88.2      | 106.3  | 48.4    | 15.4 | -           |
+| D_077 | 99.5  | 61.9 | 3.5   | 99.5      | 85.7   | 94.7    | 16.8 | -           |
+| D_078 | 99.8  | 37.9 | 3.5   | 99.9      | 59.1   | 96.9    | 10.5 | -           |
+| A_035 | 100.0 | 22.5 | 3.2   | 100.0     | 46.7   | 94.6    | 8.5  | -           |
 
 Findings:
 - **Parity: whirlwind ≡ ww-orig on 12 of 13 frames** (identical to ±0.1 %). The
   table's lone exception, **A_025** (58.0 here, bridge *off*), is now fixed to
-  **99.99 %** by the default-on bridging pass (`unwrap(bridge=True)`) — so with the
+  **99.99 %** by the default-on bridging pass (`unwrap(bridge=True)`) - so with the
   default settings whirlwind is at-or-above ww-orig on **all 13** (see the A_025
   bridging section below).
 - whirlwind is **~1.5–2x faster than Python ww-orig** (Rust) at ~3–4 GB vs 4–5 GB,
-  and single-tile snaphu is ~588 s — so whirlwind is **~7–45x faster than snaphu**
+  and single-tile snaphu is ~588 s - so whirlwind is **~7–45x faster than snaphu**
   while matching/beating its per-comp.
 - whirlwind **beats PHASS on quality** on most frames, sometimes by a lot
   (D_075 88.2 vs 48.4; A_030 100 vs 75.4; A_028 100 vs 92.9; A_018 100 vs 85.7),
   though PHASS is ~2–4x faster (5–17 s) at ~2 GB.
-- **The *isce3* ICU (via tophu) is impractical** — 525 s on the *easy* frame
+- **The *isce3* ICU (via tophu) is impractical** - 525 s on the *easy* frame
   (the 0.6 s on D_074 is an artefact of its 94 %-masked tiny valid region);
   sampled, not swept. The **original *isce2* mroipac ICU** (a different engine)
-  is a very different story — fast and competitive (see below).
+  is a very different story - fast and competitive (see below).
 
 **The original isce2 ICU (Giangi's `mroipac` C extension).** A separate, much
-older implementation than the isce3/tophu ICU above — and the one most veteran
+older implementation than the isce3/tophu ICU above - and the one most veteran
 InSAR users will recognize. Run single-patch via `scripts/icu_isce2_run.py` in an
 isce2 env, scored with the *same* `percomp_match`. ICU estimates coherence
 internally (phase-sigma), so masked pixels are filled with **random** phase (not
-zeroed — a constant region looks perfectly coherent and corrupts ICU's seeding).
+zeroed - a constant region looks perfectly coherent and corrupts ICU's seeding).
 
 | frame | isce2-ICU %/s  | coverage | whirlwind % | note                                               |
 | ----- | -------------- | -------- | ----------- | -------------------------------------------------- |
@@ -819,19 +819,19 @@ So the classic ICU is *not* "just bad": it is fast (~2–3 min), hits 100 % with
 full coverage on clean frames, and on the A_025 river its tree/bootstrap
 referencing recovers the cross-bank integer gauge better than our MCF (73 vs 58,
 ≈ ww-orig 70 / PHASS 67). That makes A_025 a *referencing* weakness, not a
-fundamental one — and 73 % is the concrete target for the bridging work below to
+fundamental one - and 73 % is the concrete target for the bridging work below to
 beat. ICU's one weak spot is coverage on lower-coherence land (D_077 at 81 %),
 which the MCF fills.
 
-**A_025 — the residual bridging gap, now SOLVED (`unwrap(bridge=True)`, default on).**
+**A_025 - the residual bridging gap, now SOLVED (`unwrap(bridge=True)`, default on).**
 A low-coherence/masked river split A_025 into disconnected slabs; each slab is
 internally correct but the MCF integrator seeds every disconnected valid region at
 its own arbitrary 2π level, so the *relative* offset across the river was
 under-determined (whirlwind 0.580, ww-orig 0.703, PHASS ≈ 0.67). The fix is a fast
 post-integration pass over the right partition:
 
-- **The free gauge is between INTEGRATION components** — the 4-connected components
-  of the valid mask, which is the partition `integrate_with_mask` seeds — *not* the
+- **The free gauge is between INTEGRATION components** - the 4-connected components
+  of the valid mask, which is the partition `integrate_with_mask` seeds - *not* the
   (strictly finer) conncomp labels. (A_030 has 230 conncomps yet scores 100 %
   because the integrator already bridged them across low-cost cuts.) Putting a shift
   variable on conncomps was the old post-hoc dead-end; on integration components a
@@ -840,7 +840,7 @@ post-integration pass over the right partition:
   **relative to the largest region**, gated to regions the coarse scale connects
   (data-supported) and vetoed unless the offset is cleanly integer.
 - Connected-components labelling is a native binding (`whirlwind.label_components`,
-  the same BFS as `integrate_with_mask`) — **no scipy/scikit-image dependency**.
+  the same BFS as `integrate_with_mask`) - **no scipy/scikit-image dependency**.
 
 13-frame validation (`scripts/bench_bridge_all.py`, per-comp before/after + pixels
 moved; bridge cost +0.5–1.0 s/frame):
@@ -853,33 +853,33 @@ moved; bridge cost +0.5–1.0 s/frame):
 So **whirlwind now matches/at-or-above ww-orig on all 13 frames.** Prototype +
 diagnostics: `scripts/proto_bridge_a025.py`, `scripts/diag_bridge_partition.py`.
 Future work: the wider, fully-decorrelated-gap case where x8 does *not* bridge (the
-offset is then a labelled *convention*, not a measurement) — A_025's river was narrow
+offset is then a labelled *convention*, not a measurement) - A_025's river was narrow
 enough to be genuinely data-supported.
 
 **SSP-fallback cost (a known sharp edge).** `unwrap_linear` runs 8 full-Dijkstra
-PD iterations *then falls through to SSP* — and on D_077 it does reach SSP (the
+PD iterations *then falls through to SSP* - and on D_077 it does reach SSP (the
 PD iterations alone reach only ≈11 %; the SSP fallback routes the bulk). The SSP
 fallback's runtime therefore dominates, and it depends critically on the SSP
 *algorithm*:
 
 - The multi-source `ssp::run` seeds every excess node, runs to
-  all-deficits-popped, and augments **one** path per iteration —
+  all-deficits-popped, and augments **one** path per iteration -
   i.e. effectively a near-whole-image Dijkstra *per single unit of flow*. On the
   D_077 whole-image graph this costs ≈1472 s.
 - A **single-source** SSP (early-exit per source) routes the same flow far
-  faster (≈61 s before the rescan fix below; ≈37 s after it — see the next
+  faster (≈61 s before the rescan fix below; ≈37 s after it - see the next
   block).
 
 The fast figure above is with the single-source SSP. **Dual-SSP fix
 (implemented):** the multi-source `ssp::run` is kept for the early-exit/tiled
-path (where it is fast — it is catastrophic only on large *whole-image* graphs),
+path (where it is fast - it is catastrophic only on large *whole-image* graphs),
 and `ssp::run_single_source` is used only by `run_full_dijkstra` (single-tile),
 restoring D_077 from ≈1472 s back to **≈61 s / 99.49 %**, then to **≈37 s** after
 the per-source rescan elimination below (verified post-fix).
 The single-source potential update keeps reduced costs non-negative after every
-early-exit Dijkstra — popped nodes get their exact distance; unpopped nodes keep
+early-exit Dijkstra - popped nodes get their exact distance; unpopped nodes keep
 a zero shift, which is exactly "cap at the sink distance" since any unpopped node
-has `dist ≥ d_sink` by Dijkstra pop order — so `debug_assert!(rc >= 0)` holds
+has `dist ≥ d_sink` by Dijkstra pop order - so `debug_assert!(rc >= 0)` holds
 with **no clamp**. The invariant is guarded by the debug test
 `single_source_ssp_keeps_nonnegative_reduced_costs` (a steep noisy ramp that
 reaches the SSP fallback); the tiled/default path is byte-unchanged (only
@@ -888,12 +888,12 @@ reaches the SSP fallback); the tiled/default path is byte-unchanged (only
 **Per-source Dial-`k` rescan eliminated (2026-06-04, ~1.4–2.4x on residue-heavy
 frames).** `WHIRLWIND_DEBUG` timing revealed the single-source SSP's real cost was
 *not* the Dijkstra traversals but the **`max_reduced_cost_par` rescan it ran once
-per source** to size the Dial buckets — an O(E) scan over ~38 M arcs x ~1k sources
+per source** to size the Dial buckets - an O(E) scan over ~38 M arcs x ~1k sources
 = **34 s of D_077's 61 s (~52 %)**. A naive hoist is unsafe (the capped potential
 update *grows* potentials, so the max reduced cost rises and a stale `k` would
 alias). Fix: maintain `max_rc` across sources (one tight scan), and if any
 relaxation sees `rc ≥ k`, discard that source's partial Dijkstra, recompute
-`max_rc`, and retry — an under-sized `k` can never commit. **D_077 61→37 s, D_075
+`max_rc`, and retry - an under-sized `k` can never commit. **D_077 61→37 s, D_075
 2.4x, others 1.4–1.7x; optimal cost byte-identical, per-comp unchanged on all 13
 frames, 79/79 core tests green.** Profiler: `scripts/prof_pdssp.py`,
 `WHIRLWIND_DEBUG=1` (`max_reduced_cost_scan=…ms`).
@@ -1036,7 +1036,7 @@ $$
 
 The raw LLR is negative (a $2\pi$ correction is favored near a wrapping
 discontinuity), but **the implementation clamps every forward-arc cost to
-$\ge 0$** — the "encourage a cut" signal is expressed as a *near-zero* cost on
+$\ge 0$** - the "encourage a cut" signal is expressed as a *near-zero* cost on
 the cut direction together with the asymmetric $\alpha\le 0\Rightarrow c_{\max}$
 rule on the opposite direction (§5.4), not as a literal negative number.
 
@@ -1058,5 +1058,5 @@ This **near-zero cost** means the edge doesn't strongly influence the solution, 
 
 ---
 
-*Document Version: 3.0 — algorithm sections audited against the code (see §9.6 for verified-vs-WIP status and benchmarks).*  
+*Document Version: 3.0 - algorithm sections audited against the code (see §9.6 for verified-vs-WIP status and benchmarks).*  
 *Last Updated: 2026-06-03*

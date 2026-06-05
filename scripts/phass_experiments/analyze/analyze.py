@@ -117,7 +117,7 @@ def tabulate(scene: str, lines: list[str]) -> None:
         if not path.exists():
             lines.append(
                 "| "
-                + " | ".join([LABELS[mode], "—", "—", "—", "—", "—", "—", "—"])
+                + " | ".join([LABELS[mode], "-", "-", "-", "-", "-", "-", "-"])
                 + " |"
             )
             continue

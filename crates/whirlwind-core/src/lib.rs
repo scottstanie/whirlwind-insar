@@ -56,7 +56,7 @@ pub enum UnwrapError {
 /// Whole-image default phase kernel, read once from `WHIRLWIND_UNWRAP_SOLVER`
 /// ∈ {`linear` (default), `tiled`, `reuse`, `convex`}.
 ///
-/// **`linear` is the default** — the verified ww-orig-parity single-tile solver
+/// **`linear` is the default** - the verified ww-orig-parity single-tile solver
 /// (`unwrap_linear`; its adaptive PD/SSP fallback drains heavily-masked frames,
 /// see §7.6.1). It is the default *until the tiled / reuse paths are validated
 /// across the full NISAR frame set*: the tiled robustness layer can produce
@@ -107,10 +107,10 @@ pub fn unwrap_coherence(
 /// **without running the MCF solve**.
 ///
 /// Component labels depend only on (a) mask-forbidden arcs and (b) raw arc
-/// costs — both fixed at [`network::Network`] construction (see
+/// costs - both fixed at [`network::Network`] construction (see
 /// [`conncomp::grow_components`] / `edge_is_cut`: "MCF flow placement is
-/// deliberately not a cut signal"). They are therefore independent of how — or
-/// whether — the phase was solved, so this composes with the tiled/robust phase
+/// deliberately not a cut signal"). They are therefore independent of how - or
+/// whether - the phase was solved, so this composes with the tiled/robust phase
 /// path. Peak memory is one global cost grid (`O(pixels)`); there is no
 /// per-source Dijkstra / solve state.
 pub fn components_only(
@@ -135,7 +135,7 @@ pub fn components_only(
     Ok(conncomp::grow_components(&graph, &net, mask, &params))
 }
 
-/// Robust coherence-cost unwrap returning `(phase, conn_components)` — the
+/// Robust coherence-cost unwrap returning `(phase, conn_components)` - the
 /// engine behind the public `unwrap`.
 ///
 /// Phase comes from the robust tiled pipeline ([`unwrap_coherence`]); components
@@ -181,7 +181,7 @@ pub fn unwrap_coherence_with_components(
     Ok((phase, comps))
 }
 
-/// **Specialized — not a general substitute for [`unwrap_reuse`].**
+/// **Specialized - not a general substitute for [`unwrap_reuse`].**
 ///
 /// [`unwrap_reuse`] with a virtual ground node, the coherence-cost twin of
 /// [`unwrap_crlb_grounded`]. Adds a single ground node connected to every
@@ -236,7 +236,7 @@ pub fn unwrap_grounded(
     Ok(unw)
 }
 
-/// **Prototype — SNAPHU-style convex (quadratic) cost solver.**
+/// **Prototype - SNAPHU-style convex (quadratic) cost solver.**
 ///
 /// Same coherence input as [`unwrap_reuse`], but the per-arc cost is parabolic
 /// in flow rather than linear: `c_e(k) = w_e · (k · 100 − offset_e)²`,
@@ -289,7 +289,7 @@ pub fn unwrap_convex(
     // which is feasible but lands far from the convex optimum at NISAR scale
     // (the batched multi-path augment places ~all flow at one stale Dijkstra
     // snapshot's marginals; nothing re-optimizes it). `ssp` = pure single-path
-    // successive-shortest-paths (sound but O(units) Dijkstras — only viable on
+    // successive-shortest-paths (sound but O(units) Dijkstras - only viable on
     // crops). `cancel` = fast `pd` warm-start + negative-cycle canceling to drive
     // the feasible flow to the convex optimum (scalable; the real fix).
     match convex_solve_mode().as_str() {
@@ -311,7 +311,7 @@ pub fn unwrap_convex(
     Ok(unw)
 }
 
-/// Capacity-1 (linear) MCF solver — exact replica of Python `whirlwind_orig`.
+/// Capacity-1 (linear) MCF solver - exact replica of Python `whirlwind_orig`.
 ///
 /// Uses standard unit-capacity arcs (no reuse, no multi-unit) and only 8
 /// primal-dual iterations (matching `primal_dual(network, maxiter=8)` in
@@ -340,7 +340,7 @@ pub fn unwrap_linear(
     // These are "artifacts of the finite image where wrap lines cross the
     // boundary, not actual phase singularities" (Python comment). Without
     // this, Rust routes interior residues to boundary frame nodes while
-    // Python routes them only to other interior nodes — completely different
+    // Python routes them only to other interior nodes - completely different
     // MCF solutions and ~45% quality loss on masked scenes.
     {
         let (rm, rn) = residues.dim();
@@ -349,13 +349,13 @@ pub fn unwrap_linear(
         residues.column_mut(0).fill(0);
         residues.column_mut(rn - 1).fill(0);
     }
-    // Python ww-orig does NOT forbid masked arcs — it only sets their cost to 0.
+    // Python ww-orig does NOT forbid masked arcs - it only sets their cost to 0.
     // Rust's new_with_mask explicitly forbids them, isolating residues in masked
     // regions and degrading quality on ~50%-masked NISAR scenes. Use new() here
     // (no mask forbidding) to match Python. Masked arcs have cost=0 so MCF
     // routes through them freely, then we NaN masked pixels post-integration.
     // Parity cost mode: 100x scale + zero only where both endpoints are
-    // invalid — matches Python _cost.compute_carballo_costs exactly.
+    // invalid - matches Python _cost.compute_carballo_costs exactly.
     let costs = cost::compute_carballo_costs_parity(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new(&graph, residues.view(), &costs);
@@ -370,7 +370,7 @@ pub fn unwrap_linear(
     // converges to the correct balanced flow, while Rust's single-source SSP
     // strands a few residues after only 8 PD iters. Bumping this lets us test
     // whether running PD to convergence (before the SSP fallback) reaches the
-    // balanced ww-orig flow — isolating PD-correctness from the SSP stranding.
+    // balanced ww-orig flow - isolating PD-correctness from the SSP stranding.
     let pd_iters: usize = std::env::var("WHIRLWIND_LINEAR_PD_ITERS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -430,7 +430,7 @@ pub fn unwrap_linear_ext_costs(
     Ok(unw)
 }
 
-/// PHASS-style flow-reuse solver — the default whole-image coherence solver
+/// PHASS-style flow-reuse solver - the default whole-image coherence solver
 /// (and the per-tile default; see [`tile`]). The corner-safe replacement for
 /// the removed capacity-1 solver.
 ///
@@ -439,7 +439,7 @@ pub fn unwrap_linear_ext_costs(
 /// `Network` runs in `reuse_mode`, which makes every arc multi-unit (no
 /// saturation), and Dial overrides reduced cost to 0 on any arc with prior flow
 /// (PHASS `ASSP.cc:2034`). After one wrap-line is laid down, subsequent demands
-/// route through the same arcs for free — which fixes the capacity-1
+/// route through the same arcs for free - which fixes the capacity-1
 /// boundary-stacking bug on steep clean ramps.
 pub fn unwrap_reuse(
     igram: ArrayView2<Complex32>,
@@ -457,7 +457,7 @@ pub fn unwrap_reuse(
     let wrapped_phase = igram.mapv(|z| z.arg());
     let residues = residue::compute(wrapped_phase.view());
     // Pass mask=None to network construction: Python ww-orig does NOT forbid
-    // masked arcs — it only sets their cost to 0. Forbidding masked arcs
+    // masked arcs - it only sets their cost to 0. Forbidding masked arcs
     // isolates residues inside masked regions, preventing cross-mask routing
     // and degrading quality from ~99% to ~42% on ~50%-masked NISAR scenes.
     // Masked arcs have cost=0 so MCF routes through them freely; post-integration
@@ -479,7 +479,7 @@ pub fn unwrap_reuse(
     Ok(unw)
 }
 
-/// Corner-safe CRLB unwrap (CRLB cost + PHASS flow-reuse network) — the default
+/// Corner-safe CRLB unwrap (CRLB cost + PHASS flow-reuse network) - the default
 /// whole-image CRLB path, the CRLB twin of [`unwrap_reuse`].
 ///
 /// A plain unit-capacity network mis-routes the corners of smooth steep signals
@@ -514,7 +514,7 @@ pub fn unwrap_crlb_reuse(
 }
 
 /// CRLB-cost connected components from the global cost grid **without running
-/// the MCF solve** — the CRLB twin of [`components_only`]. Labels are
+/// the MCF solve** - the CRLB twin of [`components_only`]. Labels are
 /// solve-independent (see that function); memory is one global cost grid,
 /// `O(pixels)`.
 pub fn crlb_components_only(
@@ -538,16 +538,16 @@ pub fn crlb_components_only(
     Ok(conncomp::grow_components(&graph, &net, mask, &params))
 }
 
-/// CRLB-cost unwrap returning `(phase, conn_components)` — the engine behind the
+/// CRLB-cost unwrap returning `(phase, conn_components)` - the engine behind the
 /// public `unwrap_crlb`.
 ///
-/// **EXPERIMENTAL / WIP — NOT validated.** Phase uses the tiled CRLB pipeline
+/// **EXPERIMENTAL / WIP - NOT validated.** Phase uses the tiled CRLB pipeline
 /// [`tile::unwrap_crlb_tiled_robust`] (`tile_size == 0` tiles frames larger than
 /// 512 px + a gated multi-shift winding fix); components are grown globally and
 /// solve-free ([`crlb_components_only`]). This tiling was mid-implementation and
-/// never brought to useful results — the SAME WIP status as the coherence tiled
+/// never brought to useful results - the SAME WIP status as the coherence tiled
 /// path; neither was validated. Porting the CRLB path to the verified single-tile
-/// kernel (the coherence default) is future work — see issue #35.
+/// kernel (the coherence default) is future work - see issue #35.
 pub fn unwrap_crlb_robust_with_components(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,
@@ -584,12 +584,12 @@ pub fn unwrap_crlb_robust_with_components(
 /// can then terminate at the image boundary independently of each other,
 /// fixing the capacity-1 stacking limitation of a unit-capacity network.
 ///
-/// * `ground_cost = 0` — ground is free. Best for clean inputs whose
+/// * `ground_cost = 0` - ground is free. Best for clean inputs whose
 ///   wrap-lines all exit at the boundary (e.g. smooth ramps with no
 ///   interior residues): MCF drains every boundary residue to ground
 ///   independently and places no spurious flow on interior arcs, leaving
 ///   the Itoh integration alone to recover the unwrap.
-/// * `ground_cost > 0` — ground is preferred only when it's cheaper than
+/// * `ground_cost > 0` - ground is preferred only when it's cheaper than
 ///   pairing with an opposite-sign interior residue along an internal
 ///   path. For data with dense interior residues (real noisy IGs), a
 ///   moderate positive cost keeps internal routing for the bulk of

@@ -2,7 +2,7 @@
 
 The tiled pipeline anchors region integers to a whole-image coarse solve at lk=8.
 diag_gunw_anchor showed the lk=8 anchor is SYSTEMATICALLY +1 on the right half
-(100% wrong) — so the cascade inherits the error. Per the unifying principle
+(100% wrong) - so the cascade inherits the error. Per the unifying principle
 (fewer full-res edges across the neck => wrong integer cheaper), a finer anchor
 (smaller lk => more edges) may level it correctly.
 
@@ -11,6 +11,7 @@ under BOTH costs, upsample, and report the dominant anchor-vs-production ambigui
 on the LEFT (correct) and RIGHT (drifted) halves of production comp1. A finer lk
 that gives left=0 AND right=0 would fix A_016 via the existing cascade.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,7 +34,9 @@ def modal(x):
 def ml(igc, coh, mask, L):
     h, w = igc.shape
     H, W = h // L, w // L
-    igo = np.zeros((H, W), np.complex64); co = np.zeros((H, W), np.float32); mo = np.zeros((H, W), bool)
+    igo = np.zeros((H, W), np.complex64)
+    co = np.zeros((H, W), np.float32)
+    mo = np.zeros((H, W), bool)
     for ci in range(H):
         sl_i = slice(ci * L, (ci + 1) * L)
         for cj in range(W):
@@ -59,9 +62,13 @@ def dom(a):
 
 def main() -> None:
     d = np.load(BENCH / A016 / "full_arrays.npz")
-    mask = d["mask"]; prod = d["prod_unw"]; pcc = d["prod_cc"]; coh = d["coh"]
+    mask = d["mask"]
+    prod = d["prod_unw"]
+    pcc = d["prod_cc"]
+    coh = d["coh"]
     ig = d["ig"].astype(np.float32)
-    igc = np.exp(1j * ig).astype(np.complex64); igc[~mask] = 0
+    igc = np.exp(1j * ig).astype(np.complex64)
+    igc[~mask] = 0
     cohw = np.clip(np.where(mask, coh, 0), 0, 1).astype(np.float32)
     comp1 = mask & (pcc == 1) & np.isfinite(prod)
     cols = np.arange(prod.shape[1])[None, :]
@@ -75,7 +82,9 @@ def main() -> None:
             if cost == "reuse":
                 cunw = ww.unwrap_reuse(igo, co, 50.0 * L * L, mo)
             else:
-                cunw, _cc = ww.unwrap(igo, co, 50.0 * L * L, mo, tile_size=100000, tile_overlap=64)
+                cunw, _cc = ww.unwrap(
+                    igo, co, 50.0 * L * L, mo, tile_size=100000, tile_overlap=64
+                )
             cunw = np.asarray(cunw, np.float64)
             H, W = prod.shape
             ii = np.minimum(np.arange(H) // L, cunw.shape[0] - 1)
@@ -84,10 +93,14 @@ def main() -> None:
             anch = np.where(mask, up, np.nan)
             amb = np.rint((anch - prod) / TAU)
             amb = amb - modal(amb[comp1])
-            dl, ml_ = dom(amb[left]); dr, mr_ = dom(amb[right])
+            dl, ml_ = dom(amb[left])
+            dr, mr_ = dom(amb[right])
             flag = "  <-- LEVELS BOTH" if (dl == 0 and dr == 0) else ""
-            print(f"  lk={L} {cost:6s} coarse={igo.shape}: left dom={dl:+d}(match0 {ml_:4.0f}%)  "
-                  f"right dom={dr:+d}(match0 {mr_:4.0f}%){flag}", flush=True)
+            print(
+                f"  lk={L} {cost:6s} coarse={igo.shape}: left dom={dl:+d}(match0 {ml_:4.0f}%)  "
+                f"right dom={dr:+d}(match0 {mr_:4.0f}%){flag}",
+                flush=True,
+            )
         print("", flush=True)
 
 

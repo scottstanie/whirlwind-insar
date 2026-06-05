@@ -13,12 +13,12 @@ benchmark (`paper/nisar_gunw_bench.md`).
 All three use the **same Carballo linear coherence cost** and a primal-dual MCF solver;
 the Rust version is a 3–72x faster rewrite (pixel-identical mod 2π to libwhirlwind) that
 *added* tiling, the coarse-anchor/cascade, CRLB cost, solve-free conncomps, and the
-flow-reuse + (prototype) convex modes. There is no `whirlwind-cpp` — that's `libwhirlwind`.
+flow-reuse + (prototype) convex modes. There is no `whirlwind-cpp` - that's `libwhirlwind`.
 
 **Correction to the working recollection** ("original whirlwind was close to PHASS but
 with a cost closer to snaphu"): half right at best. The *solver* is **not** PHASS's
-quality-guided region-grow — it's classical MCF. The *cost* is **not** snaphu's convex
-cost — it's the Carballo **linear** cost (coherence-weighted, phase-gradient-aware). The
+quality-guided region-grow - it's classical MCF. The *cost* is **not** snaphu's convex
+cost - it's the Carballo **linear** cost (coherence-weighted, phase-gradient-aware). The
 only "snaphu-ish" thing is using coherence as a statistical weight; the cost *shape* has
 always been linear, never convex. So whirlwind is its own point: **a phase-aware
 linear-cost MCF**, distinct from both PHASS (pure-coherence cost) and snaphu (convex cost).
@@ -45,7 +45,7 @@ This is the one structural difference that explains everything:
   *approximates* the single-tile answer.
 - **whirlwind's (and PHASS's) cost is linear** (constant marginal cost). A coherent block
   of cycles routed the wrong way costs the same per unit as small corrections, so the
-  whole-image optimum can sit far from the truth on noisy/steep data — the **"run-away"**.
+  whole-image optimum can sit far from the truth on noisy/steep data - the **"run-away"**.
   whirlwind's tiling + coarse-anchor + cascade is a **spatial regularizer** that bounds
   where the wrong optimum can act; it's compensating for the cost, not adding genuine
   value over a correct whole-image solve. The tile-block / checkerboard / vertical-streak
@@ -59,10 +59,10 @@ tuning issue.
 ## Where whirlwind stands vs the goal
 
 - **"Like PHASS, but gives up on fewer pixels and makes dozens not thousands of
-  conncomps"** — *whirlwind already achieves this.* Phase-aware cost + solve-free conncomp
+  conncomps"** - *whirlwind already achieves this.* Phase-aware cost + solve-free conncomp
   + absolute 100-px floor give ~53 components and ~94% recall on NISAR, vs PHASS's
   hundreds–thousands and its hard `good_correlation=0.7` give-up. ✅
-- **"Like snaphu, but faster / match single-tile snaphu with no artifacts"** — *not there.*
+- **"Like snaphu, but faster / match single-tile snaphu with no artifacts"** - *not there.*
   This needs snaphu's **cost curvature** so the whole-image solve is well-posed (then the
   artifacts vanish because there's nothing to reconcile). whirlwind has a convex-cost
   prototype, but it's unsound/untuned whole-image (negative marginal costs from the offset
@@ -81,9 +81,9 @@ Three results, all clean:
 
 1. **The convex *concept* is proven by snaphu.** snaphu's sound convex/statistical cost
    gets **99.3–99.9% single-tile with no artifacts** on the exact steep ramps where ww
-   tops out at 72%. Single-tile convex IS the quality ceiling — confirming the thesis.
+   tops out at 72%. Single-tile convex IS the quality ceiling - confirming the thesis.
 2. **whirlwind's convex *prototype* is broken whole-image** (2–24%, *worse* than the
-   tiled linear cost) — it does not realize the convex benefit (unsound: the parabola
+   tiled linear cost) - it does not realize the convex benefit (unsound: the parabola
    offset creates negative marginal costs that Dial's non-negative-reduced-cost Dijkstra
    can't handle without a Bellman-Ford/SPFA pre-pass). So the lever is a *sound* convex
    cost, not the current prototype.
@@ -93,7 +93,7 @@ Three results, all clean:
 
 - **Tile size/overlap can't fully fix the steep ramps.** Best D_077: 512/64=48%,
   512/256=**72%**, 1024/512=54%, 2048/1024=54%, single=1%. Raising the default overlap
-  (64→256, far below snaphu's 400 floor) is a strict +24-pt win but caps at ~72% — the
+  (64→256, far below snaphu's 400 floor) is a strict +24-pt win but caps at ~72% - the
   linear cost, not the granularity, is the limit. (`ww_gunw_overlap/`)
 
 ## Harness
@@ -107,17 +107,17 @@ does snaphu directly; tophu adds ICU + PHASS for free.
 
 ## Path to the goal
 
-1. **Implement a SOUND convex/statistical cost — this is the lever, now empirically
+1. **Implement a SOUND convex/statistical cost - this is the lever, now empirically
    confirmed.** snaphu's convex single-tile hits 99.3–99.9% clean on the frames where ww
    tops out at 72%; ww's convex *prototype* gets 2–24% because it's unsound (negative
    marginal costs from the parabola offset break the Dial/Dijkstra non-negativity
-   assumption — `preload_convex_min` is insufficient). The real work: a convex per-arc
+   assumption - `preload_convex_min` is insufficient). The real work: a convex per-arc
    cost (snaphu-style MAP/smooth) with a solver that tolerates negative reduced costs
    (Bellman-Ford/SPFA potential init + Klein cycle-cancelling, or a cost-scaling MCF).
    With ww's fast machinery this should give **snaphu quality at a fraction of snaphu's
    ~12-min single-tile runtime**, and the tile artifacts vanish (whole-image becomes
    well-posed, so no tiling/multi-shift reconciliation to leave seams).
-2. **Cheap immediate win (ship now):** raise the default tile overlap 64 → ~256 — a strict
+2. **Cheap immediate win (ship now):** raise the default tile overlap 64 → ~256 - a strict
    +24-pt improvement on steep ramps (48→72%), runtime cost is fine. Doesn't fix the
    ceiling but removes the worst of the checkerboard while the cost work lands.
 3. **Validate against tophu** (snaphu/icu/phass uniform harness, `scripts/tophu_compare.py`)
@@ -129,5 +129,5 @@ does snaphu directly; tophu adds ICU + PHASS for free.
 whirlwind is already a fast, phase-aware-linear-cost MCF that **beats PHASS** on
 conncomp count + recall, and is **6–60x faster than snaphu**. The single remaining gap to
 "matches single-tile snaphu, no artifacts" is the **cost shape**: a sound convex cost. The
-tile-block/checkerboard/streak artifacts are not tiling bugs to patch one-by-one — they're
+tile-block/checkerboard/streak artifacts are not tiling bugs to patch one-by-one - they're
 symptoms of the linear cost needing tiling as a crutch. Fix the cost and they disappear.

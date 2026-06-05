@@ -32,7 +32,7 @@
 //! follows the trait default.
 //!
 //! For every dual-graph arc we also expose the *primal* pixel-pair endpoints
-//! (`edge_pixel_pair`) — the two input pixel indices that this triangulation
+//! (`edge_pixel_pair`) - the two input pixel indices that this triangulation
 //! edge connects. That's what downstream code (e.g. spurt PR #97's B_perp
 //! integer-ambiguity fit) needs to plug per-edge models in via
 //! `Network::warm_start`.
@@ -75,7 +75,7 @@ pub struct TriangulatedGraph {
 
 impl TriangulatedGraph {
     /// Build a dual graph from input pixel positions. Coordinates are
-    /// arbitrary 2D points — typically `(row as f64, col as f64)`. Returns
+    /// arbitrary 2D points - typically `(row as f64, col as f64)`. Returns
     /// `None` if the triangulation is degenerate (fewer than 3 unique points
     /// or all collinear).
     pub fn new(points: &[Point]) -> Option<Self> {
@@ -88,7 +88,7 @@ impl TriangulatedGraph {
     /// the fact that MCF here has unit per-arc capacity: a single arc can
     /// carry at most one cycle correction, so an edge whose true phase
     /// gradient exceeds 2π (multi-wrap edge) cannot be balanced by flow.
-    /// Marking such edges as boundary "carves them out" of the interior —
+    /// Marking such edges as boundary "carves them out" of the interior -
     /// MCF avoids them and integration won't cross them (pixels separated
     /// only by long edges come back as NaN).
     ///
@@ -134,7 +134,7 @@ impl TriangulatedGraph {
             let too_long = pixel_dist_sq(pa, pb) > max_len_sq;
 
             if twin == EMPTY {
-                // Pure convex-hull edge — always a boundary edge.
+                // Pure convex-hull edge - always a boundary edge.
                 tail.push((he / 3) as u32);
                 head.push(outer);
                 edge_pixels.push((pa as u32, pb as u32));
@@ -142,7 +142,7 @@ impl TriangulatedGraph {
             } else if too_long {
                 // Long interior edge: emit TWO boundary edges, one per side.
                 // Visit this branch from both half-edges (no `he < twin`
-                // guard) — each emits one boundary edge for its own face.
+                // guard) - each emits one boundary edge for its own face.
                 tail.push((he / 3) as u32);
                 head.push(outer);
                 edge_pixels.push((pa as u32, pb as u32));

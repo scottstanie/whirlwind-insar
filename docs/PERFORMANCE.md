@@ -4,7 +4,7 @@ All numbers below from `cargo run --release --example bench_scale -- --huge`
 on an Apple M-series laptop (12 perf cores, 36 GB RAM).
 
 > **What these numbers are (read first).** The tables below benchmark the
-> shipped default — **single-tile linear MCF** (`unwrap_linear`) — on synthetic
+> shipped default - **single-tile linear MCF** (`unwrap_linear`) - on synthetic
 > scenes. The public `whirlwind.unwrap(igram, corr, nlooks, mask=None)` runs
 > this whole-image, capacity-1 min-cost-flow solver (ww-orig-parity Carballo
 > Lee-1994 cost, adaptive PD→SSP fallback for masked frames), then two fast
@@ -16,7 +16,7 @@ on an Apple M-series laptop (12 perf cores, 36 GB RAM).
 > beats SNAPHU on quality.
 >
 > `tile_size=0` (default) does **not** auto-tile. The **tiled** pipeline
-> (per-tile MCF + coarse anchor + cascade) is **opt-in and not validated** — it
+> (per-tile MCF + coarse anchor + cascade) is **opt-in and not validated** - it
 > fails on most scenes (~65–89 % vs single-tile ~99–100 %) and is selected only
 > by explicit `tile_size>=4`, `multilook>1`, or
 > `WHIRLWIND_UNWRAP_SOLVER=tiled`. Tiling's future role is to reduce **peak
@@ -85,14 +85,14 @@ Two regimes:
 
 In the residue-dense regime, the cost per Dijkstra grows roughly linearly with the
 residue grid (≈ 360 ms / Dijkstra at 2048²), and the number of PD iterations grows
-slowly with residue density (14 → 31 iters going from 10K to 666K residues — about
+slowly with residue density (14 → 31 iters going from 10K to 666K residues - about
 logarithmic).
 
 > **SSP fallback speedup.** The single-source SSP fallback (used to drain any
 > excess the bounded PD phase leaves on masked/fragmented frames) used to redo a
 > full `max_reduced_cost` rescan *per source*; that rescan was eliminated. On a
 > real masked frame this cut the validated D_077 single-tile linear unwrap to
-> **~37 s (was ~61 s)** — a 1.4–2.4x speedup on residue-heavy frames — with a
+> **~37 s (was ~61 s)** - a 1.4–2.4x speedup on residue-heavy frames - with a
 > byte-identical optimal cost and per-component result. (Any "~160 s" figure for
 > D_077 elsewhere is stale.)
 
@@ -126,7 +126,7 @@ noisy to measure a change.
 If a pixel-grid `mask` is passed to `ww.unwrap(igram, corr, nlooks, mask)`,
 `Network::new_with_mask` pre-saturates every arc that crosses an invalid
 pixel-edge so Dijkstra skips that arc. `residue::compute_with_mask` also
-zeros residues whose 2x2 pixel loop touches a masked pixel — otherwise the
+zeros residues whose 2x2 pixel loop touches a masked pixel - otherwise the
 arbitrary-valued masked region (typically `igram=0+0j` after `nan_to_num`)
 produces a wall of spurious residues at the mask boundary that completely
 dominate the MCF problem.
@@ -139,7 +139,7 @@ The combined effect is large for realistic scenes:
 
 (`/tmp/heavy_4k_realistic.npz` in the local repro.)
 
-The 139x isn't really a "mask makes things faster" story — it's that **without
+The 139x isn't really a "mask makes things faster" story - it's that **without
 a mask, the unwrapper does an enormous amount of pointless work on invalid
 pixels** whose phase is just `arctan2(0, 0) = 0`, producing residues at every
 land/water boundary. The mask just tells the algorithm to skip them.
@@ -147,7 +147,7 @@ land/water boundary. The mask just tells the algorithm to skip them.
 Build a `heavy_scene.py`-style synthetic mask: `--mask-kind blobs` (a few
 large gaussian "land" areas, realistic for coastal scenes) or `--mask-kind
 rects` (random rectangles; stress-test, pathologically fragmented). On
-uniform-γ noisy scenes mask doesn't speed things up much — the valid land
+uniform-γ noisy scenes mask doesn't speed things up much - the valid land
 region itself is still dense in real residues. The win is in the realistic
 "clean land + noisy water" regime.
 
@@ -155,7 +155,7 @@ region itself is still dense in real residues. The win is in the realistic
 
 We tried, and the rayon-parallel `Dial` (`run_parallel` in
 `shortest_path/dial.rs`, opt-in via `WHIRLWIND_DIJKSTRA=dial-par`) is **still
-not** faster than the serial version on any size we measured — even after
+not** faster than the serial version on any size we measured - even after
 early-exit was added. Measured on a 4096² uniform-noisy scene:
 
 | backend                 | wall-time | notes                                      |
@@ -174,22 +174,22 @@ The reason:
 
 Phase 2 ends up doing roughly the same amount of work as the serial inner loop,
 so the only thing we parallelize is the *check + propose*, which is cheap to
-begin with (~17 ns per edge). The graph is also nearly memory-bound — each
+begin with (~17 ns per edge). The graph is also nearly memory-bound - each
 relaxation touches `sp.dist[v]`, `sp.pred_*[v]`, two entries of `net.potential`,
 and `net.is_saturated[arc]`. Adding cores doesn't add memory bandwidth
 proportionally, so even the parallel phase doesn't scale linearly.
 
 Where parallelism actually pays off in the primal-dual loop right now:
 
-- **Max-reduced-cost scan** (sets the Dial bucket count) — parallel over arcs.
-- **Potential update** — parallel `par_iter_mut().zip(par_iter())`.
-- **Cost build, residue compute** — already parallel.
+- **Max-reduced-cost scan** (sets the Dial bucket count) - parallel over arcs.
+- **Potential update** - parallel `par_iter_mut().zip(par_iter())`.
+- **Cost build, residue compute** - already parallel.
 
 What *would* help in Dijkstra proper (but is significant work):
 - A true **Δ-stepping** implementation with `AtomicI32` packed `(dist, pred)`
   updates and per-thread bucket queues. Requires bounding `dist` in `i32` (safe
   for grids up to ~6M-arc diameter; the safety check is cheap).
-- A grid-block decomposition with **ghost-cell** exchange between threads —
+- A grid-block decomposition with **ghost-cell** exchange between threads -
   closer to how parallel PDE solvers work. Each thread owns a region and runs
   Dijkstra internally; boundary relaxations propagate via a few rounds of
   inter-thread communication.
@@ -209,7 +209,7 @@ WHIRLWIND_DIJKSTRA=dial-par cargo run --release --example bench_scale -- --huge 
 
 ## Memory model
 
-Analytically — per image of size `m x n` (square assumed for brevity):
+Analytically - per image of size `m x n` (square assumed for brevity):
 
 ```
 working set ≈
@@ -239,7 +239,7 @@ which works out to roughly **115 bytes per pixel** for the working set. The cons
 | 1024x1024 |  118 MiB |                55–72 MiB |
 | 2048x2048 |  472 MiB |               91–289 MiB |
 
-Measured ΔRSS undershoots the analytic estimate because peak-RSS is monotonic — by
+Measured ΔRSS undershoots the analytic estimate because peak-RSS is monotonic - by
 the time the smaller scenes run after the bigger ones, the OS has already pre-allocated
 their footprint. The analytic figure is the right number to budget against.
 
@@ -255,5 +255,5 @@ their footprint. The analytic figure is the right number to budget against.
 | Sentinel-1 IW frame ≈ 25K x 4K |  100 M |            **~11.5 GiB** |
 
 So we hit single-machine RAM limits around full Sentinel-1 frames. Memory does NOT
-shrink with sparse-residue inputs — all the major arrays scale with the grid, not
+shrink with sparse-residue inputs - all the major arrays scale with the grid, not
 with the number of residues.

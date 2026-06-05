@@ -3,9 +3,9 @@
 Demonstrates ``whirlwind.unwrap_sparse`` on a real NISAR-style scene.
 Pipeline:
 
-  1. Load wrapped phase + coherence (produced upstream from the GSLC pair —
+  1. Load wrapped phase + coherence (produced upstream from the GSLC pair -
      see ``GSLC granules`` below).
-  2. Pick the high-coherence subset (γ > ``--gamma-min``, default 0.5) — the
+  2. Pick the high-coherence subset (γ > ``--gamma-min``, default 0.5) - the
      "spurt-style" workflow of unwrapping <10 % of pixels and skipping the
      rest as too noisy to trust.
   3. Subsample (random, fixed seed) to ``--n-points`` pixels for a fast demo.
@@ -14,7 +14,7 @@ Pipeline:
      at moderate-to-high γ; degrades near γ → 0 which we mask out).
   5. Build a Delaunay triangulation, compute residues and per-edge costs,
      run MCF, integrate. ``max_edge_length`` is auto-tuned to 3x the median
-     nearest-neighbour distance — long convex-hull spans are carved out as
+     nearest-neighbour distance - long convex-hull spans are carved out as
      outer-face boundary edges and integration skips them.
   6. Plot wrapped, sampled subset, unwrapped result. Save NPZ for reuse.
 
@@ -23,7 +23,7 @@ GSLC granules (input to interferogram processing)
 
 These two NISAR L2 GSLC granules (HH polarisation, 50 m posting) cover a
 patch over the Long Beach / Catalina / San Clemente region. They are
-distributed via the ASF DAAC NISAR pre-launch / cal-val collection — search
+distributed via the ASF DAAC NISAR pre-launch / cal-val collection - search
 by granule name at ``https://search.asf.alaska.edu/`` once the collection
 is open, or obtain via the NISAR Sample Product Suite from JPL.
 
@@ -57,10 +57,10 @@ How to run
 (Or activate the project venv and run with ``python`` directly.)
 
 Outputs:
-  - ``out/sparse.png``         — 2x2 overview figure
-  - ``out/sparse_zoom.png``    — top-right zoom on the mountain region
-  - ``out/sparse.npz``         — points, wrapped, unwrapped, gamma, mask
-  - ``out/timings.txt``        — wall-clock and basic stats
+  - ``out/sparse.png``         - 2x2 overview figure
+  - ``out/sparse_zoom.png``    - top-right zoom on the mountain region
+  - ``out/sparse.npz``         - points, wrapped, unwrapped, gamma, mask
+  - ``out/timings.txt``        - wall-clock and basic stats
 """
 
 from __future__ import annotations
@@ -144,7 +144,7 @@ def main() -> None:
         f"({100 * n_valid / coh_full.size:.2f}%)"
     )
     if n_valid < 1000:
-        raise SystemExit(f"only {n_valid} valid pixels — γ-min too high?")
+        raise SystemExit(f"only {n_valid} valid pixels - γ-min too high?")
 
     print(f"[2/4] subsampling to {args.n_points} points (seed={args.seed})")
     rng = np.random.default_rng(args.seed)

@@ -6,7 +6,7 @@ Runs (always one job at a time on this laptop, see
   1. SNAPHU PV reference            (~13s)
   2. PV {baseline, hard_cut, phass_cost, phass_full}    (~1-2 s each)
   3. NISAR {baseline, hard_cut, phass_cost, phass_full} (~85 s each)
-  4. analyze.py — tables + plots
+  4. analyze.py - tables + plots
 
 Writes a combined stdout log to <OUT>/run.log.
 """
@@ -60,7 +60,7 @@ def main() -> int:
                 f"[{tag}] {dt:5.1f}s  rc={res.returncode}  | {tail[:120]}", flush=True
             )
             if res.returncode != 0:
-                print(f"[{tag}] FAILED — full stderr above; aborting.", flush=True)
+                print(f"[{tag}] FAILED - full stderr above; aborting.", flush=True)
                 return res.returncode
     print(f"\nlog: {LOG}")
     return 0

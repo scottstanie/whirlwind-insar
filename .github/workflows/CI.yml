@@ -68,7 +68,7 @@ jobs:
 
       # Build + install the extension into the job's Python. `maturin develop`
       # needs a virtualenv (setup-python doesn't provide one); `pip install .`
-      # builds via maturin (PEP 517) straight into the interpreter — no venv.
+      # builds via maturin (PEP 517) straight into the interpreter - no venv.
       # (Debug profile is fine for the correctness tests; release.yml ships wheels.)
       - name: build + install whirlwind
         run: pip install .

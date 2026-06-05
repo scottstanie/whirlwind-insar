@@ -17,8 +17,8 @@
 //!
 //! This is the GNSS / LAMBDA-style trick: trust a spanning subset of "best"
 //! observations, let everything else absorb the integer ambiguities. It is
-//! O(E + D) per pixel — orders of magnitude faster than the per-pixel global
-//! LS — and avoids the symmetric-degeneracy failure where a global LS smears
+//! O(E + D) per pixel - orders of magnitude faster than the per-pixel global
+//! LS - and avoids the symmetric-degeneracy failure where a global LS smears
 //! a single-edge integer error across every edge in a cycle.
 //!
 //! The price: tree edges with unwrapping errors propagate to all dates
@@ -64,7 +64,7 @@ impl CycleBasis {
 /// Build the fundamental cycle basis induced by a spanning tree.
 ///
 /// For each non-tree edge e_nt = (a, b), the unique fundamental cycle is
-/// e_nt followed by the reverse of the tree path from a to b — equivalently,
+/// e_nt followed by the reverse of the tree path from a to b - equivalently,
 /// "go from a to b via the tree, then take e_nt back to close the loop."
 /// The orientation convention here is: traverse each cycle so that summing
 /// signed unwrapped phases around it gives ψ̃(tree-path) − ψ̃(e_nt). A
@@ -223,16 +223,16 @@ pub struct ClosureOutput {
     /// Reference index is identically 0.
     pub date_phases: Array3<f32>,
     /// Per-pixel RMS closure residual after correction, in radians. Shape (m, n).
-    /// Large values indicate noisy / unresolvable pixels — physical non-closure,
+    /// Large values indicate noisy / unresolvable pixels - physical non-closure,
     /// noise, or unwrapping errors that the spanning tree pulled into θ.
     pub closure_rms: Array2<f32>,
 }
 
 /// Closure-correct an unwrapped IG stack.
 ///
-/// * `unw_stack` — baseline unwrapped IGs, shape (E, m, n).
-/// * `graph`    — temporal graph; `edges.len()` must equal E (matched by index).
-/// * `tree_edge_priority` — optional per-edge "quality" score (lower = better);
+/// * `unw_stack` - baseline unwrapped IGs, shape (E, m, n).
+/// * `graph`    - temporal graph; `edges.len()` must equal E (matched by index).
+/// * `tree_edge_priority` - optional per-edge "quality" score (lower = better);
 ///   the spanning tree is built by Prim's algorithm using these as edge weights.
 ///   If `None`, edges are taken in their natural order (which works for many
 ///   short-baseline networks). For phase-linked inputs the right value is the
@@ -269,7 +269,7 @@ pub fn correct(
     // Stripe-based parallel processing: each stripe of STRIPE_H rows is
     // computed in parallel (rayon over rows within the stripe), then scattered
     // into the output arrays serially. This bounds the peak intermediate
-    // memory to STRIPE_H x per_row_bytes instead of m x per_row_bytes — the
+    // memory to STRIPE_H x per_row_bytes instead of m x per_row_bytes - the
     // latter is multi-GB on full scenes and was the cause of severe thrashing.
     const STRIPE_H: usize = 64;
     for stripe_start in (0..m).step_by(STRIPE_H) {
@@ -491,7 +491,7 @@ fn solve_row(
 // Phase linking guarantees that the *wrapped* sum around any temporal cycle
 // is identically zero (wrap respects the algebraic identity). After per-IG
 // 2D unwrapping each IG independently picks an integer ambiguity k_e, so the
-// *unwrapped* cycle sum is exactly 2π · (Σ_e ε_e k_e) — i.e. always an
+// *unwrapped* cycle sum is exactly 2π · (Σ_e ε_e k_e) - i.e. always an
 // integer multiple of 2π, with the integer being the per-cycle unwrap
 // mistake count.
 //
@@ -505,7 +505,7 @@ fn solve_row(
 // This is a heuristic (max |K| over fundamental cycles), not a true
 // Bayesian posterior. A more principled per-pixel posterior would solve
 // a weighted integer LS (LAMBDA / closest-vector-in-lattice) over the
-// full integer-correction vector; deferred — see ATBD-3d §10.5.
+// full integer-correction vector; deferred - see ATBD-3d §10.5.
 
 /// Per-pixel max |K| over fundamental cycles. Returns shape (m, n).
 pub fn quality_max_integer_cycles(
@@ -838,7 +838,7 @@ mod quality_tests {
 // the joint MCF removes it. Here we run a per-pixel greedy minimum-cost flow
 // on the fundamental cycle basis: each cycle with a nonzero integer closure
 // residue routes its correction to the *highest-variance* (noisiest) edge in
-// the cycle — i.e. the edge for which absorbing an integer ambiguity is
+// the cycle - i.e. the edge for which absorbing an integer ambiguity is
 // cheapest under the L2-weighted-flow cost ∑ w_e · k_e² with w_e = 1/σ²_e.
 //
 // This is a heuristic, not provably optimal. But for sparse integer demands
@@ -849,7 +849,7 @@ mod quality_tests {
 pub struct RefineOutput {
     /// Refined unwrapped stack (n_edges, m, n).
     pub corrected: Array3<f32>,
-    /// Total integer corrections (n_edges, m, n) — relative to the *input*
+    /// Total integer corrections (n_edges, m, n) - relative to the *input*
     /// stack (i.e. additive on top of whatever the caller passed in).
     pub corrections: Array3<i16>,
     /// Per-pixel count of cycles still violated after refinement. Should be
@@ -861,15 +861,15 @@ pub struct RefineOutput {
 
 /// Refine an already-unwrapped stack via greedy cycle MCF.
 ///
-/// * `unw_stack`     — starting point, shape (E, m, n). Usually the output of
+/// * `unw_stack`     - starting point, shape (E, m, n). Usually the output of
 ///   [`correct`], but raw per-IG unwraps work too.
-/// * `graph`         — temporal graph, must match `unw_stack`'s edge layout.
-/// * `crlb_per_date` — per-acquisition CRLB σ²_d(p), shape (D, m, n) in rad².
-/// * `tree_edge_priority` — same as in [`correct`]. Used only to pick the
+/// * `graph`         - temporal graph, must match `unw_stack`'s edge layout.
+/// * `crlb_per_date` - per-acquisition CRLB σ²_d(p), shape (D, m, n) in rad².
+/// * `tree_edge_priority` - same as in [`correct`]. Used only to pick the
 ///   spanning tree that defines the cycle basis; the choice of tree does
 ///   not affect convergence as long as it's valid, but a lowest-variance
 ///   tree tends to give a basis where most cycles are already closed.
-/// * `max_iter`      — cap on greedy iterations per pixel. 32 is plenty.
+/// * `max_iter`      - cap on greedy iterations per pixel. 32 is plenty.
 pub fn refine_mcf(
     unw_stack: ArrayView3<f32>,
     graph: &TemporalGraph,
@@ -1210,7 +1210,7 @@ mod tests {
         assert!(out.closure_rms[(0, 0)] < 1e-3);
     }
 
-    /// Cycle-greedy MCF should recover a +1-cycle injection on a TREE edge —
+    /// Cycle-greedy MCF should recover a +1-cycle injection on a TREE edge -
     /// exactly the case the tree-based corrector cannot fix.
     #[test]
     fn mcf_recovers_tree_edge_error() {
@@ -1240,7 +1240,7 @@ mod tests {
             stack[(e, 0, 0)] = psi[e];
         }
         // Construct a CRLB cube where edge 1 (between dates 0 and 2) has the
-        // higher per-date variance — so it's correctly identified as the
+        // higher per-date variance - so it's correctly identified as the
         // noisiest edge to absorb a correction. Reverse the natural priority:
         // dates 0, 2 are noisier so edge 1 is noisiest; dates 1, 3 are quiet.
         let mut crlb = Array3::<f32>::zeros((4, 1, 1));
@@ -1291,7 +1291,7 @@ mod tests {
         let tree = build_spanning_tree(&graph, None);
         let basis = build_cycle_basis(&graph, &tree);
         assert_eq!(basis.num_cycles(), graph.edges.len() - (graph.n_dates - 1));
-        // Each cycle's edges sum to a closed loop — verify by traversing.
+        // Each cycle's edges sum to a closed loop - verify by traversing.
         // We just check each cycle has at least 3 edges (triangle minimum).
         for c in 0..basis.num_cycles() {
             assert!(basis.cycle(c).len() >= 3);
@@ -1306,12 +1306,12 @@ mod tests {
         let graph = TemporalGraph::new(
             4,
             vec![
-                Edge { from: 0, to: 1 }, // edge 0  — cheap
-                Edge { from: 0, to: 2 }, // edge 1  — expensive
-                Edge { from: 0, to: 3 }, // edge 2  — expensive
-                Edge { from: 1, to: 2 }, // edge 3  — cheap
-                Edge { from: 1, to: 3 }, // edge 4  — expensive
-                Edge { from: 2, to: 3 }, // edge 5  — cheap
+                Edge { from: 0, to: 1 }, // edge 0  - cheap
+                Edge { from: 0, to: 2 }, // edge 1  - expensive
+                Edge { from: 0, to: 3 }, // edge 2  - expensive
+                Edge { from: 1, to: 2 }, // edge 3  - cheap
+                Edge { from: 1, to: 3 }, // edge 4  - expensive
+                Edge { from: 2, to: 3 }, // edge 5  - cheap
             ],
             0,
         );

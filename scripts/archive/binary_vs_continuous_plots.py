@@ -3,16 +3,16 @@
 Reads the per-variant outputs written by ``binary_vs_continuous_pv.py`` and
 produces three artifacts in the same output directory:
 
-1. ``coverage.png``    — temp_coh map + per-variant "where did we get a
+1. ``coverage.png``    - temp_coh map + per-variant "where did we get a
                           finite unwrapped value" coverage masks. Frames
                           the data-loss story.
-2. ``per_ig_triptych.png`` — a representative IG: continuous | binary
+2. ``per_ig_triptych.png`` - a representative IG: continuous | binary
                               variant unwrapped phases side by side, with
                               the temp_coh map and chosen IG metadata.
-3. ``timeseries.png``  — hand-picked pixels (high-coh, low-coh, near-
+3. ``timeseries.png``  - hand-picked pixels (high-coh, low-coh, near-
                           threshold-boundary, near-reference): per-variant
                           date-phase time series.
-4. ``aggregate.json``  — % coverage, RMS cycle differences between
+4. ``aggregate.json``  - % coverage, RMS cycle differences between
                           variants over the common-finite mask, runtimes
                           (where available).
 

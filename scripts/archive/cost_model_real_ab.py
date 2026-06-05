@@ -1,8 +1,8 @@
 """Cost-model A/B on a real NISAR GUNW: linear vs reuse vs convex.
 
 This is the real-scene validation flagged in ``paper/pyramid_aliasing.md``: does
-the better default cost (reuse / convex) keep its synthetic advantage — fixing
-the linear cost's corner/boundary mis-routing without a speed penalty — on a
+the better default cost (reuse / convex) keep its synthetic advantage - fixing
+the linear cost's corner/boundary mis-routing without a speed penalty - on a
 real interferogram?
 
 It can't run in the sandbox (Earthdata/ASF are network-blocked and no creds),
@@ -69,7 +69,9 @@ def main():
     ap.add_argument("--local-h5", type=Path, required=True)
     ap.add_argument("--pol", default="HH")
     ap.add_argument("--nlooks", type=float, default=16.0)
-    ap.add_argument("--crop", type=int, default=0, help="Center-crop to crop x crop (0 = full).")
+    ap.add_argument(
+        "--crop", type=int, default=0, help="Center-crop to crop x crop (0 = full)."
+    )
     args = ap.parse_args()
 
     prod, coh, mask = load_gunw(args.local_h5, args.pol)
@@ -99,7 +101,9 @@ def main():
         dt = time.perf_counter() - t
         ka = k_agree(unw, prod, valid)
         base = base or dt
-        print(f"  {name:7s} K-agree-vs-production={ka * 100:5.1f}%  {dt * 1000:8.1f}ms ({dt / base:.2f}x)")
+        print(
+            f"  {name:7s} K-agree-vs-production={ka * 100:5.1f}%  {dt * 1000:8.1f}ms ({dt / base:.2f}x)"
+        )
 
 
 if __name__ == "__main__":

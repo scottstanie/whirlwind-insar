@@ -9,12 +9,12 @@ which leads we *haven't* fully exhausted, so the search continues
 forward rather than in circles.
 
 The two longer-form companion writeups are:
-* `paper/phass_experiments.md` — PHASS-style cost-shape experiments,
+* `paper/phass_experiments.md` - PHASS-style cost-shape experiments,
   the reuse prototype, hard-cut tests, and the path-dependence ruling-out
   experiment that pointed us at convex cost.
-* `paper/convex_cost_design.md` — the SNAPHU-style convex prototype
+* `paper/convex_cost_design.md` - the SNAPHU-style convex prototype
   design plan and first-run results.
-* **`paper/tiling.md`** — the **tiled coherence unwrap** (now the
+* **`paper/tiling.md`** - the **tiled coherence unwrap** (now the
   fast/low-memory no-Goldstein path, NISAR 96.6 % in 3.5 s), plus
   source-verified *corrections* to the convex/reuse/unit-capacity
   conclusions below, and the corrected Atlanta status. **Read this first
@@ -36,10 +36,10 @@ tables (trilinear, `cost/spline_lut.rs`, `WHIRLWIND_CARBALLO_LUT_DIR` override)
 **158 s / 99.49 %** vs SNAPHU **588 s / 99.30 %** (PHASS 19.6 s / 94.7 %). Peak
 RSS **6.4 GB**. Merged: PR #66 (parity), #67 (LUT override + buffer reuse).
 
-**Red herrings — do NOT re-run / re-conclude these:**
+**Red herrings - do NOT re-run / re-conclude these:**
 
 1. **"Single-tile is slow because it swaps / OOMs." FALSE.** `/usr/bin/time -l`
-   on the 6.4 GB D_077 run reported **0 swaps, 565 page faults** — it does not
+   on the 6.4 GB D_077 run reported **0 swaps, 565 page faults** - it does not
    swap. A 1472 s wall-time was misread as swap twice; it was (a) CPU contention
    from running `cargo`/`maturin` *concurrently* with the measurement (starved
    rayon → ~1.4x parallelism instead of ~13x), and (b) the SSP algorithm (below).
@@ -58,11 +58,11 @@ RSS **6.4 GB**. Merged: PR #66 (parity), #67 (LUT override + buffer reuse).
    SSP. (Our PD under-routes vs Python's per-iteration; SSP makes up the rest.)
    A `run_full_dijkstra_no_ssp` variant was added and then reverted as useless.
 
-4. **"The single-source SSP rewrite was a perf regression — revert it globally."
+4. **"The single-source SSP rewrite was a perf regression - revert it globally."
    WRONG (this was the biggest circle).** The two SSP algorithms have *opposite*
    tradeoffs by scenario:
    * old **multi-source** `ssp::run`: fast on tiled many-small-leftover
-     (A_016 1.7 s) but **catastrophic on whole-image** (D_077 1472 s — a
+     (A_016 1.7 s) but **catastrophic on whole-image** (D_077 1472 s - a
      near-whole-image Dijkstra *per single unit*);
    * new **single-source** SSP: fast on whole-image (D_077 158 s) but slow on
      tiled (A_016 145 s).
@@ -73,42 +73,42 @@ RSS **6.4 GB**. Merged: PR #66 (parity), #67 (LUT override + buffer reuse).
 tiled/default) path; `ssp::run_single_source` added and used only by
 `run_full_dijkstra` (single-tile). Restored D_077 to **≈162 s / 99.49 %**
 (from ≈1472 s), 0 swaps, 6.6 GB. Acceptance bar met: convex + tiled tests
-unchanged (tiled path byte-identical — only the full-completion fall-through
-branches), and `debug_assert!(rc ≥ 0)` **on, no clamp** never fires — guarded by
+unchanged (tiled path byte-identical - only the full-completion fall-through
+branches), and `debug_assert!(rc ≥ 0)` **on, no clamp** never fires - guarded by
 the debug test `single_source_ssp_keeps_nonnegative_reduced_costs` (steep noisy
 ramp that reaches the SSP fallback). The correctness key (the trap behind the
 earlier clamp): the per-source potential update caps unpopped nodes at the sink
-distance — valid because any unpopped node has `dist ≥ d_sink` by Dijkstra pop
-order — so updating popped nodes only preserves the invariant across iterations.
+distance - valid because any unpopped node has `dist ≥ d_sink` by Dijkstra pop
+order - so updating popped nodes only preserves the invariant across iterations.
 Also fixed the stale "single-source" module doc on the multi-source `ssp::run`.
 
 **Also note:** `ssp.rs` module doc-comment still says "single-source" but the
-code is multi-source-seeded (`dijkstra_multi_source_into`) + one augmentation —
+code is multi-source-seeded (`dijkstra_multi_source_into`) + one augmentation -
 fix that comment as part of the dual-SSP work.
 
-## tl;dr — what works today, α=0 (no Goldstein)
+## tl;dr - what works today, α=0 (no Goldstein)
 
 | function                  | mechanism                                             |  PV K-match | NISAR K-match | wall (NISAR) |
 | ------------------------- | ----------------------------------------------------- | ----------: | ------------: | -----------: |
 | `unwrap`                  | linear coherence, unit-capacity MCF                   |     90.67 % |       80.01 % |         75 s |
-| **`unwrap` tiled ts=512** | per-tile MCF + consensus 2π stitch                    |           — |    **96.6 %** |    **3.5 s** |
+| **`unwrap` tiled ts=512** | per-tile MCF + consensus 2π stitch                    |           - |    **96.6 %** |    **3.5 s** |
 | **`unwrap_reuse`**        | linear coh + PHASS-style flow reuse                   | **99.75 %** |   **92.70 %** |         93 s |
-| `unwrap_convex`           | SNAPHU-style quadratic cost (BUGGY — see `tiling.md`) |     99.80 % |       68.80 % |        409 s |
+| `unwrap_convex`           | SNAPHU-style quadratic cost (BUGGY - see `tiling.md`) |     99.80 % |       68.80 % |        409 s |
 
 **Update (session 2): the tiled path (`unwrap(..., tile_size=512,
 tile_overlap=64)`) is the new fast/low-memory no-Goldstein winner and
 *beats* whole-image. The `unwrap_convex` 68.8 % is an unsound-solver
 artifact, not a verdict on convex cost; the convex `offset` is also the
 wrong quantity. See `paper/tiling.md` for the full corrected picture.**
-| `unwrap_grounded`         | linear coh + virtual-ground node         | (bad on real data — specialized) | — | — |
-| `unwrap_crlb_*`           | CRLB-variance cost variants              | (designed for phase-linked stacks) | — | — |
+| `unwrap_grounded`         | linear coh + virtual-ground node         | (bad on real data - specialized) | - | - |
+| `unwrap_crlb_*`           | CRLB-variance cost variants              | (designed for phase-linked stacks) | - | - |
 
 References (same NISAR scene):
 * SNAPHU 9x9 tiled: K-match definition, ~17 min wall.
 * `dolphin --unwrap-method PHASS`: 97.93 % K-match, ~60 s, no Goldstein.
 * whirlwind `unwrap` + `--goldstein-alpha 0.7`: **99.90 %**, **38 s**.
 
-**The production answer remains Goldstein α=0.7** — empirically the
+**The production answer remains Goldstein α=0.7** - empirically the
 fastest path to SNAPHU-quality unwraps. The work documented below is
 the research effort to get there *without* Goldstein.
 
@@ -124,7 +124,7 @@ false and short-circuit out in the existing default paths.
 
 The original production path (Carballo cost + Goldstein α=0.7 + Dial
 bucket-queue Dijkstra + unit-capacity MCF) still clocks **38 s on
-NISAR for 99.90 % K-match** — unchanged from PR #19.
+NISAR for 99.90 % K-match** - unchanged from PR #19.
 
 Per-prototype wall times (NISAR 6811x6912, 25M valid px):
 
@@ -139,7 +139,7 @@ The convex prototype is the only one with notable slowdown. Two
 contributing factors:
 * Convex cost lives on much wider integer range (max marginal ≈
   10⁷ vs ~300 for Carballo). The Dial bucket-queue Dijkstra needs
-  `K+1` buckets where K = max reduced cost — physically impossible
+  `K+1` buckets where K = max reduced cost - physically impossible
   at convex magnitudes. The `shortest_path::dijkstra_multi_source`
   dispatcher therefore forces convex networks to the binary-heap
   backend, which is O(E log V) vs Dial's O(V + E + K) and slower
@@ -168,7 +168,7 @@ in 2026-05 PHASS experiments. None close the no-Goldstein gap on NISAR:
 * **PHASS γ² (flat-clamp)** (`WHIRLWIND_PHASS_COST`). Symmetric in
   arc direction → degenerate tie-breaking in our LP. NISAR 67.45 %.
 * **Faithful PHASS γ²·100 + 255-cliff** (`WHIRLWIND_PHASS_FAITHFUL_GOOD_CORR`).
-  Pathological — PV killed at >13 min vs 0.7 s baseline. Even with reuse
+  Pathological - PV killed at >13 min vs 0.7 s baseline. Even with reuse
   the 255-cliff overwhelms Dial / heap. *Confirmed not solver-recoverable
   in our architecture.*
 
@@ -176,7 +176,7 @@ in 2026-05 PHASS experiments. None close the no-Goldstein gap on NISAR:
 
 After the reuse prototype landed at 92.7 % on NISAR, the suspicion was
 that the residual 5 pp gap to dolphin PHASS was a *path-dependence*
-artifact — reuse locks in a wrong "highway." Tested three Dijkstra
+artifact - reuse locks in a wrong "highway." Tested three Dijkstra
 backends with materially different tie-breaking (serial Dial / parallel
 Dial / binary heap). Results identical to 0.005 %. **Not path-order.**
 The reuse 92.7 % solution is the genuine cost-optimum of the linear
@@ -198,7 +198,7 @@ plausible knobs tested, none move it:
 The diagnostic also showed NISAR's max offset is 22 (vs ±50 saturation
 point) even with raw gradients, because the 7x7 box smoothing or the
 nshortcycle=100 scaling doesn't capture wrap-line geometry on this scene.
-But the *answer* doesn't depend on this — so it's not the cause of the
+But the *answer* doesn't depend on this - so it's not the cause of the
 regression.
 
 ## What's actually still open
@@ -285,9 +285,9 @@ Not yet started:
 
 Comparison panels saved under
 `/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/phass_experiments/plots/`:
-* `nisar_reuse_panel.png` — SNAPHU / baseline / reuse K-fields + Δ K.
-* `pv_reuse_panel.png` — same for PV.
-* `nisar_convex_panel.png` — adds the convex variant to the NISAR comparison.
+* `nisar_reuse_panel.png` - SNAPHU / baseline / reuse K-fields + Δ K.
+* `pv_reuse_panel.png` - same for PV.
+* `nisar_convex_panel.png` - adds the convex variant to the NISAR comparison.
 * (Atlanta plot to be added once runs complete.)
 
 ## Decision rule for the next round of investigation

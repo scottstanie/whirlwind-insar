@@ -5,7 +5,7 @@
 //! NISAR scale, lands far above the convex optimum: it places ~all flow in a
 //! few iterations at one stale Dijkstra snapshot's marginals, and nothing
 //! re-optimizes the result (the SSP fallback only drains residual excess). The
-//! converged flow then still admits negative-reduced-cost residual cycles —
+//! converged flow then still admits negative-reduced-cost residual cycles -
 //! and by the negative-cycle optimality theorem, a feasible flow is optimal
 //! iff its residual graph has none.
 //!
@@ -17,7 +17,7 @@
 //! (marginal non-decreasing in flow), the same cycle's marginal sum rises after
 //! a push, so the process converges to the optimum (no negative cycle).
 //!
-//! Used as a POLISH on the fast feasible flow — the cheaper the warm-start
+//! Used as a POLISH on the fast feasible flow - the cheaper the warm-start
 //! (e.g. a tiled "mostly right" solve), the fewer cycles remain to cancel.
 
 use crate::network::Network;

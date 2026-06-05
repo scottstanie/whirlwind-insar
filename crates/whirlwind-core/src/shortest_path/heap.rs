@@ -36,7 +36,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
         sp.source[s] = s as i32;
-        // sources have no predecessor — pred_arc stays -1, pred_node stays -1
+        // sources have no predecessor - pred_arc stays -1, pred_node stays -1
         heap.push(Reverse((0, s)));
     }
     if sinks_left == 0 {

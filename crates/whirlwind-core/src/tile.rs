@@ -4,7 +4,7 @@
 //!
 //! Why this matches non-tiled output in coherent regions: per-tile MCF picks
 //! its own integer ambiguity for the wrap-line endpoints, but the overlap
-//! between two adjacent tiles is the same patch of phase data — if both
+//! between two adjacent tiles is the same patch of phase data - if both
 //! tiles unwrapped it well, the per-pixel difference is exactly an integer
 //! multiple of 2π (per-IG global offset between the two tiles). Taking the
 //! CRLB-weighted median of that difference and rounding to a 2π multiple
@@ -12,7 +12,7 @@
 //!
 //! Failure mode: in overlap regions that are heavily decorrelated, both
 //! tiles' per-IG unwrap is unreliable, the per-pixel difference is noisy,
-//! and the median may snap to the wrong 2π multiple. Acceptable per spec —
+//! and the median may snap to the wrong 2π multiple. Acceptable per spec -
 //! those pixels aren't trustworthy in either tiled or non-tiled output.
 
 use crate::UnwrapError;
@@ -114,8 +114,8 @@ impl TileGrid {
 }
 
 /// Cost-agnostic back-half of the tiled pipeline. Given per-tile unwraps and a
-/// per-pixel CONFIDENCE map `conf` — sample coherence for the Carballo path, a
-/// variance-derived pseudo-coherence for the CRLB path — reconcile per-tile 2π
+/// per-pixel CONFIDENCE map `conf` - sample coherence for the Carballo path, a
+/// variance-derived pseudo-coherence for the CRLB path - reconcile per-tile 2π
 /// offsets (global MCF), feather-composite, pin regional cycle levels with a
 /// global coarse anchor + multi-scale cascade, and heal thin slivers. `igram`
 /// is used only to build the coarse anchor. Shared by [`unwrap_tiled`] and
@@ -405,7 +405,7 @@ pub fn unwrap_tiled(
     }
     if tile_size >= m && tile_size >= n {
         // Single whole-image solve. Honor WHIRLWIND_TILE_SOLVER like the tiled
-        // path does (default reuse; convex enables the cost-model experiment —
+        // path does (default reuse; convex enables the cost-model experiment -
         // a SNAPHU-style convex cost should make the whole-image solve well-posed
         // where the linear/reuse cost runs away).
         return match tile_solver() {
@@ -449,7 +449,7 @@ const COH_CUT_THR: f32 = 0.7;
 /// Coherent-cut rate (coherence-weighted cuts per valid pixel) above which the
 /// gated multi-shift re-solve fires. Empirically the fragmented GUNW A_016 sits
 /// at ≈6.7e-3 while every clean / noisy-but-fine scene (NISAR, Atlanta, the four
-/// clean GUNW frames) is ≤5.6e-4 — a >3x margin on each side.
+/// clean GUNW frames) is ≤5.6e-4 - a >3x margin on each side.
 const COH_CUT_FLOOR: f64 = 1.5e-3;
 
 #[inline]
@@ -511,12 +511,12 @@ fn coherent_cut_rate(
     }
 }
 
-/// Gated multi-shift tiled unwrap — the default for large frames.
+/// Gated multi-shift tiled unwrap - the default for large frames.
 ///
 /// Runs the standard tile grid. A correct unwrap never tears coherent terrain, so
-/// if the result has a high `coherent_cut_rate` (> [`COH_CUT_FLOOR`]) — the
+/// if the result has a high `coherent_cut_rate` (> [`COH_CUT_FLOOR`]) - the
 /// signature of a tile-SEAM artifact or a wrong global WINDING on a fragmented
-/// scene (e.g. NISAR GUNW A_016, a decorrelation-split frame) — it re-runs on tile
+/// scene (e.g. NISAR GUNW A_016, a decorrelation-split frame) - it re-runs on tile
 /// grids shifted by fractions of the tile step (a seam in one grid is interior in
 /// another) and returns the result with the FEWEST coherent cuts. The shift is
 /// realised by zero-padding the top-left by `s` (those pixels are masked out), so
@@ -610,7 +610,7 @@ pub fn unwrap_tiled_robust(
 
 /// Pseudo-coherence in `[0, 1]` from CRLB phase variance σ² (rad²), via the
 /// single-look interferometric Cramér–Rao bound inverted: γ ≈ 1/√(1 + 2σ²).
-/// Used ONLY as the confidence weight for the coherent-cut gate below — never
+/// Used ONLY as the confidence weight for the coherent-cut gate below - never
 /// as a cost. Non-finite / negative variance → 0 (no confidence).
 fn pseudo_coh_from_variance(variance: ArrayView2<f32>) -> Array2<f32> {
     variance.mapv(|v| {
@@ -808,7 +808,7 @@ fn modal_i64(vals: &[i64]) -> i64 {
 /// integer cycle (e.g. a land corner of a water-dominated tile the seam reconcile
 /// mis-leveled). For each large cluster of high-coherence cuts, re-unwrap a window
 /// around it SEAM-FREE (`unwrap_reuse`), align it to the current field, and snap
-/// only the LARGEST connected single-integer disagreement — and only if that
+/// only the LARGEST connected single-integer disagreement - and only if that
 /// strictly reduces the window's high-coherence-cut count (monotonic; can't
 /// regress). Leaves genuinely-ambiguous low-coherence islands alone (their cuts
 /// are low-coherence, not clusters). No-op on clean scenes.
@@ -947,7 +947,7 @@ fn seam_repair(
 
 /// A tiny successive-shortest-path min-cost-flow. Uses SPFA (Bellman-Ford
 /// queue) for the shortest-path step so it tolerates the negative residual-arc
-/// costs without maintaining potentials — fine because the tile graph is
+/// costs without maintaining potentials - fine because the tile graph is
 /// small. Arcs are stored in forward/reverse pairs: arc `e` and `e ^ 1`.
 struct Mcf {
     head: Vec<i32>,
@@ -1035,7 +1035,7 @@ impl Mcf {
                 }
             }
             if sink == usize::MAX {
-                break; // unbalanced — shouldn't happen (Σ supply == 0, connected)
+                break; // unbalanced - shouldn't happen (Σ supply == 0, connected)
             }
             let mut f = sup[src].min(-sup[sink]);
             let mut v = sink;
@@ -1062,7 +1062,7 @@ impl Mcf {
 /// solved as a residue min-cost-flow on the planar dual of the tile grid
 /// (SNAPHU's `AssembleTiles` secondary network at tile scale). Unlike the
 /// per-tile/region heuristics, this **can break a satisfied seam** when that
-/// lowers the total weighted seam cost — the property needed to flip a
+/// lowers the total weighted seam cost - the property needed to flip a
 /// coherent wrong island in a low-coherence patch.
 ///
 /// * `gh[gr*(cols-1)+gc]` = measured `o[gr][gc+1] − o[gr][gc]`, confidence `wh`.
@@ -1169,27 +1169,27 @@ fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
 /// showing as a rectangular block bounded by a 2π discontinuity *ring*).
 ///
 /// Per-pixel jump detection fragments under phase noise, so we coarsen `unw`
-/// by `f`x (block mean over valid pixels — noise averages out, large-scale
+/// by `f`x (block mean over valid pixels - noise averages out, large-scale
 /// offsets survive), group coarse pixels into regions by no-jump connectivity,
 /// then shift each region by the integer that zeroes its **coherence-weighted**
 /// boundary jumps (high-coherence rings are expensive → flipped away;
 /// legitimate low-coherence cuts are cheap → kept). The per-region integer
 /// offset (x 2π) is added back to the full-resolution `unw` in place.
 /// Build a globally-consistent coarse "anchor" unwrap to pin per-region cycle
-/// levels to. Multilook the COMPLEX igram by `lk`x (coherent down-look — never
+/// levels to. Multilook the COMPLEX igram by `lk`x (coherent down-look - never
 /// average wrapped phase, which is meaningless across 2π), unwrap the tiny
 /// coarse image in ONE whole-image solve (no tiles ⇒ no seams ⇒ one
 /// self-consistent surface), and block-replicate it back to full resolution.
 ///
 /// Down-looking by `lk` multiplies the effective looks by `lk²`, so coarse
-/// coherence is far higher than the full-res input — the coarse solve is
+/// coherence is far higher than the full-res input - the coarse solve is
 /// reliable and free of the long-distance runaway that corrupts a full-res
 /// whole-image solve. The anchor is consumed only to choose each region's
 /// INTEGER 2π level (via a coherence-weighted mode over the whole region), so a
 /// sub-cycle smoothing error in the anchor does not propagate, and a local
 /// anchor error is outvoted by the rest of its region.
 /// Coherent x`lk` down-look of the complex igram: unit-phasor block mean (the
-/// physically-correct coherent average — never average wrapped phase across
+/// physically-correct coherent average - never average wrapped phase across
 /// 2π), block-mean coherence, and validity = a majority of the block valid.
 /// Suppresses noise and re-estimates phase; effective looks scale by `lk²`.
 pub(crate) fn multilook_complex(
@@ -1252,11 +1252,11 @@ fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Arr
 /// image MCF solve "runs away" once the domain exceeds ~256 px (the per-arc cost
 /// optimum drifts to a wrong large-scale winding; see
 /// `paper/why_whole_image_runs_away.md`). The historical hardcoded `lk = 8` left
-/// the coarse solve at e.g. 522 px on a 4176-px NISAR frame — so the *anchor
+/// the coarse solve at e.g. 522 px on a 4176-px NISAR frame - so the *anchor
 /// itself ran away* (D_077 tiled: 48 → 63 % once the coarse image is pushed
 /// below ~256 px). We therefore size `lk` so the coarse image lands just under
 /// ~256 px: large enough that the coarse solve doesn't run away, but no coarser
-/// — over-multilooking smooths away real winding and regresses gentler frames
+/// - over-multilooking smooths away real winding and regresses gentler frames
 /// (A_030 held at lk≤16 / coarse≥266 px but lost 2.6 pts by lk=20 / coarse
 /// 213 px in the 13-frame sweep). Floor at 8 (the historical value) for small
 /// frames where the whole-image solve is already well-posed.
@@ -1313,14 +1313,14 @@ fn compute_coarse_anchor(
 /// For each `lk_coarse`-sized cell of the image: if ALL `lk_fine` sub-cells
 /// within it agree with the `lk_coarse` value to within one integer cycle, the
 /// fine anchor is used (better resolution). If any sub-cell disagrees, the fine
-/// anchor has a runaway sign there — the entire coarse cell is overwritten with
+/// anchor has a runaway sign there - the entire coarse cell is overwritten with
 /// the more-reliable `lk_coarse` value.
 ///
-/// Why this works: at lk_fine=16 NISAR frames produce a ~262px coarse image —
+/// Why this works: at lk_fine=16 NISAR frames produce a ~262px coarse image -
 /// right at the runaway edge (~256px). Runaway shows up as an integer-cycle
 /// disagreement vs the lk_coarse=32 anchor (~131px, safely below threshold).
 /// In frames without runaway (gentle A-frames) both anchors agree everywhere
-/// and the fine anchor is returned unchanged — no regression.
+/// and the fine anchor is returned unchanged - no regression.
 fn compute_dual_anchor(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -1456,7 +1456,7 @@ fn coarse_refine(
         // largest-region vote (below) cannot reach (their boundary edges
         // carry near-zero coherence weight). We take the coherence-weighted
         // MODE of round((anchor − unw)/2π) over each whole region, so a local
-        // sub-region anchor error is outvoted — only the region's dominant
+        // sub-region anchor error is outvoted - only the region's dominant
         // (correct) integer survives.
         let mut canchor = vec![0_f64; mh * mw];
         let mut cavalid = vec![false; mh * mw];
@@ -1597,14 +1597,14 @@ fn coarse_refine(
 /// (≤ `max_w` px wide) run of pixels unwrapped a constant nonzero integer
 /// number of cycles off from a coherent surround that AGREES on both sides.
 ///
-/// These are tie-break artifacts — a spurious branch cut the unit-capacity MCF
+/// These are tie-break artifacts - a spurious branch cut the unit-capacity MCF
 /// laid down in moderate-coherence noise (e.g. NISAR col 4032, a 2-px −1 sliver
 /// over ~420 rows on coh≈0.65 where SNAPHU is flat). They are NOT a cost-shape
 /// problem (present under both the linear and convex costs), so no per-arc cost
 /// removes them; a bounded integer-consistency cleanup is the right tool.
 ///
 /// A run is snapped iff the coherent pixel just past EACH end sits the SAME
-/// nonzero integer `c` cycles above the run (`cL == cR == c ≠ 0`) — i.e. the
+/// nonzero integer `c` cycles above the run (`cL == cR == c ≠ 0`) - i.e. the
 /// run is a thin island `c` cycles below an otherwise-continuous surround. That
 /// cannot hold across a real fringe (its two sides sit at different levels), so
 /// genuine signal is untouched; and a real ≤`max_w`-px feature a full cycle off
@@ -1643,7 +1643,7 @@ fn heal_thin_slivers(
                 let cl = ((unw[(i, j - 1)] - unw[(i, j)]) / TAU).round() as i64;
                 if cl == 0 {
                     j += 1;
-                    continue; // left neighbour is same level — not a left edge
+                    continue; // left neighbour is same level - not a left edge
                 }
                 let base = unw[(i, j)];
                 let mut e = j; // extend the same-level run rightward, bounded by max_w
@@ -1729,7 +1729,7 @@ enum TileSolver {
 /// The old `linear` unit-capacity solver was removed in #50: it had the
 /// capacity-1 boundary-stacking bug on steep clean ramps (12.6 rad error vs
 /// reuse's 0.0) AND ~6x more single-cycle errors than reuse on real scenes
-/// (NISAR 99.86% vs 99.97%), for only a speed win — not worth an ever-artifacty
+/// (NISAR 99.86% vs 99.97%), for only a speed win - not worth an ever-artifacty
 /// solver. Reuse (PHASS flow-reuse) is the corner-safe default; convex is
 /// research-only.
 fn tile_solver() -> TileSolver {
@@ -1792,7 +1792,7 @@ fn unwrap_one_tile_coh(
 /// Uses the weighted **mode of per-pixel rounded offsets** rather than the
 /// median of continuous diffs: when a wrap line crosses the overlap the two
 /// tiles disagree on one side, and the continuous median can land between two
-/// integers and round the wrong way — the mode robustly picks the integer the
+/// integers and round the wrong way - the mode robustly picks the integer the
 /// majority (by coherence weight) of overlap pixels agree on. The confidence
 /// (winning-bin weight) lets the caller stitch high-agreement seams first.
 fn stitching_offset_coh(
@@ -1900,7 +1900,7 @@ mod tests {
         // But 72 < 96, weird. Let me re-derive.
         // axis_starts(200, 128, 96): start=[0]. last=0, next=96, 96+128=224 ≥ 200,
         // so push 200-128=72, return. → [0, 72]. Yes that's the behaviour.
-        // (72 < 96 is fine — last tile's start moves to overlap more, not less.)
+        // (72 < 96 is fine - last tile's start moves to overlap more, not less.)
         let starts = axis_starts(200, 128, 96);
         assert_eq!(starts, vec![0, 72]);
     }
@@ -1978,7 +1978,7 @@ mod tests {
         // One vertical and one (row-0) horizontal seam are corrupted with LOW
         // confidence; every other seam is high confidence. The min-cost flow
         // must correct the two cheap seams (not reroute through the expensive
-        // ones), recovering the planted ramp — the property a region-flip
+        // ones), recovering the planted ramp - the property a region-flip
         // heuristic cannot guarantee.
         let (rows, cols) = (4usize, 5usize);
         let truth: Vec<i64> = (0..rows * cols)
@@ -2070,7 +2070,7 @@ mod tests {
                 0.9
             }
         });
-        // A correct anchor (= truth) — the global coarse solve's role.
+        // A correct anchor (= truth) - the global coarse solve's role.
         let anchor = truth.clone();
         coarse_refine(
             &mut unw,
@@ -2193,7 +2193,7 @@ mod tests {
     #[test]
     fn tiled_unwrap_matches_single_tile_on_smooth_input() {
         use ndarray::Array2;
-        // Smooth phase ramp that has no wraps — non-tiled unwrap is trivial,
+        // Smooth phase ramp that has no wraps - non-tiled unwrap is trivial,
         // tiled unwrap should also produce a smooth field.
         let m = 64;
         let n = 64;
@@ -2247,7 +2247,7 @@ mod tests {
         );
 
         // Inject a spurious +1 cycle "island" across coherent terrain (a branch-cut
-        // loop) — the coherent-cut rate must jump well above the gate floor.
+        // loop) - the coherent-cut rate must jump well above the gate floor.
         let mut torn = truth.clone();
         for i in 20..40 {
             for j in 20..40 {
@@ -2310,8 +2310,8 @@ mod tests {
     fn unwrap_crlb_reuse_fixes_steep_ramp_corners() {
         use ndarray::Array2;
         // Clean ~6π steep ramp: the plain unit-capacity CRLB solver mis-routes
-        // the corners (capacity-1 stacking); the corner-safe reuse variant —
-        // now the default CRLB path — recovers it exactly.
+        // the corners (capacity-1 stacking); the corner-safe reuse variant -
+        // now the default CRLB path - recovers it exactly.
         let (m, n) = (64, 64);
         let truth: Array2<f32> =
             Array2::from_shape_fn((m, n), |(i, j)| 0.3 * (i as f32 + j as f32));

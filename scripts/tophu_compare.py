@@ -3,7 +3,7 @@
 (single-tile, the isce3/NISAR algorithms behind a common API) on NISAR GUNW
 frames and score per-connected-component ambiguity match vs the production GUNW
 unwrap + runtime + conncomp count. Complements scripts/snaphu_nisar_compare.py
-(snaphu-py direct) and the whirlwind bench — together they give a 4-way
+(snaphu-py direct) and the whirlwind bench - together they give a 4-way
 whirlwind-vs-snaphu-vs-phass-vs-icu comparison.
 
 Run in an env that has tophu + isce3 (NOT the whirlwind .venv):
@@ -15,6 +15,7 @@ PhassUnwrap(good_coherence=0.7, min_region_size=200), ICUUnwrap(...). Each is
 called cb(igram, coherence, nlooks, scratchdir) -> (unwrapped, conncomp); there
 is no mask arg, so masked (water) pixels are passed with coherence = 0.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,7 +36,11 @@ def wrap_phase(x):
 def gunw_layers(h5, pol=None):
     base = "/science/LSAR/GUNW/grids/frequencyA/unwrappedInterferogram"
     grp = h5[base]
-    pols = [k for k, v in grp.items() if isinstance(v, h5py.Group) and k.upper() not in ("MASK", "METADATA")]
+    pols = [
+        k
+        for k, v in grp.items()
+        if isinstance(v, h5py.Group) and k.upper() not in ("MASK", "METADATA")
+    ]
     p = pol or sorted(pols)[0]
     prod_unw = h5[f"{base}/{p}/unwrappedPhase"][()].astype(np.float32)
     coh = h5[f"{base}/{p}/coherenceMagnitude"][()].astype(np.float32)
@@ -66,9 +71,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--local-h5", nargs="+", type=Path, required=True)
     ap.add_argument("--nlooks", type=float, default=16.0)
-    ap.add_argument("--unwrappers", nargs="+", default=["snaphu", "phass", "icu"],
-                    choices=["snaphu", "phass", "icu"])
-    ap.add_argument("--save-dir", default=None, help="save each unwrapper's unw+cc (+prod/wrapped/mask) as npz for plotting")
+    ap.add_argument(
+        "--unwrappers",
+        nargs="+",
+        default=["snaphu", "phass", "icu"],
+        choices=["snaphu", "phass", "icu"],
+    )
+    ap.add_argument(
+        "--save-dir",
+        default=None,
+        help="save each unwrapper's unw+cc (+prod/wrapped/mask) as npz for plotting",
+    )
     args = ap.parse_args()
 
     import tophu
@@ -85,11 +98,17 @@ def main():
     for path in args.local_h5:
         with h5py.File(path, "r") as h:
             pol, prod_unw, coh, prod_cc, mask_arr = gunw_layers(h)
-        mask = water_only_mask(mask_arr, prod_unw.shape) & np.isfinite(prod_unw) & np.isfinite(coh)
+        mask = (
+            water_only_mask(mask_arr, prod_unw.shape)
+            & np.isfinite(prod_unw)
+            & np.isfinite(coh)
+        )
         wrapped = wrap_phase(prod_unw).astype(np.float32)
         ig = np.exp(1j * wrapped).astype(np.complex64)
         # tophu callbacks have no mask arg: zero coherence where masked (water/invalid).
-        coh_in = np.where(mask, np.clip(np.nan_to_num(coh), 0, 1), 0.0).astype(np.float32)
+        coh_in = np.where(mask, np.clip(np.nan_to_num(coh), 0, 1), 0.0).astype(
+            np.float32
+        )
         frame = path.name.split("_004_4000")[0].split("GUNW_")[-1]
         for name in args.unwrappers:
             cb = make(name)
@@ -101,16 +120,23 @@ def main():
             cc = np.asarray(cc).astype(np.int32)
             valid = mask & np.isfinite(unw)
             pc = percomp_match(unw, prod_unw, wrapped, prod_cc, valid)
-            print(f"{frame}: {name:7s} {dt:6.1f}s  per-comp-match-vs-prod={pc * 100:5.1f}%  "
-                  f"ncc={int(cc.max())}  shape={ig.shape}", flush=True)
+            print(
+                f"{frame}: {name:7s} {dt:6.1f}s  per-comp-match-vs-prod={pc * 100:5.1f}%  "
+                f"ncc={int(cc.max())}  shape={ig.shape}",
+                flush=True,
+            )
             if args.save_dir:
                 sd = Path(args.save_dir)
                 sd.mkdir(parents=True, exist_ok=True)
                 np.savez_compressed(
                     sd / f"{frame}_{name}.npz",
-                    unw=unw, cc=cc, prod_unw=prod_unw.astype(np.float32),
-                    prod_cc=prod_cc.astype(np.int32), wrapped=wrapped,
-                    mask=mask, coh=np.nan_to_num(coh).astype(np.float32),
+                    unw=unw,
+                    cc=cc,
+                    prod_unw=prod_unw.astype(np.float32),
+                    prod_cc=prod_cc.astype(np.int32),
+                    wrapped=wrapped,
+                    mask=mask,
+                    coh=np.nan_to_num(coh).astype(np.float32),
                 )
 
 

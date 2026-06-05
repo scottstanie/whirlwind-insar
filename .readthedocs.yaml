@@ -1,8 +1,8 @@
-# .readthedocs.yaml — Read the Docs configuration.
+# .readthedocs.yaml - Read the Docs configuration.
 # https://docs.readthedocs.io/en/stable/config-file/v2.html
 #
 # This builds the mkdocs site (mkdocs.yml at repo root) on every push to a
-# tracked branch. No Rust toolchain needed — the docs are pure markdown +
+# tracked branch. No Rust toolchain needed - the docs are pure markdown +
 # embedded figures.
 
 version: 2

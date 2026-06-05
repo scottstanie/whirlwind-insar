@@ -38,7 +38,7 @@ test = [
 bench = [
     # Cross-library comparison via `python scripts/bench.py`.
     # snaphu is the canonical reference unwrapper. kamui (PUMA) is optional
-    # and tends to use 10+ GiB on >= 1024² scenes — skip with `--no-kamui`.
+    # and tends to use 10+ GiB on >= 1024² scenes - skip with `--no-kamui`.
     "snaphu>=0.4",
     "kamui>=0.1.2",
     "matplotlib>=3.7",

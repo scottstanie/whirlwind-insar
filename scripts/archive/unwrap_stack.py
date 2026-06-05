@@ -190,10 +190,10 @@ def _resolve_reference(
     """Resolve the reference-pixel coords to (i, j) in the current (windowed) array.
 
     Precedence:
-      1. `--reference i,j`  — explicit window-local pixel coords
-      2. `--reference dolphin` — read `dolphin/timeseries/reference_point.txt`
+      1. `--reference i,j`  - explicit window-local pixel coords
+      2. `--reference dolphin` - read `dolphin/timeseries/reference_point.txt`
                                  (window-aware: subtract the window's offset)
-      3. `--reference auto` (default) — pick the lowest-summed-CRLB pixel,
+      3. `--reference auto` (default) - pick the lowest-summed-CRLB pixel,
                                          which is the most consistently coherent
                                          across the entire stack
     Returns (i, j, mode_str).
@@ -213,7 +213,7 @@ def _resolve_reference(
         if not rp.exists():
             raise FileNotFoundError(f"no {rp}; pass --reference auto or i,j")
         txt = rp.read_text().strip()
-        # Format: "row,col" — these are full-scene coords in dolphin's grid.
+        # Format: "row,col" - these are full-scene coords in dolphin's grid.
         parts = txt.replace(" ", "").split(",")
         full_i, full_j = int(parts[0]), int(parts[1])
         if window is not None:
@@ -290,7 +290,7 @@ def run(
     edges_to = np.array([date_idx[e.date_b] for e in igs], dtype=np.uint32)
     n_edges = len(igs)
 
-    # Per-IG median variance over valid pixels — used as the spanning-tree priority.
+    # Per-IG median variance over valid pixels - used as the spanning-tree priority.
     # Lower-variance edges form the backbone; noisy IGs are loop-closing.
     def median_var(e: IgFile) -> float:
         v = crlb_cube[date_idx[e.date_a]] + crlb_cube[date_idx[e.date_b]]
@@ -319,7 +319,7 @@ def run(
         # `.cor` (sample coherence) is a better anchor/cascade confidence map than
         # the variance-derived pseudo-coherence (#58): higher dynamic range → pins
         # tile-block offsets and avoids tripping the multi-shift gate (~4x faster).
-        # NOT used as the cost — the cost stays CRLB variance.
+        # NOT used as the cost - the cost stays CRLB variance.
         coherence = _read_f32(e.cor_path, win) if e.cor_path is not None else None
         t = time.perf_counter()
         unw, _cc = ww.unwrap_crlb(
@@ -376,7 +376,7 @@ def run(
         # and gives a per-IG absolute phase relative to the chosen pixel.
         # Trivially produces 0 closure RMS only if every per-IG was already
         # perfectly closure-consistent; here we record the *actual* residual.
-        print(f"[closure] skipped (closure_mode=off) — emitting raw per-IG unwraps")
+        print(f"[closure] skipped (closure_mode=off) - emitting raw per-IG unwraps")
         date_phases = np.zeros((len(dates), m, n), dtype=np.float32)
         # Compute residual closure RMS to report (diagnostic only)
         # using a simple BFS tree just for date phases.
@@ -388,7 +388,7 @@ def run(
         }
 
     # Optional: cycle-greedy MCF refinement on the raw (NOT tree-corrected)
-    # unwrap stack. See note in closure.rs — with CRLB-priority cycle bases,
+    # unwrap stack. See note in closure.rs - with CRLB-priority cycle bases,
     # greedy MCF and tree-based correction tend to make the same decisions on
     # the typical case (where errors live on non-tree edges). It is still a
     # useful diagnostic, and the framework supports future spatial-coupled
@@ -424,12 +424,12 @@ def run(
     # Reference-pixel anchoring (sparse-to-dense lite): subtract a single
     # high-quality pixel's per-IG value to remove the arbitrary global
     # integer offset that 2D unwrap leaves on each IG. After this step the
-    # output is *absolute relative phase* across the whole time series —
+    # output is *absolute relative phase* across the whole time series -
     # the difference between any two pixels is physically meaningful
     # displacement (modulo orbital / atmospheric residuals).
     ref_i, ref_j, ref_mode = _resolve_reference(reference_arg, dolphin, crlb_cube, win)
     ref_vals = closure["corrected"][:, ref_i, ref_j].copy()
-    print(f"[reference] anchoring on pixel ({ref_i}, {ref_j}) — {ref_mode}")
+    print(f"[reference] anchoring on pixel ({ref_i}, {ref_j}) - {ref_mode}")
     print(
         f"[reference] per-IG offsets removed: median {np.median(ref_vals):.3f} rad, "
         f"std {ref_vals.std():.3f} rad"
@@ -485,7 +485,7 @@ def run(
     # Per-date posterior variance from the tree.
     # With independent linked-SLC errors, telescoping along the tree gives
     #   var(θ_d) = σ²_ref + σ²_d
-    # per pixel per date — the intermediate SLCs cancel. This is the
+    # per pixel per date - the intermediate SLCs cancel. This is the
     # "uncertainty" deliverable: each pixel of the recovered acquisition
     # phase has a well-calibrated σ from CRLB, propagated through closure.
     posterior_std = np.sqrt(
@@ -643,9 +643,9 @@ def main() -> None:
         choices=["off", "tree"],
         default="off",
         help="temporal-closure correction. 'off' (default, production-recommended): "
-        "emit raw per-IG unwraps with reference-pixel anchoring only — best "
+        "emit raw per-IG unwraps with reference-pixel anchoring only - best "
         "per-IG accuracy (median absolute RMS vs SNAPHU 2.29 rad). 'tree': run "
-        "CRLB-priority tree closure correction — guarantees exact temporal "
+        "CRLB-priority tree closure correction - guarantees exact temporal "
         "consistency Σ_e ε_e·y_e=0 but REGRESSES to 5.61 rad (2.4x worse) by "
         "propagating per-IG outliers across the stack; use only if you require "
         "exact closure (see ATBD-3d §10.2)",
@@ -667,7 +667,7 @@ def main() -> None:
         "reconciliation. Bounds per-IG MCF memory to tile-size scale. "
         "Output ≈ non-tiled in coherent areas; smaller tiles ⇒ more "
         "independent per-tile integer ambiguity choices ⇒ less stable "
-        "stitching. 1024 or larger recommended on real data — at "
+        "stitching. 1024 or larger recommended on real data - at "
         "512+128 we see 99.78%% per-pixel agreement with non-tiled on "
         "the Palos-Verdes 1024² test tile, at 256+64 only 3.5%% (a "
         "single fictitious wrap-line at a tile boundary). Disabled "
@@ -691,7 +691,7 @@ def main() -> None:
         "ambiguities (PS/coherent land). K≥1 = at least one loop "
         "disagrees (typically water / decorrelated). Recommended "
         "starting value: 0 (strictest) or 1 (allow occasional "
-        "noise). Off by default — quality.tif is always written.",
+        "noise). Off by default - quality.tif is always written.",
     )
     args = p.parse_args()
     run(

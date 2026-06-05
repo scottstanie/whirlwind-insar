@@ -4,7 +4,7 @@ trial-and-error parameter?
 The argument that it IS auto-selectable: unlike SNAPHU's many interacting knobs,
 the pyramid has essentially ONE knob with a *physical, measurable* ceiling
 (`base·g < π`, the coarsest-level Nyquist limit), and it degrades
-asymmetrically — too-small `base` only loses some denoising, too-large `base`
+asymmetrically - too-small `base` only loses some denoising, too-large `base`
 aliases. So "pick the largest non-aliasing base" is a single well-posed
 estimation problem.
 
@@ -72,8 +72,12 @@ def up(c, m, n):
     cm, cn = c.shape
     yi = np.clip((np.arange(m) + 0.5) * cm / m - 0.5, 0, cm - 1)
     xi = np.clip((np.arange(n) + 0.5) * cn / n - 0.5, 0, cn - 1)
-    y0 = np.floor(yi).astype(int); y1 = np.minimum(y0 + 1, cm - 1); wy = (yi - y0)[:, None]
-    x0 = np.floor(xi).astype(int); x1 = np.minimum(x0 + 1, cn - 1); wx = (xi - x0)[None, :]
+    y0 = np.floor(yi).astype(int)
+    y1 = np.minimum(y0 + 1, cm - 1)
+    wy = (yi - y0)[:, None]
+    x0 = np.floor(xi).astype(int)
+    x1 = np.minimum(x0 + 1, cn - 1)
+    wx = (xi - x0)[None, :]
     top = c[y0][:, x0] * (1 - wx) + c[y0][:, x1] * wx
     bot = c[y1][:, x0] * (1 - wx) + c[y1][:, x1] * wx
     return top * (1 - wy) + bot * wy
@@ -81,7 +85,9 @@ def up(c, m, n):
 
 def _solve(z, coh, nlooks):
     zc = z / np.where(np.abs(z) > 0, np.abs(z), 1)
-    return ww.unwrap_reuse(zc.astype(np.complex64), coh.astype(np.float32), nlooks=float(nlooks))
+    return ww.unwrap_reuse(
+        zc.astype(np.complex64), coh.astype(np.float32), nlooks=float(nlooks)
+    )
 
 
 def n_level(ig, coh, base, nlooks):
@@ -90,7 +96,8 @@ def n_level(ig, coh, base, nlooks):
     fs = []
     f = base
     while f > 1:
-        fs.append(f); f //= 2
+        fs.append(f)
+        f //= 2
     fs.append(1)
     prev = None
     for f in fs:
@@ -129,7 +136,9 @@ def probe_base(ig, maxf=16):
 
 def main():
     print(f"reuse, {SHAPE}, nlooks={NLOOKS}, mean over {SEEDS} seeds.")
-    header = f"{'g/π':>5} {'γ':>5} | {'oracle':>13} | {'probe':>12} | " + " ".join(f"fix{b:<4}" for b in BASES)
+    header = f"{'g/π':>5} {'γ':>5} | {'oracle':>13} | {'probe':>12} | " + " ".join(
+        f"fix{b:<4}" for b in BASES
+    )
     print(header)
     regret = {("probe",): []} | {("fix", b): [] for b in BASES}
     worst = dict(regret)
@@ -139,7 +148,9 @@ def main():
         kby = {b: [] for b in BASES}
         pbs = []
         for seed in range(SEEDS):
-            ig, coh = ww.simulate_ifg(t, np.full(SHAPE, gamma, np.float32), NLOOKS, seed)
+            ig, coh = ww.simulate_ifg(
+                t, np.full(SHAPE, gamma, np.float32), NLOOKS, seed
+            )
             ig, coh = ig.astype(np.complex64), coh.astype(np.float32)
             for b in BASES:
                 kby[b].append(kpct(n_level(ig, coh, b, NLOOKS), t))
@@ -153,13 +164,19 @@ def main():
         for b in BASES:
             regret[("fix", b)].append(ok - mk[b])
             worst[("fix", b)] = max(worst[("fix", b)], ok - mk[b])
-        print(f"{gfrac:>5.2f} {gamma:>5.2f} | base={ob:<2d} K={ok:5.1f} | base={pb:<2d} K={mk[pb]:5.1f} | "
-              + " ".join(f"{mk[b]:5.1f}" for b in BASES))
+        print(
+            f"{gfrac:>5.2f} {gamma:>5.2f} | base={ob:<2d} K={ok:5.1f} | base={pb:<2d} K={mk[pb]:5.1f} | "
+            + " ".join(f"{mk[b]:5.1f}" for b in BASES)
+        )
 
     print("\nregret vs oracle (K-points; lower is better):")
-    print(f"  {'probe':8s} mean={np.mean(regret[('probe',)]):5.1f}  worst={worst[('probe',)]:5.1f}")
+    print(
+        f"  {'probe':8s} mean={np.mean(regret[('probe',)]):5.1f}  worst={worst[('probe',)]:5.1f}"
+    )
     for b in BASES:
-        print(f"  fix={b:<5d} mean={np.mean(regret[('fix', b)]):5.1f}  worst={worst[('fix', b)]:5.1f}")
+        print(
+            f"  fix={b:<5d} mean={np.mean(regret[('fix', b)]):5.1f}  worst={worst[('fix', b)]:5.1f}"
+        )
 
 
 if __name__ == "__main__":

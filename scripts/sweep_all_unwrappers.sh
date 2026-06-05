@@ -63,12 +63,12 @@ for h5 in "$H5DIR"/*.h5; do
     run_one "$frame" snaphu     "$MINIFORGE" scripts/snaphu_one.py "$h5" 1
     run_one "$frame" snaphu9x9  "$MINIFORGE" scripts/snaphu_one.py "$h5" 9
   fi
-  # isce2 mroipac ICU (the fast published classic) — opt-in with ICU2=1.
+  # isce2 mroipac ICU (the fast published classic) - opt-in with ICU2=1.
   if [[ "${ICU2:-0}" == "1" ]]; then
     run_one "$frame" icu        "$ISCE2PY"  scripts/icu_isce2_run.py "$frame"
   fi
   # ICU is ~35x slower (~9 min on the EASY frame); only run it on a representative
-  # subset (`ICU_FRAMES`) rather than all 13 — set ICU_FRAMES="" to skip entirely.
+  # subset (`ICU_FRAMES`) rather than all 13 - set ICU_FRAMES="" to skip entirely.
   if [[ " ${ICU_FRAMES:-A_013 D_074} " == *" $frame "* ]]; then
     run_one "$frame" icu     "$ISCE3PY"  scripts/tophu_compare.py --local-h5 "$h5" --nlooks "$NLOOKS" --unwrappers icu
   fi

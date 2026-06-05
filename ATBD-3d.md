@@ -11,12 +11,12 @@ Given a stack of *E* interferograms (IGs) formed from *D* phase-linked acquisiti
 
 1. An unwrapped stack of *E* IGs with each per-IG unwrap matching dolphin's SNAPHU output modulo 2π at 100 % of pixels.
 2. A reference-pixel-anchored output so the result is directly comparable across IGs / usable as relative displacement.
-3. Optional temporal-closure correction (see §5 — *off by default*) that snaps the stack to satisfy Σ_e ε_e ψ_e ≡ 0 exactly.
+3. Optional temporal-closure correction (see §5 - *off by default*) that snaps the stack to satisfy Σ_e ε_e ψ_e ≡ 0 exactly.
 4. A path toward calibrated per-pixel per-date uncertainty from CRLB (only meaningful once closure is run).
 
-The methodology is **not** spurt-style EMCF — we do not run a separable temporal-then-spatial MCF. We use a global 2D MCF per IG (with CRLB phase variance as the cost weight, not sample coherence) and, optionally, a tree-projection pass on the temporal graph.
+The methodology is **not** spurt-style EMCF - we do not run a separable temporal-then-spatial MCF. We use a global 2D MCF per IG (with CRLB phase variance as the cost weight, not sample coherence) and, optionally, a tree-projection pass on the temporal graph.
 
-**What we changed from the previous revision (and why this document is shorter than the last):** the prior implementation had a residue-grid bug where wrap-lines exiting through the image edges were silently dropped (boundary residue nodes were zeroed and the corresponding partial-plaquette contributions were never computed). On real Palos Verdes data this manifested as wildly different integer ambiguities per IG — visible as solid-coloured horizontal bands in the unwrapped output (see §10.1 for the postmortem). The fix — compute residues on all four boundary edges and let the MCF route wrap-line termination through them — brings median absolute per-IG disagreement with SNAPHU from **17.6 rad down to 2.3 rad** on the same 1024² tile.
+**What we changed from the previous revision (and why this document is shorter than the last):** the prior implementation had a residue-grid bug where wrap-lines exiting through the image edges were silently dropped (boundary residue nodes were zeroed and the corresponding partial-plaquette contributions were never computed). On real Palos Verdes data this manifested as wildly different integer ambiguities per IG - visible as solid-coloured horizontal bands in the unwrapped output (see §10.1 for the postmortem). The fix - compute residues on all four boundary edges and let the MCF route wrap-line termination through them - brings median absolute per-IG disagreement with SNAPHU from **17.6 rad down to 2.3 rad** on the same 1024² tile.
 
 The tree-based closure correction described in §5 turned out to *amplify* the small residual per-IG outliers in the corrected output (median absolute RMS 5.6 rad with closure on vs 2.3 rad with closure off), so we now default closure to off and emit the raw 2D-unwrapped + anchored stack. The closure step is retained behind `--closure tree` for users who need exact temporal closure at the cost of per-IG fidelity, and is a target for future work (§10.2).
 
@@ -40,9 +40,9 @@ The tree-based closure correction described in §5 turned out to *amplify* the s
 
 InSAR phase unwrapping of a time series has historically been treated as either
 
-(a) **N(N−1)/2 independent 2D problems** — unwrap each IG separately with SNAPHU/PHASS/etc. and accept the resulting per-IG inconsistencies, or
+(a) **N(N−1)/2 independent 2D problems** - unwrap each IG separately with SNAPHU/PHASS/etc. and accept the resulting per-IG inconsistencies, or
 
-(b) **a separable temporal-then-spatial problem** — unwrap phase gradients first across the temporal graph (e.g., spurt's EMCF), then integrate spatially.
+(b) **a separable temporal-then-spatial problem** - unwrap phase gradients first across the temporal graph (e.g., spurt's EMCF), then integrate spatially.
 
 Both miss the underlying structure of the problem. The *E* observed wrapped-phase IGs over *D* acquisitions live in a (*D*−1)-dimensional subspace of per-acquisition phases. The closure relation enforces this constraint mathematically:
 
@@ -131,13 +131,13 @@ where $\alpha$ is the locally-smoothed wrapped phase gradient (7x7 box filter) a
 
 ### Why this beats coherence-based cost on phase-linked inputs
 
-Sample coherence $\gamma$ from a sliding window is a *downsampling-window* estimator. It is biased downward, blind to off-diagonal coherence-matrix structure, and known to be a poor noise estimate after phase linking has already optimised against the full *D*x*D* matrix. CRLB-derived $\sigma^2$ is the Fisher-information lower bound on the per-acquisition phase variance from the same linked estimator — by construction it is the right per-pixel precision to weight phase observations with.
+Sample coherence $\gamma$ from a sliding window is a *downsampling-window* estimator. It is biased downward, blind to off-diagonal coherence-matrix structure, and known to be a poor noise estimate after phase linking has already optimised against the full *D*x*D* matrix. CRLB-derived $\sigma^2$ is the Fisher-information lower bound on the per-acquisition phase variance from the same linked estimator - by construction it is the right per-pixel precision to weight phase observations with.
 
 The functional form is unchanged (still "high cost in smooth high-coherence regions, low cost at wrap lines"); only the per-arc weight changes. This means the resulting MCF solve is structurally identical to the 2D Whirlwind and inherits all of its performance and convergence properties.
 
 ## 5. Stage 2: Tree-Based Closure Correction (optional; off by default)
 
-> **Status:** With the residue-boundary fix in Stage 1, per-IG outputs already agree with SNAPHU at 100 % of pixels mod 2π. The tree projection currently *amplifies* the rare per-IG outliers across the stack (median absolute RMS goes from 2.3 rad with closure off to 5.6 rad with closure on — see §10.2). It is retained behind `--closure tree` for users who require exact Σ ε ψ ≡ 0 and can tolerate the cost; the default pipeline ships the raw 2D unwrap + reference anchor.
+> **Status:** With the residue-boundary fix in Stage 1, per-IG outputs already agree with SNAPHU at 100 % of pixels mod 2π. The tree projection currently *amplifies* the rare per-IG outliers across the stack (median absolute RMS goes from 2.3 rad with closure off to 5.6 rad with closure on - see §10.2). It is retained behind `--closure tree` for users who require exact Σ ε ψ ≡ 0 and can tolerate the cost; the default pipeline ships the raw 2D unwrap + reference anchor.
 
 Given the *E* baseline 2D-unwrapped IGs $\tilde\psi_e$ from Stage 1, this stage enforces temporal closure exactly via a spanning-tree projection.
 
@@ -157,7 +157,7 @@ For each pixel *p*, walk the tree from the user-specified reference acquisition 
 
 $$ \theta_r(p) := 0,\qquad \theta_v(p) := \theta_{\text{parent}(v)}(p) + \varepsilon_e \cdot \tilde\psi_e(p) $$
 
-where $e$ is the unique tree edge between $v$ and its parent, with sign $\varepsilon_e \in \{+1, -1\}$. This gives a per-pixel per-acquisition phase cube $\theta_d(p)$ that is *exact* — no MCF, no LS — modulo the global integer ambiguity inherent in the 2D unwrap.
+where $e$ is the unique tree edge between $v$ and its parent, with sign $\varepsilon_e \in \{+1, -1\}$. This gives a per-pixel per-acquisition phase cube $\theta_d(p)$ that is *exact* - no MCF, no LS - modulo the global integer ambiguity inherent in the 2D unwrap.
 
 ### 5.3 Per-pixel non-tree-edge snapping
 
@@ -173,11 +173,11 @@ Tree edges by definition keep $k_e \equiv 0$. By construction, every fundamental
 
 ### 5.4 Complexity
 
-Per pixel the cost is $O(E + D)$ — one tree walk plus one snap per non-tree edge. The full-scene cost is $O((E+D) \cdot mn)$, embarrassingly parallel across rows. In practice on Palos Verdes (3802 x 4065 x 233 IGs x 52 dates), the entire Stage 2 pass completes in seconds.
+Per pixel the cost is $O(E + D)$ - one tree walk plus one snap per non-tree edge. The full-scene cost is $O((E+D) \cdot mn)$, embarrassingly parallel across rows. In practice on Palos Verdes (3802 x 4065 x 233 IGs x 52 dates), the entire Stage 2 pass completes in seconds.
 
 ## 6. Reference-Pixel Anchoring
 
-The 2D MCF leaves each IG unique only up to a global integer multiple of $2\pi$ — different IGs in the stack can start at different "global" offsets. Stage 2 makes the stack internally consistent (cycles close), but the absolute integer offset of $\theta_d(p)$ at any given pixel is still arbitrary.
+The 2D MCF leaves each IG unique only up to a global integer multiple of $2\pi$ - different IGs in the stack can start at different "global" offsets. Stage 2 makes the stack internally consistent (cycles close), but the absolute integer offset of $\theta_d(p)$ at any given pixel is still arbitrary.
 
 To make the output directly usable as a displacement field, we subtract the corrected value at a single high-quality reference pixel $r$ from every IG and every per-date phase:
 
@@ -224,11 +224,11 @@ scripts/unwrap_stack.py   # Python orchestrator for the full 3D pipeline
 
 Stage 1 parallelises across IGs via a Python `ThreadPoolExecutor`; rayon parallelises the cost-and-residue stages inside each unwrap call.
 
-Stage 2 streams rows through a **stripe-parallel pattern**: each chunk of 64 rows is processed in parallel via rayon, written into the output `Array3`s, then dropped. This caps the intermediate-buffer memory at $\sim$400 MB on a full Palos Verdes scene (the alternative — collecting all *m* rows before scattering — peaks at 25 GB, which on a 48 GB Mac triggers heavy swap thrashing).
+Stage 2 streams rows through a **stripe-parallel pattern**: each chunk of 64 rows is processed in parallel via rayon, written into the output `Array3`s, then dropped. This caps the intermediate-buffer memory at $\sim$400 MB on a full Palos Verdes scene (the alternative - collecting all *m* rows before scattering - peaks at 25 GB, which on a 48 GB Mac triggers heavy swap thrashing).
 
 ### 8.3 Per-IG scaling behaviour {#per-ig-scaling-behaviour}
 
-The per-IG 2D unwrap time scales *superlinearly* with pixel count. On Palos Verdes, the median per-IG wall-clock is ~1.3 s at 1024x1024 (~1 Mpx) and ~86 s at the full 4065x3802 (~15.45 Mpx) — a 66x slowdown for a 15x pixel increase, i.e. ~4.4x per-pixel slowdown at full scale. The cause is cache pressure: at 1 Mpx the working set (complex IG + cost arrays + residue grid) fits comfortably in L2/L3 caches; at 15 Mpx the working set spills to DRAM and every random access (Dial bucket-queue, primal-dual augmenting paths) pays the DRAM latency. This is not a fundamental scaling limit, but it does mean that **a 150-IG full-scene 3D run takes roughly 2-4 hours wall-clock on a laptop** depending on how aggressive the outer Python-thread parallelism is. Spatial tiling (see §10.4) is the principled fix.
+The per-IG 2D unwrap time scales *superlinearly* with pixel count. On Palos Verdes, the median per-IG wall-clock is ~1.3 s at 1024x1024 (~1 Mpx) and ~86 s at the full 4065x3802 (~15.45 Mpx) - a 66x slowdown for a 15x pixel increase, i.e. ~4.4x per-pixel slowdown at full scale. The cause is cache pressure: at 1 Mpx the working set (complex IG + cost arrays + residue grid) fits comfortably in L2/L3 caches; at 15 Mpx the working set spills to DRAM and every random access (Dial bucket-queue, primal-dual augmenting paths) pays the DRAM latency. This is not a fundamental scaling limit, but it does mean that **a 150-IG full-scene 3D run takes roughly 2-4 hours wall-clock on a laptop** depending on how aggressive the outer Python-thread parallelism is. Spatial tiling (see §10.4) is the principled fix.
 
 ### 8.4 Output products
 
@@ -262,7 +262,7 @@ The orders-of-magnitude speedup in Stage 2 over spurt's EMCF is algorithmic (tre
 
 60 IGs over 23 dates (7 baselines, 3–18 days) on a 1024² tile. Whirlwind-rs agrees with dolphin's SNAPHU output modulo 2π at **100 % of pixels on every IG**, and the *absolute* per-IG agreement (both sides anchored at the same reference pixel) is shown below. We do not compare against `timeseries/*.tif` since that is SBAS-inverted displacement in metres, a different mathematical object.
 
-![wrapped vs ours vs dolphin SNAPHU — mid-stack IG](docs/figures/fig_palos_verdes_1024_wrapped_vs_unwrapped.png)
+![wrapped vs ours vs dolphin SNAPHU - mid-stack IG](docs/figures/fig_palos_verdes_1024_wrapped_vs_unwrapped.png)
 
 The middle panel (whirlwind-rs) and the right panel (dolphin SNAPHU) share the same large-scale spatial structure and broadly the same range; the centre IG's per-pixel agreement is well under 1 rad RMS.
 
@@ -303,7 +303,7 @@ The whirlwind-rs panel (middle) and the dolphin SNAPHU panel (right) share the s
 
 ![full-scene: |whirlwind − dolphin SNAPHU| mod 2π map](docs/figures/fig_palos_verdes_full_diff_vs_dolphin.png)
 
-#### Aggregate metrics — full scene
+#### Aggregate metrics - full scene
 
 | metric                                                              | before residue-boundary fix | **after fix (current)** |
 | ------------------------------------------------------------------- | --------------------------- | ----------------------- |
@@ -327,7 +327,7 @@ The 5x Stage-1 speedup comes from the boundary-residue fix indirectly: with prop
 |                                    | recovered (                                                                                     | Δ | < 0.1 rad of original) |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Non-tree-edge injections           | **3131 / 3131 = 100.00 %**                                                                      |
-| Tree-edge injections               | 0 / 1869 = 0.00 % *(by design — tree edges are trusted; this scopes the tree-trust assumption)* |
+| Tree-edge injections               | 0 / 1869 = 0.00 % *(by design - tree edges are trusted; this scopes the tree-trust assumption)* |
 | Non-injected edge-pixels disturbed | 15,332 / 62.9 M = **0.024 %**                                                                   |
 
 ### 9.3 vs C++ Whirlwind (the WW author asked)
@@ -357,11 +357,11 @@ The reproducer runs `unwrap_stack.py` → `compare_to_dolphin_unwrapped.py` → 
 
 ### 10.1 What the residue-boundary bug looked like (postmortem)
 
-The previous revision computed 2x2-plaquette residues only at interior nodes and explicitly zeroed the four boundary rows / columns of the residue grid. Wrap-lines that exited at an image edge had no endpoint inside the grid to deposit charge onto, so the MCF had no way to "drain" them — it was forced to pair every wrap-line endpoint with a distant interior partner. For the Palos-Verdes 1024² tile, residues summed to ≈ −19 instead of exactly 0, and the dominant behaviour was integration-along-col-0 picking up wildly wrong cumulative integer counts. The visible signature was horizontal stripes of constant 2π offset in the unwrapped image (one stripe per group of unpaired wrap-lines).
+The previous revision computed 2x2-plaquette residues only at interior nodes and explicitly zeroed the four boundary rows / columns of the residue grid. Wrap-lines that exited at an image edge had no endpoint inside the grid to deposit charge onto, so the MCF had no way to "drain" them - it was forced to pair every wrap-line endpoint with a distant interior partner. For the Palos-Verdes 1024² tile, residues summed to ≈ −19 instead of exactly 0, and the dominant behaviour was integration-along-col-0 picking up wildly wrong cumulative integer counts. The visible signature was horizontal stripes of constant 2π offset in the unwrapped image (one stripe per group of unpaired wrap-lines).
 
 The fix is to compute residues on all four boundary edges (`out[0, j+1] += cycle_diff(p[0, j+1], p[0, j])` and the symmetric three) and stop the zero-frame. The augmented residue grid is *globally charge-balanced* by Stokes' theorem and MCF can drain wrap-line termination onto frame nodes through the cost-0 "frame-along" arcs. After this fix the per-IG output looks like SNAPHU at the large scale (§9.1).
 
-This is a *correctness* fix to the underlying 2D unwrapping, not a clever 3D trick — the 2D Whirlwind ATBD's residue derivation tacitly assumes the boundary-frame contributions even though the prior Rust port omitted them.
+This is a *correctness* fix to the underlying 2D unwrapping, not a clever 3D trick - the 2D Whirlwind ATBD's residue derivation tacitly assumes the boundary-frame contributions even though the prior Rust port omitted them.
 
 ### 10.2 Closure correction now hurts more than it helps
 
@@ -386,15 +386,15 @@ The cycle-greedy MCF refinement `closure::refine_mcf` (`--mcf-refine`) is retain
 
 **Spatial coupling.** Neighbouring pixels should agree on which edges had wrap errors; voting across a spatial neighbourhood disambiguates per-pixel cycle assignments. The most promising direction for a robust 3D unwrapper, and addresses both §10.2 and §10.3 simultaneously.
 
-**Per-pixel weighted integer LS (LAMBDA-style).** Decorrelate the integer search basis, search nearest lattice vectors. Theoretically clean, computationally expensive at scale. Would also give a principled per-pixel posterior probability that subsumes the current `quality_triangles` heuristic — see §10.7.
+**Per-pixel weighted integer LS (LAMBDA-style).** Decorrelate the integer search basis, search nearest lattice vectors. Theoretically clean, computationally expensive at scale. Would also give a principled per-pixel posterior probability that subsumes the current `quality_triangles` heuristic - see §10.7.
 
-**A real per-pixel posterior.** Today's quality map (`quality_triangles`) is a heuristic — per-pixel max |K| over all temporal triangles. A genuine Bayesian posterior would weight each cycle's residual by its per-IG CRLB-derived variance, and would surface a soft probability rather than an integer count. The LAMBDA approach above naturally produces this; deferred until the heuristic mask proves insufficient.
+**A real per-pixel posterior.** Today's quality map (`quality_triangles`) is a heuristic - per-pixel max |K| over all temporal triangles. A genuine Bayesian posterior would weight each cycle's residual by its per-IG CRLB-derived variance, and would surface a soft probability rather than an integer count. The LAMBDA approach above naturally produces this; deferred until the heuristic mask proves insufficient.
 
 **Sparse-to-dense propagation.** Unwrap on a sparse network of low-CRLB PS-style pixels first to fix the integer ambiguity globally, then propagate to dense pixels.
 
-**Ground-node MCF — *implemented*.** A virtual ground node connected to every boundary residue is exposed as `whirlwind_core::unwrap_crlb_grounded(igram, var, mask, ground_cost)` (Python: `whirlwind.unwrap_crlb_grounded`). Each boundary residue has two unit-capacity ground arcs (boundary→ground and ground→boundary) at cost `ground_cost`, so MCF can drain any boundary residue's wrap-line termination to ground independently of any other. The synthetic 6π `diagonal_ramp_512` test that was `#[ignore]`-d under the capacity-1 grid passes cleanly under the grounded variant (`diagonal_ramp_512_grounded`).
+**Ground-node MCF - *implemented*.** A virtual ground node connected to every boundary residue is exposed as `whirlwind_core::unwrap_crlb_grounded(igram, var, mask, ground_cost)` (Python: `whirlwind.unwrap_crlb_grounded`). Each boundary residue has two unit-capacity ground arcs (boundary→ground and ground→boundary) at cost `ground_cost`, so MCF can drain any boundary residue's wrap-line termination to ground independently of any other. The synthetic 6π `diagonal_ramp_512` test that was `#[ignore]`-d under the capacity-1 grid passes cleanly under the grounded variant (`diagonal_ramp_512_grounded`).
 
-The empirical caveat: on real Palos-Verdes-style noisy IGs with dense interior residues, enabling ground (any positive cost we tried, including 10⁴ ≈ 60x the typical grid arc cost) *hurts* — median absolute RMS to SNAPHU goes from 0.99 rad (no ground) to ≥ 11 rad. Ground pulls interior residues toward the nearest boundary along non-physical paths instead of pairing them with internal opposite-sign partners. Ground is therefore the right tool only for inputs whose wrap-lines are boundary-bound by construction (clean ramps, possibly per-tile MCF inside the tiled path — TODO), not for dense-interior natural scenes.
+The empirical caveat: on real Palos-Verdes-style noisy IGs with dense interior residues, enabling ground (any positive cost we tried, including 10⁴ ≈ 60x the typical grid arc cost) *hurts* - median absolute RMS to SNAPHU goes from 0.99 rad (no ground) to ≥ 11 rad. Ground pulls interior residues toward the nearest boundary along non-physical paths instead of pairing them with internal opposite-sign partners. Ground is therefore the right tool only for inputs whose wrap-lines are boundary-bound by construction (clean ramps, possibly per-tile MCF inside the tiled path - TODO), not for dense-interior natural scenes.
 
 ### 10.6 Tiling
 
@@ -419,7 +419,7 @@ but the per-pixel quality map shows the integer-ambiguity disagreement
 the median-stitch leaves behind:
 `K=0: 0.0 %  /  K=1: 0.4 %  /  K>1: 99.6 %`
 (`figures/fig_palos_verdes_full_tiled_1500_quality.png`). Visible
-blocky structure aligns with the tile grid — each tile adopts its own
+blocky structure aligns with the tile grid - each tile adopts its own
 local integer basis and the per-tile choices disagree across boundaries
 by ≥ 2 cycles at almost every pixel. The wrapped-phase agreement is
 preserved (every IG still matches SNAPHU mod 2π), but the absolute
@@ -431,6 +431,6 @@ Still TODO: a virtual-ground-node MCF (§10.5) would replace the median-stitch w
 ## 11. References
 
 - Whirlwind (the 2D unwrapper): see [`ATBD-whirlwind.md`](ATBD-whirlwind.md) for the full Bayesian-MCF / Carballo cost derivation that whirlwind-rs's 2D Stage 1 reuses.
-- spurt EMCF: Bekaert et al., the spurt project for 3D unwrapping of phase-linked time series — temporal-then-spatial separable MCFs.
+- spurt EMCF: Bekaert et al., the spurt project for 3D unwrapping of phase-linked time series - temporal-then-spatial separable MCFs.
 - LAMBDA: Teunissen, P.J.G. (1995), "The least-squares ambiguity decorrelation adjustment: a method for fast GPS integer ambiguity estimation," for the integer-LS framework that motivates Stage 2.
 - Phase linking and CRLB: Ansari, De Zan, Bamler (multiple papers), and the dolphin implementation that produces the per-acquisition CRLB rasters consumed here.

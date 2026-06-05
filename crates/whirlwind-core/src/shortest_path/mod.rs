@@ -79,14 +79,14 @@ impl ShortestPaths {
     }
 
     /// True iff this node was finalized by the Dijkstra (i.e. popped).
-    /// Distinct from "merely relaxed" — with early-exit on, some relaxed
+    /// Distinct from "merely relaxed" - with early-exit on, some relaxed
     /// nodes never get popped.
     pub fn was_reached(&self, node: usize) -> bool {
         self.popped[node]
     }
 }
 
-/// Run multi-source Dijkstra to FULL COMPLETION — every reachable node is
+/// Run multi-source Dijkstra to FULL COMPLETION - every reachable node is
 /// popped and gets an exact finalized distance. Matches Python ww-orig's
 /// `dijkstra_pd` which runs `while (!dijkstra.done())`.
 ///

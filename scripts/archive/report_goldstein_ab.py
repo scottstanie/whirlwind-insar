@@ -1,7 +1,7 @@
-"""Goldstein on-vs-off A/B for the report — NISAR 40 MHz mainland scene.
+"""Goldstein on-vs-off A/B for the report - NISAR 40 MHz mainland scene.
 
 Runs ``whirlwind.unwrap`` with ``goldstein_alpha=0.0`` and ``=0.7`` on the same
-NISAR interferogram, SEQUENTIALLY (one heavy unwrap at a time — laptop limit),
+NISAR interferogram, SEQUENTIALLY (one heavy unwrap at a time - laptop limit),
 and reports K-match vs the SNAPHU 9x9 reference on the cc=1 mainland. This is
 the comparison that decides whether Goldstein-off should stay the default.
 
@@ -31,8 +31,9 @@ ALPHAS = (0.0, 0.7)
 TAU = np.float32(2 * np.pi)
 
 
-def kmatch(ww_unw: np.ndarray, wrapped: np.ndarray, snaphu_k: np.ndarray,
-           common: np.ndarray) -> dict:
+def kmatch(
+    ww_unw: np.ndarray, wrapped: np.ndarray, snaphu_k: np.ndarray, common: np.ndarray
+) -> dict:
     """K-agreement vs SNAPHU on the common mask, after removing a global cycle
     offset (the modal dK)."""
     # Compute K only on `common` (ww_unw is NaN off-coverage; casting NaN warns).
@@ -71,8 +72,11 @@ def main() -> None:
     wrapped = np.angle(ig).astype(np.float32)
     snaphu_k = np.round((snaphu_unw - wrapped) / TAU).astype(np.int64)
     main_mask = (snaphu_cc == 1) & mask
-    print(f"shape={ig.shape}  valid={mask.mean() * 100:.1f}%  "
-          f"snaphu cc=1 mainland={int(main_mask.sum()):,} px", flush=True)
+    print(
+        f"shape={ig.shape}  valid={mask.mean() * 100:.1f}%  "
+        f"snaphu cc=1 mainland={int(main_mask.sum()):,} px",
+        flush=True,
+    )
 
     rows: list[dict] = []
     kfields: dict[str, np.ndarray] = {}
@@ -105,9 +109,11 @@ def main() -> None:
     hdr = f"{'method':16}{'runtime':>9}{'cov%':>8}{'#cc':>7}{'K-match%':>10}{'|dK|=1%':>9}{'|dK|>=2%':>10}"
     print(hdr)
     for r in rows:
-        print(f"{r['tag']:16}{r['runtime_s']:8.1f}s{r['coverage_pct']:8.2f}"
-              f"{r['n_components']:7d}{r['match_pct']:10.3f}{r['dk1_pct']:9.3f}"
-              f"{r['dk2plus_pct']:10.3f}")
+        print(
+            f"{r['tag']:16}{r['runtime_s']:8.1f}s{r['coverage_pct']:8.2f}"
+            f"{r['n_components']:7d}{r['match_pct']:10.3f}{r['dk1_pct']:9.3f}"
+            f"{r['dk2plus_pct']:10.3f}"
+        )
 
     # Comparison figure: SNAPHU K and each variant's dK-vs-SNAPHU.
     import matplotlib.pyplot as plt
@@ -119,8 +125,9 @@ def main() -> None:
         dkf = dkf - np.nanmedian(dkf)
         panels.append((f"{tag} − SNAPHU (dK)", dkf, "RdBu", 2.0))
 
-    fig, axes = plt.subplots(1, len(panels), figsize=(6 * len(panels), 6),
-                             constrained_layout=True)
+    fig, axes = plt.subplots(
+        1, len(panels), figsize=(6 * len(panels), 6), constrained_layout=True
+    )
     for ax, (name, arr, cmap, vlim) in zip(np.atleast_1d(axes), panels):
         kw = dict(cmap=cmap, interpolation="nearest")
         if vlim is not None:

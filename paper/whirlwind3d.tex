@@ -48,8 +48,8 @@ noise model than the sliding-window sample coherence used by classical
 unwrappers. We exploit this in two ways. First, the per-IG 2D unwrap uses
 a CRLB-weighted Bayesian arc cost in place of the Lee-coherence cost.
 Second, the wrapped-phase identity around any temporal cycle
-$\sum_e\varepsilon_e\psi_e\equiv 0\,(\bmod 2\pi)$ — guaranteed exactly by
-phase linking — turns the residual integer cycle counts into an
+$\sum_e\varepsilon_e\psi_e\equiv 0\,(\bmod 2\pi)$ - guaranteed exactly by
+phase linking - turns the residual integer cycle counts into an
 \emph{exact} per-pixel reliability metric. A correctness bug in the
 residue-grid boundary handling of the underlying 2D unwrapper is
 diagnosed and fixed: wrap-lines exiting at an image edge had no node to
@@ -170,7 +170,7 @@ Q(p) \;=\; \max_{C\in\mathcal{T}}|K_C(p)|,
 where $\mathcal{T}$ is the set of all temporal triangles
 (3-cycles). $Q=0$ means every triangle through $p$ agrees on its
 integer ambiguity choices; $Q\geq 1$ marks a pixel where at least one
-triangle disagrees — typically water or heavily-decorrelated land where
+triangle disagrees - typically water or heavily-decorrelated land where
 the per-IG unwraps are arbitrary. The metric is computed on the
 reference-pixel-anchored stack so $K_C(p)$ reflects only the
 spatially-relative unwrap consistency, not the per-IG global integer
@@ -193,7 +193,7 @@ ramp), multiple wrap-line termination flows cannot share the same
 frame-along arc, and the overflow lands on interior arcs as
 fictitious $2\pi$ jumps. A virtual ground node connected to every
 boundary residue with bidirectional unit-capacity arcs at uniform cost
-fixes this — each wrap-line terminates at ground independently. On
+fixes this - each wrap-line terminates at ground independently. On
 dense-interior natural scenes the same construction is counter-productive
 because it pulls interior residues toward boundary along non-physical
 paths; the grounded variant is therefore exposed as a separate

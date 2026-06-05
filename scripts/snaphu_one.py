@@ -6,6 +6,7 @@ writes temp files (no in-memory GDAL dataset), avoiding the tophu MEM/GA_Update 
 Usage: python scripts/snaphu_one.py <h5path>   (base miniforge3 env: has snaphu 0.4.1)
 Wrap in `/usr/bin/time -l` for peak RSS.
 """
+
 import sys
 import os
 import re
@@ -19,7 +20,9 @@ from tophu_compare import gunw_layers, water_only_mask, wrap_phase, percomp_matc
 import snaphu
 
 h5path = sys.argv[1]
-ntiles = int(sys.argv[2]) if len(sys.argv) > 2 else 1   # 1 = single-tile; 9 = 9x9 + reoptimize
+ntiles = (
+    int(sys.argv[2]) if len(sys.argv) > 2 else 1
+)  # 1 = single-tile; 9 = 9x9 + reoptimize
 frame = re.search(r"_([AD]_\d{3})_", h5path).group(1)
 with h5py.File(h5path, "r") as h:
     pol, prod, coh, pcc, marr = gunw_layers(h)
@@ -34,12 +37,19 @@ coh_in = np.where(mask, np.clip(np.nan_to_num(coh), 0, 1), 0.0).astype(np.float3
 overlap = 0 if ntiles == 1 else 200
 # Single-tile is inherently one graph (1 core). The tiled PRODUCTION path
 # parallelizes tiles, so give it the cores it would actually use (whirlwind itself
-# runs 12 threads) — handicapping SNAPHU's production config would be unfair.
+# runs 12 threads) - handicapping SNAPHU's production config would be unfair.
 nproc = 1 if ntiles == 1 else (os.cpu_count() or 8)
 t0 = time.perf_counter()
 unw, cc = snaphu.unwrap(
-    ig, coh_in, nlooks=16.0, cost="smooth", init="mcf", mask=mask,
-    ntiles=(ntiles, ntiles), tile_overlap=overlap, nproc=nproc,
+    ig,
+    coh_in,
+    nlooks=16.0,
+    cost="smooth",
+    init="mcf",
+    mask=mask,
+    ntiles=(ntiles, ntiles),
+    tile_overlap=overlap,
+    nproc=nproc,
     single_tile_reoptimize=True,
 )
 dt = time.perf_counter() - t0
@@ -48,5 +58,8 @@ ncc = int(np.asarray(cc).max())
 valid = mask & np.isfinite(unw)
 pc = percomp_match(unw, prod, wrapped, pcc, valid)
 tag = "snaphu" if ntiles == 1 else f"snaphu{ntiles}x{ntiles}"
-print(f"{frame}: {tag:10s} {dt:6.1f}s  per-comp-match-vs-prod={pc * 100:5.1f}%  "
-      f"ncc={ncc}  shape={ig.shape}", flush=True)
+print(
+    f"{frame}: {tag:10s} {dt:6.1f}s  per-comp-match-vs-prod={pc * 100:5.1f}%  "
+    f"ncc={ncc}  shape={ig.shape}",
+    flush=True,
+)

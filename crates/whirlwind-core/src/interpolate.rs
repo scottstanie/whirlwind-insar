@@ -1,4 +1,4 @@
-//! Spiral persistent-scatterer phase interpolator — a Rust port of dolphin's
+//! Spiral persistent-scatterer phase interpolator - a Rust port of dolphin's
 //! `interpolation.interpolate` (numba). For each valid pixel (`ifg != 0`) whose
 //! weight is below `weight_cutoff`, search outward in concentric circles
 //! (nearest-first) for up to `num_neighbors` high-weight pixels and replace the
@@ -12,7 +12,7 @@ use num_complex::{Complex32, Complex64};
 
 /// Relative `(dr, dc)` offsets of pixels in concentric circles out to
 /// `max_radius` (excluding radii `<= min_radius`), in RADIUS-ASCENDING order via
-/// the mid-point circle-drawing algorithm — a faithful port of dolphin's
+/// the mid-point circle-drawing algorithm - a faithful port of dolphin's
 /// `get_circle_idxs(..., sort_output=False)`. The ascending order is
 /// load-bearing: the search collects the *nearest* high-weight pixels first, and
 /// the last one collected sets the Gaussian bandwidth (`r2_norm`).
@@ -90,7 +90,11 @@ pub fn interpolate(
     alpha: f64,
 ) -> Array2<Complex32> {
     let (nrow, ncol) = ifg.dim();
-    assert_eq!(weights.dim(), (nrow, ncol), "ifg and weights must be same shape");
+    assert_eq!(
+        weights.dim(),
+        (nrow, ncol),
+        "ifg and weights must be same shape"
+    );
     let nn = num_neighbors.max(1);
     let w = weights.mapv(|x| x.clamp(0.0, 1.0)); // dolphin clips weights to [0, 1]
     let idxs = circle_idxs(max_radius.max(1), min_radius);

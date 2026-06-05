@@ -30,7 +30,7 @@ DOLPHIN = Path(
     "palos-verdes/Palos_Verdes_C13_RO23_SP/e2e_output_20260519/dolphin"
 )
 IG_NAME = "20251226090359_20251229080043"
-# 2048x2048 window covering city + water — typical scene.
+# 2048x2048 window covering city + water - typical scene.
 WIN = Window(800, 0, 2048, 2048)
 
 
@@ -57,8 +57,10 @@ def main() -> None:
         unw, _cc = ww.unwrap_crlb(ig, var, None)
     else:
         unw, _cc = ww.unwrap_crlb(ig, var, None, tile_size=512, tile_overlap=128)
-    print(f"[bench] {mode}: {time.perf_counter() - t0:.2f}s  "
-          f"range [{unw.min():.2f}, {unw.max():.2f}]")
+    print(
+        f"[bench] {mode}: {time.perf_counter() - t0:.2f}s  "
+        f"range [{unw.min():.2f}, {unw.max():.2f}]"
+    )
 
 
 if __name__ == "__main__":

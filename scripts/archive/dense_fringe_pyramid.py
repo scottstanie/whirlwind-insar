@@ -18,16 +18,16 @@ This script builds synthetic very-dense-fringe scenes (a steep bowl and a
 constant-rate cone), sweeps the fringe rate up toward the full-res Nyquist
 limit (``g → π``), and compares strategies on the same data:
 
-  * ``full``       — full-resolution ``ww.unwrap`` (no multilook).
-  * ``ml4``/``ml8``— single-shot multilook-first, ``ww.unwrap(multilook=L)``.
-  * ``pyr2``/``pyr4`` — pyramidal coarse-to-fine, fixed ``base_factor``.
-  * ``pyrA``       — pyramidal with automatic ``base_factor`` (``=0``).
+  * ``full``       - full-resolution ``ww.unwrap`` (no multilook).
+  * ``ml4``/``ml8``- single-shot multilook-first, ``ww.unwrap(multilook=L)``.
+  * ``pyr2``/``pyr4`` - pyramidal coarse-to-fine, fixed ``base_factor``.
+  * ``pyrA``       - pyramidal with automatic ``base_factor`` (``=0``).
 
 The pyramid uses its default *reuse* base solver (the linear coherence cost
-mis-routes the corners of smooth steep signals — see ``make_corner_panels`` and
+mis-routes the corners of smooth steep signals - see ``make_corner_panels`` and
 ``paper/pyramid_aliasing.md``). Each finer level unwraps only the *residual*
 against the upsampled coarser solution (the previous level's ``K`` as a prior),
-recovering full resolution without the single big multilook jump — *provided its
+recovering full resolution without the single big multilook jump - *provided its
 coarsest level is itself unaliased* (``base·g < π``).
 
 How to rerun
@@ -111,7 +111,7 @@ def rmse(unw: np.ndarray, truth: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Method runners — all return full-res unwrapped phase on the input grid.
+# Method runners - all return full-res unwrapped phase on the input grid.
 # ---------------------------------------------------------------------------
 def run_methods(
     ig: np.ndarray, corr: np.ndarray, nlooks: float

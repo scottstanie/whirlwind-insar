@@ -10,7 +10,7 @@ phase, and why. Implemented in `crates/whirlwind-core/src/conncomp.rs`
 A 2-D unwrapping is only defined up to an additive integer number of cycles per
 **disconnected** region: wherever the result is *torn* (a 2π branch cut through
 decorrelated pixels), the two sides have no enforced relative offset. A connected
-component is a maximal region with **no internal tear** — inside it, every pixel
+component is a maximal region with **no internal tear** - inside it, every pixel
 is integer-consistent with every other, so it has a single well-defined relative
 phase. The absolute offset *between* components (or of an isolated island) is the
 user's reference choice. Labelling components tells a downstream consumer "trust
@@ -18,7 +18,7 @@ phase differences within a label; do not trust them across labels."
 
 ## The algorithm (one MCF solve → BFS labelling)
 
-Components are grown directly from the **already-solved** min-cost-flow network —
+Components are grown directly from the **already-solved** min-cost-flow network -
 no second solve. The unwrap and the components come from the same MCF state.
 
 1. **Pixel grid graph.** For an `(m, n)` phase image the MCF runs on the
@@ -28,9 +28,9 @@ no second solve. The unwrap and the components come from the same MCF state.
 
 2. **Cut rule** (`edge_is_cut`). A pixel edge is a **cut** (the two pixels are *not*
    joined) when either underlying arc is:
-   - **mask-forbidden** — an endpoint pixel is invalid (both arc directions
+   - **mask-forbidden** - an endpoint pixel is invalid (both arc directions
      saturated), or
-   - **low-cost** — `min(raw forward cost of the two arcs) ≤ cost_threshold`.
+   - **low-cost** - `min(raw forward cost of the two arcs) ≤ cost_threshold`.
      The per-arc cost is the Carballo/CRLB cost, which is small exactly where
      coherence is low; those low-coherence edges are where the MCF places its
      branch cuts. So a cut = "masked, or a tear through decorrelated phase."
@@ -45,14 +45,14 @@ no second solve. The unwrap and the components come from the same MCF state.
 
 4. **Size filter + cap** (the policy knobs):
    - `min_size_px` (default **100**): drop any component smaller than this many
-     pixels — an **absolute** floor (≈0.8 km at 80 m, 0.3 km at 30 m), scene-size-
+     pixels - an **absolute** floor (≈0.8 km at 80 m, 0.3 km at 30 m), scene-size-
      and pixel-spacing-invariant, matching SNAPHU's `minregionsize`. This is the
      real speckle control; see [below](#why-an-absolute-floor).
    - `min_size_frac` (default **1e-4**): a vestigial fractional cap that only ever
      *raises* the floor on very large frames (`min_size = max(min_size_px,
      ceil(min_size_frac · n_valid))`); it can never drop it to kilometre scale.
    - `max_ncomps` (default **1024**): keep at most this many components (largest by
-     size); `0` = keep all. A generous anti-pathology guard — the floor, not this
+     size); `0` = keep all. A generous anti-pathology guard - the floor, not this
      count, is meant to do the real filtering.
    Surviving components are sorted by descending size and renumbered `1..=K`;
    `0` is background (cut off, masked, or filtered out).
@@ -63,7 +63,7 @@ The output is a `u32` label image, same `(m, n)` shape as the phase.
 
 The size floor was originally `min_size_frac = 0.01` (1%), copied from SNAPHU's
 `minconncompfrac`. On a NISAR/OPERA frame that is the wrong unit: 1% of ~7 M valid
-pixels ≈ 70 000 px ≈ a **21–25 km** minimum feature at 80 m (worse at 30 m) — it
+pixels ≈ 70 000 px ≈ a **21–25 km** minimum feature at 80 m (worse at 30 m) - it
 orphaned every coherent island. A *fraction* scales the minimum with **scene
 area**, which is meaningless; an absolute **pixel** count scales the physical
 minimum with **resolution**, which is what you want (finer data → keep finer
@@ -84,5 +84,5 @@ size floor. All three knobs are caller-exposed.
 *different*, cost-free approximation for plotting: connected components over edges
 with `|Δunw| < π` (no 2π tear), on a downsampled grid. It does not use the MCF
 costs or the `cost_threshold` rule, so it over-merges low-coherence speckle into
-one big component and is only a visualisation aid — not the same as
+one big component and is only a visualisation aid - not the same as
 `grow_components`.
