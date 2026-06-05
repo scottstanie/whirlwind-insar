@@ -1,12 +1,12 @@
-# Whirlwind Algorithm Theoretical Basis Document (ATBD)
+# Whirlwind algorithm theoretical basis document
 
 ## Executive Summary
 
-Whirlwind is a Bayesian minimum-cost network flow algorithm for 2D phase unwrapping of interferometric synthetic aperture radar (InSAR) data. The algorithm formulates phase unwrapping as a minimum-cost flow problem on a rectangular grid graph, where edge costs are derived from Bayesian probability densities that account for both coherence and local phase gradient statistics. The network flow problem is solved using a primal-dual algorithm, and the final unwrapped phase is obtained by integrating the unwrapped phase gradients.
+Whirlwind is a 2D minimum-cost-flow phase unwrapper for interferometric synthetic aperture radar (InSAR) data. It computes residues from wrapped phase, assigns statistical edge costs from coherence and local phase-gradient information, solves a network-flow problem, and integrates the corrected gradients back into an unwrapped phase image.
 
-> **Default architecture note (updated 2026-06-03).** The MCF + primal-dual core described in this ATBD (Sections 2–8) is correct and unchanged. The public `unwrap` entry point now **defaults to the verified single-tile linear solver** (`unwrap_linear`: ww-orig-parity Carballo cost, capacity-1 MCF, adaptive PD/SSP fallback for masked frames - §7.6.1), which matches Python `ww-orig` across the validated NISAR frame set. A **tiled** pipeline still exists (per-tile MCF → global coarse anchor → multi-scale cascade → feathered seam composite) and is selected opt-in via `multilook>1`, an explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`, but **it is NOT a validated path** - see the status note below before using it. See [`paper/report_anchor_cascade.md`](paper/report_anchor_cascade.md) and [`paper/tiling.md`](paper/tiling.md).
->
-> **Verified-vs-WIP (see §9.6).** The single-tile linear kernel is the *validated* core and the default: `unwrap_linear` is checked against the Python `ww-orig` reference (99.49 % on D_077; matches ww-orig across the masked-frame set, §9.6) and beats single-tile SNAPHU on **both** speed and accuracy (≈37 s / 99.49 % vs ≈588 s / 99.30 %). **The tiled + anchor pipeline is NOT working and NOT validated.** It produced good numbers on *select* scenes but **failed on most**, and there is **no working version at present** - it was not salvageable until ww-original quality was re-matched on the single-tile path (now done); any tiled benchmark elsewhere (e.g. "99.84 % NISAR") is from those select scenes and must not be read as a product claim. Treat §9.6 as the canonical status/benchmark table.
+This document is the long-form technical reference. For the short public reading path, start with [docs/ALGORITHM.md](docs/ALGORITHM.md), [docs/NISAR_SUMMARY.md](docs/NISAR_SUMMARY.md), and [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
+The public Python call is `whirlwind.unwrap(igram, corr, nlooks, mask=mask)`. It uses the 2D coherence-cost path and returns both unwrapped phase and connected-component labels. Other solver variants appear in this document where they matter for implementation context, but they are not the first-use API.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ Whirlwind is a Bayesian minimum-cost network flow algorithm for 2D phase unwrapp
 2. [Mathematical Background](#2-mathematical-background)
 3. [Algorithm Overview](#3-algorithm-overview)
 4. [Residue Computation](#4-residue-computation)
-5. [Bayesian Cost Function](#5-bayesian-cost-function)
+5. [Statistical Cost Function](#5-statistical-cost-function)
 6. [Network Flow Formulation](#6-network-flow-formulation)
 7. [Primal-Dual Solution](#7-primal-dual-solution)
 8. [Phase Integration](#8-phase-integration)
@@ -47,9 +47,9 @@ Phase unwrapping is ill-posed due to:
 
 Whirlwind addresses these challenges through:
 
-1. A **Bayesian framework** that uses coherence to weight the reliability of phase gradients
-2. **Network flow optimization** to find the minimum-cost unwrapping that neutralizes all residues
-3. **Statistical cost functions** (Carballo PDFs) that incorporate both phase and coherence information
+1. A statistical cost model that uses coherence to weight phase-gradient reliability
+2. Network flow optimization to find the minimum-cost unwrapping that neutralizes all residues
+3. Carballo/Lee cost functions that incorporate both phase and coherence information
 
 ---
 
@@ -82,7 +82,7 @@ $$
 
 The key insight is that **if we can determine $\Delta k$ for each edge, we can recover the unwrapped phase gradients**, and from those, the unwrapped phase field (up to a global constant).
 
-### 2.3 Bayesian Formulation
+### 2.3 Probabilistic Formulation
 
 The maximum likelihood estimate for $\Delta k$ is:
 
@@ -117,118 +117,39 @@ Residues are topological defects indicating phase inconsistency. For any continu
 
 ## 3. Algorithm Overview
 
-Whirlwind exposes a layered API. The inner kernel - and the public default - is
-a single whole-image minimum-cost-flow (MCF) solve (`unwrap_linear`); the public
-entry point also produces connected-component labels and an opt-in tiling
-robustness layer. This section describes both, and which paths are verified
-versus still evolving.
-
-**Input (all entry points):** complex interferogram `igram`, coherence
-magnitude `corr`, number of effective looks `nlooks`, and (optionally) a
-boolean validity `mask`.
-
-### 3.1 Inner single-tile kernel (the verified path)
-
-For a frame that fits in one tile, the algorithm is the classic five stages on
-the whole image:
+The public 2D coherence-cost path has seven stages:
 
 ```
-[1] Wrapped phase:        φ = angle(igram)
-[2] Residues:             r = residue(φ)
-[3] Bayesian arc costs:   c = carballo_costs(igram, corr, nlooks, mask)
-[4] Min-cost flow:        primal_dual(network(r, c))   # 50 iterations
-[5] Integrate gradients:  ψ = integrate(φ, flow)       # NaN masked pixels
+[1] Wrapped phase:      phi = angle(igram)
+[2] Residues:           r = residue(phi)
+[3] Edge costs:         c = carballo_costs(igram, corr, nlooks, mask)
+[4] Min-cost flow:      flow = primal_dual(network(r, c))
+[5] Integration:        unw = integrate(phi, flow, mask)
+[6] Components:         conncomp = components_only(igram, corr, nlooks, mask)
+[7] Bridge post-pass:   set relative 2pi offsets between disconnected valid regions when supported by coarse-scale evidence
 ```
 
-The default whole-image solver is `unwrap_linear` (`lib.rs`), the verified
-single-tile capacity-1 MCF kernel: a unit-capacity network with the
-ww-orig-parity Carballo cost and `run_full_dijkstra` (8 primal-dual iterations,
-then a single-source SSP and an adaptive PD-resume fallback that re-balances
-masked frames - §7.6.1). It matches the Python `whirlwind_orig` reference across
-the validated NISAR frame set. Masked arcs are **not** forbidden - they are
-given cost 0 so MCF can route through masked regions, and masked pixels are set
-to NaN after integration.
+The required inputs are a complex interferogram `igram`, coherence or correlation `corr`, effective looks `nlooks`, and optionally a boolean valid-pixel `mask`.
 
-Two other single-tile variants exist (opt-in / non-default):
+### 3.1 Residues
 
-* `unwrap_reuse` - a PHASS-style whole-image *flow-reuse* solver
-  (`Network::new_reuse_with_mask`): arcs are multi-unit (no capacity-1
-  saturation) and the Dial bucket-queue Dijkstra overrides the reduced cost to 0
-  on any arc that already carries flow, so once one wrap-line is laid down
-  subsequent demands route along it for free. It reaches its cost optimum (no
-  negative cycles remain) but is **experimental/research, not validated** as the
-  default; selected only by `WHIRLWIND_UNWRAP_SOLVER=reuse`.
-* `unwrap_convex` - a **research prototype** of a SNAPHU-style convex
-  (quadratic-in-flow) cost (issue #65). Selected at the whole-image level only
-  by `WHIRLWIND_UNWRAP_SOLVER=convex`; solve backend chosen by
-  `WHIRLWIND_CONVEX_SOLVE ∈ {pd (default), ssp, cancel}`.
+Residues are integer winding counts from 2x2 wrapped-gradient loops. Positive residues are sources in the flow problem and negative residues are sinks. Section 4 gives the exact grid indexing and boundary convention.
 
-### 3.2 Public entry point and opt-in tiling layer
+### 3.2 Edge costs
 
-The public unwrap (`unwrap_coherence_with_components`, exposed to Python as
-`_unwrap_native` and consumed by dolphin) returns **both** unwrapped phase and
-connected-component labels:
+Whirlwind assigns each grid edge a cost based on local wrapped-gradient behavior, coherence, and number of looks. Low-cost edges are plausible places to put a 2pi correction; high-cost edges are coherent smooth areas where a correction is unlikely. Section 5 gives the Carballo/Lee probability model and implementation details.
 
-```
-phase  = unwrap_coherence(igram, corr, nlooks, mask,
-                          tile_size, tile_overlap, multilook)
-comps  = components_only(igram, corr, nlooks, mask, params)
-return (phase, comps)
-```
+### 3.3 Minimum-cost flow
 
-`components_only` grows SNAPHU-style components directly from the global Carballo
-cost grid **without running an MCF solve** (labels depend only on mask-forbidden
-arcs and raw arc costs, both fixed at network construction), so it is
-independent of how - or whether - phase was solved, and costs one global cost
-grid in memory (`O(pixels)`).
+The flow solve pairs positive and negative residues through low-cost paths. Once the residue charges are balanced, the corrected gradients are path-independent and can be integrated into an unwrapped phase image. Sections 6 and 7 describe the graph, capacity modes, reduced costs, primal-dual iterations, and fallback path.
 
-**Default = single-tile, no auto-tiling** (`unwrap_coherence`): with
-`tile_size == 0` (the default) and `multilook ≤ 1`, the whole image is solved
-single-tile by the verified `unwrap_linear` kernel (§3.1) - there is **no**
-automatic switch to tiling at any frame size. The **tiled** pipeline is opt-in
-and is selected *only* by an explicit `tile_size ≥ 4`, any `multilook > 1`, or
-`WHIRLWIND_UNWRAP_SOLVER=tiled`. It is **NOT a validated path**: it fails on most
-scenes (≈65–89 % per-component match vs ≈99–100 % single-tile) and must never be
-described as the default/shipped/production path.
+### 3.4 Integration and components
 
-* **Single-tile** frames go through `unwrap_linear` (§3.1), or `unwrap_reuse` /
-  `unwrap_convex` when `WHIRLWIND_UNWRAP_SOLVER=reuse|convex`.
-* **Tiled** frames (opt-in only) go through `unwrap_tiled_robust`, which adds,
-  on top of the per-tile reuse solves:
-  1. parallel per-tile MCF solve (each tile uses the §3.1 reuse kernel);
-  2. global reconciliation of per-tile integer-2π offsets via an MCF on the
-     tile grid;
-  3. gated feathered compositing of the overlaps;
-  4. a global coarse anchor plus a multi-scale cascade (`f = 16, 8, 4`) to pin
-     each region's integer cycle level;
-  5. bounded coherence-gated sliver healing;
-  6. a **gated multi-shift re-solve**: if the result tears coherent terrain
-     (coherent-cut rate above a fixed floor - the signature of a tile-seam
-     artifact or a wrong global winding on a fragmented scene), the tile grid
-     is re-run shifted by fractions of the tile step and the result with the
-     fewest coherent cuts is kept, followed by a localized `seam_repair`.
-  Stages 4–6 can be toggled for diagnostics via `WHIRLWIND_NO_ANCHOR` and
-  `WHIRLWIND_NO_HEAL`.
+Integration converts integer cycle corrections into an unwrapped phase image. The Python API also returns SNAPHU-style connected-component labels grown from the same coherence-cost model. Section 8 covers the integer-cycle integration details.
 
-A parallel CRLB-cost family (`unwrap_crlb_*`, variance-driven rather than
-coherence-driven) mirrors this structure; anchor/cascade parity with the
-coherence path is still pending (issue #35).
+### 3.5 Bridge post-pass
 
-### 3.3 Verified vs. work-in-progress
-
-The single-tile `unwrap_linear` kernel of §3.1 is both the validated core **and
-the public default**: it is checked against the Python `ww-orig` reference and
-matches it across the validated NISAR frame set. (The opt-in whole-image
-`unwrap_reuse` solver reaches its cost optimum - no negative cycles remain - but
-is experimental, not the default.) The **tiled robustness layer of §3.2 is
-opt-in and NOT validated** - an empirically tuned, still-evolving heuristic
-whose seam reconciliation, anchor/cascade, multi-shift gate, and sliver healing
-are calibrated against benchmark scenes rather than proven optimal (hence the
-environment escape hatches), and it fails on most scenes. Section 9.5 lists its
-known limitations. The detailed mathematics of stages [2]–[5] follow in
-Sections 4–8; the tiling and stitching machinery is detailed in Section 9.
-
----
+When a mask splits valid pixels into disconnected regions, the wrapped phase alone does not determine the relative 2pi level between those regions. The bridge post-pass uses a coarse connected view of the scene to choose those offsets when the integer shift is clear. This is described in the implementation notes and benchmarked in the NISAR comparison.
 
 ---
 
@@ -288,7 +209,7 @@ NaN/invalid pixels are replaced by zeros upstream and would otherwise generate a
 
 ---
 
-## 5. Bayesian Cost Function
+## 5. Statistical Cost Function
 
 Whirlwind ships **two** Carballo-style edge-cost implementations. They share the same statistical motivation (Lee 1994 multilook phase noise + smoothed local gradient) and the same per-arc layout, but differ in how the per-arc log-likelihood is obtained and in their default scale:
 

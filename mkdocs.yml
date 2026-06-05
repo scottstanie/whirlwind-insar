@@ -29,9 +29,11 @@ exclude_docs: |
 
 nav:
   - Home: index.md
+  - Algorithm: ALGORITHM.md
+  - NISAR comparison: NISAR_SUMMARY.md
   - Performance: PERFORMANCE.md
-  - Tiling design: TILING_DESIGN.md
   - Environment variables: ENV_VARS.md
+  - Tiling design: TILING_DESIGN.md
 
 theme:
   name: material

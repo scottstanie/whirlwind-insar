@@ -2,21 +2,16 @@
 
 Fast Rust-backed 2D InSAR phase unwrapping with Python bindings.
 
-This site collects reference documentation. Start with the project README for
-installation and basic usage:
+Start with the [project README](https://github.com/scottstanie/whirlwind-insar/blob/main/README.md) for installation, Python usage, CLI usage, and links to comparisons.
 
-- **[Project README](https://github.com/scottstanie/whirlwind-insar/blob/main/README.md)**
-  - install, Python usage, CLI usage, and links to comparisons.
-- **[NISAR comparison](NISAR_SUMMARY.md)**
-  - quality, runtime, and memory comparison on validated 2D scenes.
-- **[ATBD - 2D MCF core](https://github.com/scottstanie/whirlwind-insar/blob/main/ATBD-whirlwind.md)**
-  - Carballo cost, residue grid, primal-dual SSP, integration.
+## Main pages
 
-## Reference
+- [Algorithm notes](ALGORITHM.md): the 2D unwrapping pipeline and the main terms used by the rest of the docs.
+- [NISAR comparison](NISAR_SUMMARY.md): quality, runtime, and memory comparison on NISAR GUNW scenes.
+- [Performance notes](PERFORMANCE.md): synthetic timing, memory behavior, and mask behavior.
+- [Environment variables](ENV_VARS.md): debug and benchmarking switches.
 
-- [Performance](PERFORMANCE.md) - per-stage timings, scaling, the memory model,
-  and mask-acceleration numbers.
-- [Tiling design](TILING_DESIGN.md) - historical design notes for the
-  experimental, opt-in tiled-unwrap architecture. The shipped default is not the
-  tiled path.
-- [Environment variables](ENV_VARS.md) - debug / research environment variables.
+## Deeper references
+
+- [Tiling design](TILING_DESIGN.md): historical design notes for the experimental tiled path. The shipped default is not the tiled path.
+- [Full ATBD](https://github.com/scottstanie/whirlwind-insar/blob/main/ATBD-whirlwind.md): long-form derivation and implementation details.

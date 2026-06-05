@@ -2,7 +2,7 @@
 
 Fast Rust-backed 2D InSAR phase unwrapping with Python bindings.
 
-A minimum-cost-flow unwrapper that reaches SNAPHU-comparable quality several times faster, returning the unwrapped phase and connected-component labels from a single solve. See the [NISAR comparison](docs/NISAR_SUMMARY.md) for the validated benchmarks.
+A minimum-cost-flow unwrapper that reaches SNAPHU-comparable quality several times faster, returning the unwrapped phase and connected-component labels from a single solve. See the [NISAR comparison](docs/NISAR_SUMMARY.md) for benchmarks.
 
 ## Quickstart
 
@@ -22,8 +22,7 @@ import whirlwind as ww
 unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)
 ```
 
-`igram` is a complex wrapped interferogram, `corr` is coherence/correlation in
-`[0, 1]`, and `mask` is optional with `True` for valid pixels.
+`igram` is a complex wrapped interferogram, `corr` is coherence/correlation in `[0, 1]`, and `mask` is optional with `True` for valid pixels.
 
 For noisy scenes, down-look first:
 
@@ -51,8 +50,7 @@ whirlwind unwrap \
     --conncomp conncomp.tif
 ```
 
-`--phase` is a float32 TIFF of wrapped phase in radians. `--mask` is optional;
-nonzero means valid.
+`--phase` is a float32 TIFF of wrapped phase in radians. `--mask` is optional; nonzero means valid.
 
 The CLI is pure Rust (no GDAL), so it also runs from the bundled container:
 
@@ -65,8 +63,7 @@ docker run --rm -v "$PWD:/data" whirlwind unwrap \
 
 ## Dolphin
 
-[Dolphin](https://github.com/isce-framework/dolphin) can select Whirlwind as an
-unwrap method:
+[Dolphin](https://github.com/isce-framework/dolphin) can select Whirlwind as an unwrap method:
 
 ```bash
 dolphin unwrap --unwrap-options.unwrap-method whirlwind ...
@@ -87,7 +84,7 @@ cargo test --workspace
 
 - [NISAR comparison](docs/NISAR_SUMMARY.md)
 - [Performance notes](docs/PERFORMANCE.md)
-- [2D algorithm notes](ATBD-whirlwind.md)
+- [Algorithm notes](docs/ALGORITHM.md)
 - [Environment variables](docs/ENV_VARS.md)
 
 ## Repository Layout
