@@ -52,11 +52,15 @@ whirlwind unwrap \
 
 `--phase` is a float32 TIFF of wrapped phase in radians. `--mask` is optional; nonzero means valid.
 
-The CLI is pure Rust (no GDAL), so it also runs from the bundled container:
+The CLI is pure Rust (no GDAL), so it also runs from a container. Pull the
+prebuilt image (published to the GitHub Container Registry by CI), or build it
+locally:
 
 ```bash
-docker build -t whirlwind .
-docker run --rm -v "$PWD:/data" whirlwind unwrap \
+docker pull ghcr.io/scottstanie/whirlwind-insar:main   # prebuilt, or:
+docker build -t ghcr.io/scottstanie/whirlwind-insar .  # build locally
+
+docker run --rm -v "$PWD:/data" ghcr.io/scottstanie/whirlwind-insar unwrap \
     --phase /data/wrapped.tif --cor /data/cor.tif --nlooks 10 \
     --out /data/unw.tif --conncomp /data/conncomp.tif
 ```
