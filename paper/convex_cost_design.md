@@ -46,15 +46,15 @@ at rate `1/σ²_e`.
 
 The current Carballo cost is linear in `|k|` with `k=0` preferred —
 *all* arcs prefer no flow. The 958k-pixel `-3 cycle` blob has a
-self-consistent solution paying `3 × (linear cost) × 958k` more
+self-consistent solution paying `3 x (linear cost) x 958k` more
 than SNAPHU's solution. Under linear cost the routing finds a
 *local* optimum; the global "3-cycle-off-here, 0 elsewhere"
 solution survives because each individual arc pays a modest premium.
 
-Under quadratic cost, the same 3-cycle deviation pays `9 × (cost) ×
+Under quadratic cost, the same 3-cycle deviation pays `9 x (cost) x
 958k` — an order of magnitude more, and crucially, *splitting* the
 3-cycle blob into three separate 1-cycle blobs costs only
-`3 × 1² × 958k = 3×`. Quadratic curvature makes large coherent
+`3 x 1² x 958k = 3x`. Quadratic curvature makes large coherent
 errors structurally expensive in a way linear cost cannot.
 
 The `offset_e` term is the second half of the same idea: it tells
@@ -71,7 +71,7 @@ returning `(offsets: Vec<i32>, weights: Vec<i32>)` of length
 `num_forward`. Implementation mirrors the existing
 `compute_carballo_costs`:
 
-* Same 7×7 mask-aware smoothed phase gradient via
+* Same 7x7 mask-aware smoothed phase gradient via
   `smooth_phase_gradients_with_mask`.
 * Per-arc offset: `round(α_smooth / (2π))` rounded to integer.
   For typical IG arcs `|α_smooth| < π`, so offset ∈ {-1, 0, 1}.
@@ -166,14 +166,14 @@ rad) — algorithm is sound on synthetic.
 
 But on real scenes, the picture is split:
 
-| scene | mode | wall | K=match | `|dK|`=1 | `|dK|`≥2 |
-|---|---|---:|---:|---:|---:|
-| PV    | baseline (unit-cap)  | 0.7 s | 90.67 % | 1.09 % |  8.25 % |
-| PV    | reuse                | 3.7 s | 99.75 % | 0.25 % |  0.00 % |
-| PV    | **convex**           | 14.6 s | **99.68 %** | 0.32 % | **0.00 %** |
-| NISAR | baseline (unit-cap)  |  75 s | 80.01 % | 1.71 % | 18.28 % |
-| NISAR | reuse                |  93 s | 92.70 % | 0.24 % |  7.06 % |
-| NISAR | **convex**           | 402 s | **68.55 %** | 5.97 % | **25.48 %** |
+| scene | mode                |   wall |     K=match |      ` |          dK | `=1 | ` | dK | `≥2 |
+| ----- | ------------------- | -----: | ----------: | -----: | ----------: |
+| PV    | baseline (unit-cap) |  0.7 s |     90.67 % | 1.09 % |      8.25 % |
+| PV    | reuse               |  3.7 s |     99.75 % | 0.25 % |      0.00 % |
+| PV    | **convex**          | 14.6 s | **99.68 %** | 0.32 % |  **0.00 %** |
+| NISAR | baseline (unit-cap) |   75 s |     80.01 % | 1.71 % |     18.28 % |
+| NISAR | reuse               |   93 s |     92.70 % | 0.24 % |      7.06 % |
+| NISAR | **convex**          |  402 s | **68.55 %** | 5.97 % | **25.48 %** |
 
 PV: convex matches reuse essentially perfectly. The diagonal_ramp test
 passes. The cost machinery and solver are correct.
@@ -190,7 +190,7 @@ Plausible suspects (in order of cheapness to test):
   `+α`, UP gets `−α`) translates to opposite signed offsets on the
   two arcs of one pixel edge. The math checks out on paper but
   empirically: try the opposite convention and see if NISAR moves.
-* **Whole-image vs tiled.** SNAPHU runs 9×9 tiles + a separate
+* **Whole-image vs tiled.** SNAPHU runs 9x9 tiles + a separate
   stitching pass. Whole-image convex MCF can lock into a different
   global optimum on a large scene.
 * **Negative reduced costs without Bellman-Ford.** The analysis in
@@ -223,9 +223,9 @@ Maximum offset on NISAR is **22**, far below the saturation point at
 ±50 where wrap-line guidance kicks in (the cost-symmetric point
 between k=0 and k=±1). Most arcs have |offset|≤5, which is too small
 to matter — at |offset|=5 the cost ratio between k=0 and k=±1 is
-still 361×.
+still 361x.
 
-Root cause: the **7×7 box smoothing** that the offset reads from
+Root cause: the **7x7 box smoothing** that the offset reads from
 washes wrap lines out. A wrap line is a sharp ±π discontinuity over
 ~1 pixel; box-averaged across 7 pixels (mixing both sides of the
 wrap) the smoothed gradient collapses to ~0. We measured max
@@ -248,7 +248,7 @@ worse than baseline's 1.6M-pixel blob in the same region.
 What we'd actually want for the offset: a wrap-line *indicator*, not
 a smoothed gradient. Candidates to try:
 
-1. **Smaller smoothing kernel** (3×3 instead of 7×7). Less averaging
+1. **Smaller smoothing kernel** (3x3 instead of 7x7). Less averaging
    across wrap-line discontinuities; the offset would track the local
    wrapped gradient more closely. Cheapest test.
 2. **Raw (unsmoothed) gradient.** Maximally preserves wrap-line
@@ -274,17 +274,17 @@ returns interpolated values per arc. 1024-sample mid-point rule per
 γ; 256k PDF evaluations one-time per `nlooks`. Same `compute_snaphu_smooth_costs`
 otherwise.
 
-| scene | mode | wall | K=match |
-|---|---|---:|---:|
-| `diagonal_ramp_512_convex` | passes (0.97 s, was 91 s) | — | max err 0.0 rad |
-| PV    | convex, Lee var |  8.8 s | 99.59 % |
-| NISAR | convex, Just/Bamler | 402 s | 68.55 % |
-| NISAR | convex, Lee var     | 409 s | **68.80 %** |
+| scene                      | mode                      |  wall |         K=match |
+| -------------------------- | ------------------------- | ----: | --------------: |
+| `diagonal_ramp_512_convex` | passes (0.97 s, was 91 s) |     — | max err 0.0 rad |
+| PV                         | convex, Lee var           | 8.8 s |         99.59 % |
+| NISAR                      | convex, Just/Bamler       | 402 s |         68.55 % |
+| NISAR                      | convex, Lee var           | 409 s |     **68.80 %** |
 
 NISAR moved 0.25 pp — well inside numerical noise. σ² calibration is
 *not* the cause of the regression. Suspect 1 ruled out.
 
-(Side effect: synthetic test now runs 90× faster because the Lee
+(Side effect: synthetic test now runs 90x faster because the Lee
 variance gives more reasonable weights than the Just/Bamler small-
 angle approximation does at low γ. The numerical correctness was
 unchanged but the bucket-queue / heap workload depended on weight
@@ -310,14 +310,14 @@ All three remaining suspects addressed:
   `debug_assert!(rc>=0)` stripped) — that is now fixed.
 
 **Empirical verdict — the convex cost is correct + sound but NOT the win:**
-| scene / mode | linear | convex (fixed) |
-|---|---|---|
-| Atlanta 5× whole-image | 11.4% | 11.0% (no help) |
-| Atlanta 5× tiled256+anchor | 47.3% | 51.7% (+4.4%) |
+| scene / mode                     | linear | convex (fixed)                 |
+| -------------------------------- | ------ | ------------------------------ |
+| Atlanta 5x whole-image           | 11.4%  | 11.0% (no help)                |
+| Atlanta 5x tiled256+anchor       | 47.3%  | 51.7% (+4.4%)                  |
 | NISAR tiled512+anchor (mainland) | 99.81% | 99.54% (REGRESSION), 91s vs 4s |
 
 Convex helps Atlanta modestly (well short of snaphu's 97.9% / multilook's 97.7%)
-and REGRESSES NISAR while being ~20× slower. It does NOT fix the col-4032
+and REGRESSES NISAR while being ~20x slower. It does NOT fix the col-4032
 spurious sliver (present under both costs → a residue-pairing tie-break, not a
 cost-shape issue). **Conclusion: keep convex as a correct, sound, opt-in lane
 (`unwrap_convex`, `WHIRLWIND_TILE_CONVEX=1`), NOT the default. The dominant lever

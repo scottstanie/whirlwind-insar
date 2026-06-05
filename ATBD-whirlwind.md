@@ -96,7 +96,7 @@ This requires a probability model for the phase gradient conditioned on the inte
 
 ### 2.4 Residues
 
-A **residue** at a grid node is the sum of wrapped phase gradients around a 2×2 pixel loop, normalized by $2\pi$:
+A **residue** at a grid node is the sum of wrapped phase gradients around a 2x2 pixel loop, normalized by $2\pi$:
 
 $$
 r = \mathrm{round}\left(\frac{1}{2\pi} \oint \nabla \phi \cdot d\ell\right)
@@ -236,7 +236,7 @@ Sections 4–8; the tiling and stitching machinery is detailed in Section 9.
 
 ### 4.1 Definition
 
-Residues are computed on a grid of **nodes** with dimensions $(m+1) \times (n+1)$, where the input wrapped-phase array has dimensions $m \times n$. An **interior** node $(r,c)$ sits at the center of the 2×2 pixel block $\{(r{-}1,c{-}1),(r{-}1,c),(r,c{-}1),(r,c)\}$, and its residue is the integer winding number of the wrapped gradients around that loop. The outer **frame** of the grid (row $0$, row $m$, column $0$, column $n$) holds the wrap counts along the four image edges (see §4.2).
+Residues are computed on a grid of **nodes** with dimensions $(m+1) \times (n+1)$, where the input wrapped-phase array has dimensions $m \times n$. An **interior** node $(r,c)$ sits at the center of the 2x2 pixel block $\{(r{-}1,c{-}1),(r{-}1,c),(r,c{-}1),(r,c)\}$, and its residue is the integer winding number of the wrapped gradients around that loop. The outer **frame** of the grid (row $0$, row $m$, column $0$, column $n$) holds the wrap counts along the four image edges (see §4.2).
 
 Implementation: `residue::compute_with_mask` in `crates/whirlwind-core/src/residue.rs`; `residue::compute(φ)` is the unmasked convenience wrapper that calls `compute_with_mask(φ, None)`.
 
@@ -272,7 +272,7 @@ The four corner nodes $(0,0),(0,n),(m,0),(m,n)$ are never written and stay zero.
 
 **Masking.** When a pixel-grid mask is supplied (`true` = valid, `false` = masked/invalid), `compute_with_mask`:
 
-- leaves an interior residue at $0$ if **any** of the four pixels in its 2×2 loop is masked;
+- leaves an interior residue at $0$ if **any** of the four pixels in its 2x2 loop is masked;
 - skips a boundary-edge deposit if **either** pixel of that edge segment is masked.
 
 NaN/invalid pixels are replaced by zeros upstream and would otherwise generate a wall of spurious large residues along the mask boundary that leak charge into the valid region's MCF problem; masking keeps the flow problem confined to where the phase is meaningful.
@@ -292,10 +292,10 @@ NaN/invalid pixels are replaced by zeros upstream and would otherwise generate a
 
 Whirlwind ships **two** Carballo-style edge-cost implementations. They share the same statistical motivation (Lee 1994 multilook phase noise + smoothed local gradient) and the same per-arc layout, but differ in how the per-arc log-likelihood is obtained and in their default scale:
 
-| Function (`crates/whirlwind-core/src/cost/mod.rs`) | Used by | Probability source | Int scale | Masking rule |
-|---|---|---|---|---|
-| `compute_carballo_costs` (§5.1–5.5) | **Production**: `unwrap`, `unwrap_reuse`, the tiled solver, conncomp regrow | Analytical Lee-1994 CDF LUT built at runtime (`cost/lut.rs`); `p_0 = 1-p_1` | `CARBALLO_COST_SCALE = 6` (max int 300) | cost = 0 where **either** endpoint masked |
-| `compute_carballo_costs_parity` (§5.6) | **Diagnostic only**: `unwrap_linear` (single-tile Rust/Python parity) | Embedded ww-orig pre-sampled spline tables (`cost/spline_lut.rs`); `p_0 + p_1 ≠ 1` | `100` (matches Python) | cost = 0 only where **both** endpoints masked |
+| Function (`crates/whirlwind-core/src/cost/mod.rs`) | Used by                                                                     | Probability source                                                                 | Int scale                               | Masking rule                                  |
+| -------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------- |
+| `compute_carballo_costs` (§5.1–5.5)                | **Production**: `unwrap`, `unwrap_reuse`, the tiled solver, conncomp regrow | Analytical Lee-1994 CDF LUT built at runtime (`cost/lut.rs`); `p_0 = 1-p_1`        | `CARBALLO_COST_SCALE = 6` (max int 300) | cost = 0 where **either** endpoint masked     |
+| `compute_carballo_costs_parity` (§5.6)             | **Diagnostic only**: `unwrap_linear` (single-tile Rust/Python parity)       | Embedded ww-orig pre-sampled spline tables (`cost/spline_lut.rs`); `p_0 + p_1 ≠ 1` | `100` (matches Python)                  | cost = 0 only where **both** endpoints masked |
 
 ### 5.1 Carballo Probability Model
 
@@ -309,7 +309,7 @@ where $\hat\alpha$ is the smoothed local phase gradient, $\hat\gamma$ the per-ed
 
 ### 5.2 Smooth Phase Gradient Estimation
 
-Wrapped per-edge gradients are formed from complex conjugate products (`phase_dy = arg(igram[i+1,j]·conj(igram[i,j]))`, `phase_dx` analogously), then smoothed with a **separable 7×7 box filter** (`box_filter_2d`, nearest-edge replication; Carballo's original paper used 5×5). The smoothed gradient $\hat\alpha$ estimates the underlying signal gradient by averaging over local phase noise.
+Wrapped per-edge gradients are formed from complex conjugate products (`phase_dy = arg(igram[i+1,j]·conj(igram[i,j]))`, `phase_dx` analogously), then smoothed with a **separable 7x7 box filter** (`box_filter_2d`, nearest-edge replication; Carballo's original paper used 5x5). The smoothed gradient $\hat\alpha$ estimates the underlying signal gradient by averaging over local phase noise.
 
 **Mask handling (important):** both cost paths deliberately use the *biased* `smooth_phase_gradients` (which averages in the `0+0j` of masked pixels) rather than the mask-aware variant. The bias is a feature: it drags $\hat\alpha\to0$ within ~3 px of a mask boundary, raising the Carballo cost there and acting as an implicit fence that discourages MCF from routing 2π errors across the boundary. A mask-aware filter (`smooth_phase_gradients_with_mask`) exists but is intentionally **not** the default — using it worsens 2π block errors on real NISAR data.
 
@@ -325,7 +325,7 @@ $$
 p_1 = \text{CDF}(\alpha-\pi),\qquad p_0 = 1-p_1,\qquad c(\alpha,\gamma)=\min\!\big(\max(-\ln(p_1/p_0),0),\,c_{\max}\big)
 $$
 
-with $c_{\max} = $ `MAX_CARBALLO_COST = 50` nats. For $\alpha \le 0$ the cost is forced to $c_{\max}$. Limits: at $\alpha=\pi$ (a wrap line) $\text{CDF}(0)=0.5\Rightarrow c=0$ (free to cut); as $\alpha\to0^+$ (smooth interior) $c\to c_{\max}$ (never cut). The $\alpha\le0$ → $c_{\max}$ rule makes the cost **strongly asymmetric in the sign of $\alpha$**, which is load-bearing for the per-direction split in §5.5. The LUT is a 101(γ)×501(α) bilinear table, built once per `nlooks` (rounded to 0.1) and leaked to `'static`; γ is clamped to $[0,0.999]$, α to $[-\pi,\pi]$.
+with $c_{\max} = $ `MAX_CARBALLO_COST = 50` nats. For $\alpha \le 0$ the cost is forced to $c_{\max}$. Limits: at $\alpha=\pi$ (a wrap line) $\text{CDF}(0)=0.5\Rightarrow c=0$ (free to cut); as $\alpha\to0^+$ (smooth interior) $c\to c_{\max}$ (never cut). The $\alpha\le0$ → $c_{\max}$ rule makes the cost **strongly asymmetric in the sign of $\alpha$**, which is load-bearing for the per-direction split in §5.5. The LUT is a 101(γ)x501(α) bilinear table, built once per `nlooks` (rounded to 0.1) and leaked to `'static`; γ is clamped to $[0,0.999]$, α to $[-\pi,\pi]$.
 
 The diagnostic parity path uses pre-computed tables instead — see §5.6.
 
@@ -338,7 +338,7 @@ cost_rt = c(-phase_dy_smooth, corr_dy)   cost_lt = c(+phase_dy_smooth, corr_dy)
 cost_dn = c(+phase_dx_smooth, corr_dx)   cost_up = c(-phase_dx_smooth, corr_dx)
 ```
 
-The float LLR is converted to `i32` via `round(c · CARBALLO_COST_SCALE)` with `CARBALLO_COST_SCALE = 6.0`, so the maximum integer cost is `6 × 50 = 300` (chosen to keep Dial's bucket-queue Dijkstra fast while using the correct Lee 1994 shape). Reverse-arc costs are the negation of the forward cost and are reconstructed by `Network` on demand. Where **either** endpoint pixel is masked, the arc cost is set to `0`.
+The float LLR is converted to `i32` via `round(c · CARBALLO_COST_SCALE)` with `CARBALLO_COST_SCALE = 6.0`, so the maximum integer cost is `6 x 50 = 300` (chosen to keep Dial's bucket-queue Dijkstra fast while using the correct Lee 1994 shape). Reverse-arc costs are the negation of the forward cost and are reconstructed by `Network` on demand. Where **either** endpoint pixel is masked, the arc cost is set to `0`.
 
 ### 5.6 Parity / single-tile cost (`compute_carballo_costs_parity`)
 
@@ -349,16 +349,16 @@ The float LLR is converted to `i32` via `round(c · CARBALLO_COST_SCALE)` with `
 - **Masking** zeros the cost only where **both** endpoint pixels are invalid (matching Python's `mask = ~valid`, zero where `mask[a] && mask[b]`); a boundary arc with one valid pixel keeps a nonzero cost.
 - **Override:** setting `WHIRLWIND_CARBALLO_LUT_DIR` to a directory containing the same five `.bin` files replaces the embedded tables at first use (for experiments).
 
-Smoothing (biased 7×7 box), the min-of-endpoints edge coherence, and the four-direction sign convention are identical to the production path (§5.2–5.5).
+Smoothing (biased 7x7 box), the min-of-endpoints edge coherence, and the four-direction sign convention are identical to the production path (§5.2–5.5).
 
 ### 5.7 Cost Interpretation
 
-| Coherence | Phase gradient $\hat\alpha$ | Cost behavior | Interpretation |
-|-----------|------------------------------|---------------|----------------|
-| High | $\approx 0$ (smooth) | Large (→ $c_{\max}$) | Confident $\Delta k = 0$; strongly penalize a cut here |
-| High | near $+\pi$ (wrap line) | $\approx 0$ | Confident $\Delta k = +1$; cheap to cut |
-| Any | $\le 0$ (production path) | $c_{\max}$ | Wrong-sign correction for this direction; never cut |
-| Low | any | small | Uncertain; the edge barely influences the solution |
+| Coherence | Phase gradient $\hat\alpha$ | Cost behavior        | Interpretation                                         |
+| --------- | --------------------------- | -------------------- | ------------------------------------------------------ |
+| High      | $\approx 0$ (smooth)        | Large (→ $c_{\max}$) | Confident $\Delta k = 0$; strongly penalize a cut here |
+| High      | near $+\pi$ (wrap line)     | $\approx 0$          | Confident $\Delta k = +1$; cheap to cut                |
+| Any       | $\le 0$ (production path)   | $c_{\max}$           | Wrong-sign correction for this direction; never cut    |
+| Low       | any                         | small                | Uncertain; the edge barely influences the solution     |
 
 Note this differs from the older description: forward-arc costs are clamped non-negative (never negative), and the production path is **asymmetric** in the sign of $\hat\alpha$ rather than "symmetric near zero" at low coherence.
 
@@ -370,15 +370,15 @@ Note this differs from the older description: forward-arc costs are clamped non-
 
 Phase unwrapping is posed as a **minimum-cost flow (MCF) problem** on a rectangular residue grid (`RectangularGridGraph`, `grid.rs`):
 
-- **Nodes**: an $m \times n$ grid with $m = m_{\text{phase}}+1$, $n = n_{\text{phase}}+1$ (one node per 2×2 pixel loop). `node_id(i,j) = i·n + j`.
+- **Nodes**: an $m \times n$ grid with $m = m_{\text{phase}}+1$, $n = n_{\text{phase}}+1$ (one node per 2x2 pixel loop). `node_id(i,j) = i·n + j`.
 - **Arcs**: 4-connected. Each grid edge carries **two independent forward arcs** (one per direction — the two directions are separate Carballo cost decisions), each with its own residual reverse partner, i.e. 4 arc slots per interior pair. Forward arc IDs are partitioned for $O(1)$ transpose:
 
-  | Range | Direction | Tail → Head |
-  |---|---|---|
-  | $[0,\ n_v)$ | DOWN | $(i,j)\to(i{+}1,j)$ |
-  | $[n_v,\ 2n_v)$ | UP | $(i{+}1,j)\to(i,j)$ |
-  | $[2n_v,\ 2n_v{+}n_h)$ | RIGHT | $(i,j)\to(i,j{+}1)$ |
-  | $[2n_v{+}n_h,\ N_f)$ | LEFT | $(i,j{+}1)\to(i,j)$ |
+  | Range                 | Direction | Tail → Head         |
+  | --------------------- | --------- | ------------------- |
+  | $[0,\ n_v)$           | DOWN      | $(i,j)\to(i{+}1,j)$ |
+  | $[n_v,\ 2n_v)$        | UP        | $(i{+}1,j)\to(i,j)$ |
+  | $[2n_v,\ 2n_v{+}n_h)$ | RIGHT     | $(i,j)\to(i,j{+}1)$ |
+  | $[2n_v{+}n_h,\ N_f)$  | LEFT      | $(i,j{+}1)\to(i,j)$ |
 
   with $n_v=(m{-}1)n$, $n_h=m(n{-}1)$, $N_f = 2n_v+2n_h$ forward arcs. The reverse partner of forward arc $a$ is $a+N_f$. (Per-arc cost vectors must follow this same `[DOWN, UP, RIGHT, LEFT]` order.)
 - **Supply/Demand**: node $i$ has supply $b_i = r_i$ (its residue / winding count); the problem is balanced, $\sum_i b_i = 0$.
@@ -679,7 +679,7 @@ relaxed one.
 
 Float LLR costs are converted to `i32` to drive Dial's bucket-queue Dijkstra.
 The **production** Carballo path scales by `CARBALLO_COST_SCALE = 6.0` with a
-50-nat LLR cap, so the maximum integer cost is `6 × 50 = 300`. The diagnostic
+50-nat LLR cap, so the maximum integer cost is `6 x 50 = 300`. The diagnostic
 parity path (`compute_carballo_costs_parity`) scales by `100` to match Python
 `ww-orig`. (A separate `COST_SCALE = 100.0` constant is used by the CRLB and
 convex cost builders, **not** by the production Carballo path.)
@@ -689,7 +689,7 @@ convex cost builders, **not** by the production Carballo path.)
 Masks (`true` = valid) are handled differently per stage and per entry point:
 
 - **Residue compute** (`compute_with_mask`): zeros any interior residue whose
-  2×2 pixel loop touches a masked pixel, and skips boundary-edge deposits with a
+  2x2 pixel loop touches a masked pixel, and skips boundary-edge deposits with a
   masked endpoint (§4.2). Without this, `0+0j` masked pixels generate a wall of
   spurious residues at every mask boundary.
 - **Network construction**: *two* mechanisms (§6.3). Arc-forbidding
@@ -710,7 +710,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
   end-to-end runtime. The SSP fallback is the sharpest cost if it uses the
   multi-source search; the full-Dijkstra single-tile path therefore uses
   single-source SSP (see §9.6).
-- **Memory**: `O(pixels)`; a whole-image solve of a 4176×4257 NISAR frame peaks
+- **Memory**: `O(pixels)`; a whole-image solve of a 4176x4257 NISAR frame peaks
   at ≈6.4 GB RSS (the ≈72 M-arc residual network). Tiling bounds peak memory to
   tile scale.
 
@@ -720,7 +720,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
    `ATBD-3d.md`.
 2. **Statistical model**: assumes the Carballo/Lee cost model fits the data, and
    an accurate effective number of looks.
-3. **Filter size**: 7×7 smoothing (Carballo's original used 5×5).
+3. **Filter size**: 7x7 smoothing (Carballo's original used 5x5).
 4. **Tiled robustness layer is heuristic (opt-in, not validated)**: the opt-in
    tiled path (`unwrap_tiled_robust`) — seam reconciliation, coarse anchor +
    multi-scale cascade, sliver healing, gated multi-shift re-solve — is
@@ -738,23 +738,23 @@ baseline.
 
 **Entry point → solver / cost / mask map**
 
-| Public fn | Network | Cost | Dijkstra | Mask | Status |
-|---|---|---|---|---|---|
-| `unwrap` **(public default → `unwrap_linear`)** | unit-capacity | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)** — default since 2026-06-03 |
-| `unwrap` *tiled path* (opt-in: `multilook>1`, explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`) | reuse (per tile) | `compute_carballo_costs` | early-exit, 50 it + multi-source SSP | forbid (tiled) | **NOT validated** — worked on select scenes, failed on most; no working version |
-| `unwrap_reuse` (whole-image reuse) | reuse | `compute_carballo_costs` | early-exit, 50 it | cost-zero + NaN | reaches its cost optimum; **not validated** as default (PHASS path, opt-in) |
-| `unwrap_linear` (single-tile; the default kernel) | unit-capacity | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)**; masked frames balanced via adaptive fallback |
-| `unwrap_convex` | convex | `compute_snaphu_smooth_costs` | heap | forbid | research prototype (#65) |
-| `components_only` | unit-capacity | `compute_carballo_costs` | forbid | no MCF solve | — |
+| Public fn                                                                                               | Network          | Cost                            | Dijkstra                                                                | Mask            | Status                                                                          |
+| ------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------- | ----------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------- |
+| `unwrap` **(public default → `unwrap_linear`)**                                                         | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)** — default since 2026-06-03                         |
+| `unwrap` *tiled path* (opt-in: `multilook>1`, explicit `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`) | reuse (per tile) | `compute_carballo_costs`        | early-exit, 50 it + multi-source SSP                                    | forbid (tiled)  | **NOT validated** — worked on select scenes, failed on most; no working version |
+| `unwrap_reuse` (whole-image reuse)                                                                      | reuse            | `compute_carballo_costs`        | early-exit, 50 it                                                       | cost-zero + NaN | reaches its cost optimum; **not validated** as default (PHASS path, opt-in)     |
+| `unwrap_linear` (single-tile; the default kernel)                                                       | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **verified (Python parity)**; masked frames balanced via adaptive fallback      |
+| `unwrap_convex`                                                                                         | convex           | `compute_snaphu_smooth_costs`   | heap                                                                    | forbid          | research prototype (#65)                                                        |
+| `components_only`                                                                                       | unit-capacity    | `compute_carballo_costs`        | forbid                                                                  | no MCF solve    | —                                                                               |
 
-**Single-tile benchmark (D_077, 4176×4257, vs production GUNW = SNAPHU).** The
+**Single-tile benchmark (D_077, 4176x4257, vs production GUNW = SNAPHU).** The
 single-tile kernel is both faster and more accurate than single-tile SNAPHU:
 
-| Unwrapper (single tile) | Runtime | per-component match vs production |
-|---|---|---|
-| **whirlwind `unwrap_linear`** | **≈37 s** | **99.49 %** (matches Python `ww-orig`) |
-| SNAPHU (`cost=smooth, init=mcf`) | ≈588 s | 99.30 % |
-| PHASS | ≈19.6 s | 94.7 % |
+| Unwrapper (single tile)          | Runtime   | per-component match vs production      |
+| -------------------------------- | --------- | -------------------------------------- |
+| **whirlwind `unwrap_linear`**    | **≈37 s** | **99.49 %** (matches Python `ww-orig`) |
+| SNAPHU (`cost=smooth, init=mcf`) | ≈588 s    | 99.30 %                                |
+| PHASS                            | ≈19.6 s   | 94.7 %                                 |
 
 Peak RSS ≈6.4 GB (no swap). Reference SNAPHU/PHASS timings are in
 `snaphu_ref/D_077.log` / `phass_ref.log`. Benchmark the verified path with
@@ -768,21 +768,21 @@ Reproduce with `scripts/sweep_all_unwrappers.sh` (→ `results.csv` + `SUMMARY.m
 it drives `scripts/run_native_one.py` (whirlwind / ww-orig, in the whirlwind env)
 and `scripts/tophu_compare.py` (PHASS / ICU / snaphu, in an isce3+tophu env).
 
-| frame | ww % | ww s | ww GB | ww-orig % | orig s | PHASS % | ph s | ICU %/s |
-|---|---|---|---|---|---|---|---|---|
-| A_013 | 100.0 | 13.5 | 3.2 | 100.0 | 35.5 | 99.3 | 6.3 | 100.0 / 525 |
-| A_016 | 100.0 | 19.8 | 3.6 | 100.0 | 44.0 | 99.6 | 12.5 | — |
-| A_018 | 100.0 | 18.0 | 3.4 | 100.0 | 39.6 | 85.7 | 4.7 | — |
-| A_020 | 99.8 | 27.6 | 3.7 | 99.8 | 52.0 | 99.4 | 7.3 | — |
-| A_022 | 100.0 | 25.3 | 3.7 | 100.0 | 48.3 | 99.4 | 6.4 | — |
-| A_025 | 58.0 | 30.2 | 3.8 | **70.3** | 54.5 | 67.0 | 5.6 | — |
-| A_028 | 100.0 | 33.4 | 3.6 | 100.0 | 55.3 | 92.9 | 11.5 | — |
-| A_030 | 100.0 | 35.5 | 4.1 | 100.0 | 63.1 | 75.4 | 6.1 | — |
-| D_074 | 98.8 | 18.5 | 3.5 | 98.8 | 37.4 | 91.2 | 5.7 | 86.3 / 0.6 |
-| D_075 | 88.2 | 82.4 | 3.9 | 88.2 | 106.3 | 48.4 | 15.4 | — |
-| D_077 | 99.5 | 61.9 | 3.5 | 99.5 | 85.7 | 94.7 | 16.8 | — |
-| D_078 | 99.8 | 37.9 | 3.5 | 99.9 | 59.1 | 96.9 | 10.5 | — |
-| A_035 | 100.0 | 22.5 | 3.2 | 100.0 | 46.7 | 94.6 | 8.5 | — |
+| frame | ww %  | ww s | ww GB | ww-orig % | orig s | PHASS % | ph s | ICU %/s     |
+| ----- | ----- | ---- | ----- | --------- | ------ | ------- | ---- | ----------- |
+| A_013 | 100.0 | 13.5 | 3.2   | 100.0     | 35.5   | 99.3    | 6.3  | 100.0 / 525 |
+| A_016 | 100.0 | 19.8 | 3.6   | 100.0     | 44.0   | 99.6    | 12.5 | —           |
+| A_018 | 100.0 | 18.0 | 3.4   | 100.0     | 39.6   | 85.7    | 4.7  | —           |
+| A_020 | 99.8  | 27.6 | 3.7   | 99.8      | 52.0   | 99.4    | 7.3  | —           |
+| A_022 | 100.0 | 25.3 | 3.7   | 100.0     | 48.3   | 99.4    | 6.4  | —           |
+| A_025 | 58.0  | 30.2 | 3.8   | **70.3**  | 54.5   | 67.0    | 5.6  | —           |
+| A_028 | 100.0 | 33.4 | 3.6   | 100.0     | 55.3   | 92.9    | 11.5 | —           |
+| A_030 | 100.0 | 35.5 | 4.1   | 100.0     | 63.1   | 75.4    | 6.1  | —           |
+| D_074 | 98.8  | 18.5 | 3.5   | 98.8      | 37.4   | 91.2    | 5.7  | 86.3 / 0.6  |
+| D_075 | 88.2  | 82.4 | 3.9   | 88.2      | 106.3  | 48.4    | 15.4 | —           |
+| D_077 | 99.5  | 61.9 | 3.5   | 99.5      | 85.7   | 94.7    | 16.8 | —           |
+| D_078 | 99.8  | 37.9 | 3.5   | 99.9      | 59.1   | 96.9    | 10.5 | —           |
+| A_035 | 100.0 | 22.5 | 3.2   | 100.0     | 46.7   | 94.6    | 8.5  | —           |
 
 Findings:
 - **Parity: whirlwind ≡ ww-orig on 12 of 13 frames** (identical to ±0.1 %). The
@@ -790,12 +790,12 @@ Findings:
   **99.99 %** by the default-on bridging pass (`unwrap(bridge=True)`) — so with the
   default settings whirlwind is at-or-above ww-orig on **all 13** (see the A_025
   bridging section below).
-- whirlwind is **~1.5–2× faster than Python ww-orig** (Rust) at ~3–4 GB vs 4–5 GB,
-  and single-tile snaphu is ~588 s — so whirlwind is **~7–45× faster than snaphu**
+- whirlwind is **~1.5–2x faster than Python ww-orig** (Rust) at ~3–4 GB vs 4–5 GB,
+  and single-tile snaphu is ~588 s — so whirlwind is **~7–45x faster than snaphu**
   while matching/beating its per-comp.
 - whirlwind **beats PHASS on quality** on most frames, sometimes by a lot
   (D_075 88.2 vs 48.4; A_030 100 vs 75.4; A_028 100 vs 92.9; A_018 100 vs 85.7),
-  though PHASS is ~2–4× faster (5–17 s) at ~2 GB.
+  though PHASS is ~2–4x faster (5–17 s) at ~2 GB.
 - **The *isce3* ICU (via tophu) is impractical** — 525 s on the *easy* frame
   (the 0.6 s on D_074 is an artefact of its 94 %-masked tiny valid region);
   sampled, not swept. The **original *isce2* mroipac ICU** (a different engine)
@@ -808,12 +808,12 @@ isce2 env, scored with the *same* `percomp_match`. ICU estimates coherence
 internally (phase-sigma), so masked pixels are filled with **random** phase (not
 zeroed — a constant region looks perfectly coherent and corrupts ICU's seeding).
 
-| frame | isce2-ICU %/s | coverage | whirlwind % | note |
-|---|---|---|---|---|
-| A_016 | 100.0 / 120 | 99.6 % | 100.0 | matches |
-| D_074 | 100.0 / 157 | 99.9 % | 98.8 | matches/beats |
-| D_077 | 96.2 / 133 | 80.7 % | 99.5 | ICU drops low-coh land below its growing threshold |
-| A_025 | **73.2** / 122 | 99.9 % | **58.0** | **ICU beats whirlwind on the river** |
+| frame | isce2-ICU %/s  | coverage | whirlwind % | note                                               |
+| ----- | -------------- | -------- | ----------- | -------------------------------------------------- |
+| A_016 | 100.0 / 120    | 99.6 %   | 100.0       | matches                                            |
+| D_074 | 100.0 / 157    | 99.9 %   | 98.8        | matches/beats                                      |
+| D_077 | 96.2 / 133     | 80.7 %   | 99.5        | ICU drops low-coh land below its growing threshold |
+| A_025 | **73.2** / 122 | 99.9 %   | **58.0**    | **ICU beats whirlwind on the river**               |
 
 So the classic ICU is *not* "just bad": it is fast (~2–3 min), hits 100 % with
 full coverage on clean frames, and on the A_025 river its tree/bootstrap
@@ -836,7 +836,7 @@ post-integration pass over the right partition:
   because the integrator already bridged them across low-cost cuts.) Putting a shift
   variable on conncomps was the old post-hoc dead-end; on integration components a
   single-region (or coherently connected) frame is a structural no-op.
-- Each region is re-levelled to a coherent ×8 coarse anchor, with the shift taken
+- Each region is re-levelled to a coherent x8 coarse anchor, with the shift taken
   **relative to the largest region**, gated to regions the coarse scale connects
   (data-supported) and vetoed unless the offset is cleanly integer.
 - Connected-components labelling is a native binding (`whirlwind.label_components`,
@@ -845,14 +845,14 @@ post-integration pass over the right partition:
 13-frame validation (`scripts/bench_bridge_all.py`, per-comp before/after + pixels
 moved; bridge cost +0.5–1.0 s/frame):
 
-| | A_025 | the other 12 |
-|---|---|---|
-| per-comp | **58.0 → 99.99 %** | unchanged (0 regressions) |
+|              | A_025                    | the other 12                                  |
+| ------------ | ------------------------ | --------------------------------------------- |
+| per-comp     | **58.0 → 99.99 %**       | unchanged (0 regressions)                     |
 | pixels moved | 5.25 M (the offset slab) | 0 on 11/13; D_075 moved 0.1 % (score-neutral) |
 
 So **whirlwind now matches/at-or-above ww-orig on all 13 frames.** Prototype +
 diagnostics: `scripts/proto_bridge_a025.py`, `scripts/diag_bridge_partition.py`.
-Future work: the wider, fully-decorrelated-gap case where ×8 does *not* bridge (the
+Future work: the wider, fully-decorrelated-gap case where x8 does *not* bridge (the
 offset is then a labelled *convention*, not a measurement) — A_025's river was narrow
 enough to be genuinely data-supported.
 
@@ -885,16 +885,16 @@ with **no clamp**. The invariant is guarded by the debug test
 reaches the SSP fallback); the tiled/default path is byte-unchanged (only
 `run_full_dijkstra`'s fall-through branches to the single-source variant).
 
-**Per-source Dial-`k` rescan eliminated (2026-06-04, ~1.4–2.4× on residue-heavy
+**Per-source Dial-`k` rescan eliminated (2026-06-04, ~1.4–2.4x on residue-heavy
 frames).** `WHIRLWIND_DEBUG` timing revealed the single-source SSP's real cost was
 *not* the Dijkstra traversals but the **`max_reduced_cost_par` rescan it ran once
-per source** to size the Dial buckets — an O(E) scan over ~38 M arcs × ~1k sources
+per source** to size the Dial buckets — an O(E) scan over ~38 M arcs x ~1k sources
 = **34 s of D_077's 61 s (~52 %)**. A naive hoist is unsafe (the capped potential
 update *grows* potentials, so the max reduced cost rises and a stale `k` would
 alias). Fix: maintain `max_rc` across sources (one tight scan), and if any
 relaxation sees `rc ≥ k`, discard that source's partial Dijkstra, recompute
 `max_rc`, and retry — an under-sized `k` can never commit. **D_077 61→37 s, D_075
-2.4×, others 1.4–1.7×; optimal cost byte-identical, per-comp unchanged on all 13
+2.4x, others 1.4–1.7x; optimal cost byte-identical, per-comp unchanged on all 13
 frames, 79/79 core tests green.** Profiler: `scripts/prof_pdssp.py`,
 `WHIRLWIND_DEBUG=1` (`max_reduced_cost_scan=…ms`).
 
@@ -929,22 +929,22 @@ frames, 79/79 core tests green.** Profiler: `scripts/prof_pdssp.py`,
 
 ## Appendix A: Mathematical Notation
 
-| Symbol | Description |
-|--------|-------------|
-| $\psi$ | Unwrapped phase |
-| $\phi$ | Wrapped phase (measured) |
-| $\hat{\psi}$ | Observed wrapped phase (following Carballo notation) |
-| $\phi_s$ | True signal phase |
-| $\phi_N$ | Phase noise |
-| $k$, $\Delta k$ | Integer cycle ambiguity / correction |
-| $\gamma$, $\hat{\gamma}$ | True coherence / sample coherence |
-| $L$ | Number of looks |
-| $r_{i,j}$ | Residue at node $(i,j)$ |
-| $c_{ij}$ | Cost on arc $(i,j)$ |
-| $\bar{c}_{ij}$ | Reduced cost: $c_{ij} - \pi_i + \pi_j$ |
-| $f_{ij}$ | Flow on arc $(i,j)$ |
-| $\pi_i$ | Potential (dual variable) at node $i$ |
-| $b_i$ | Supply/demand at node $i$ (equals residue) |
+| Symbol                   | Description                                          |
+| ------------------------ | ---------------------------------------------------- |
+| $\psi$                   | Unwrapped phase                                      |
+| $\phi$                   | Wrapped phase (measured)                             |
+| $\hat{\psi}$             | Observed wrapped phase (following Carballo notation) |
+| $\phi_s$                 | True signal phase                                    |
+| $\phi_N$                 | Phase noise                                          |
+| $k$, $\Delta k$          | Integer cycle ambiguity / correction                 |
+| $\gamma$, $\hat{\gamma}$ | True coherence / sample coherence                    |
+| $L$                      | Number of looks                                      |
+| $r_{i,j}$                | Residue at node $(i,j)$                              |
+| $c_{ij}$                 | Cost on arc $(i,j)$                                  |
+| $\bar{c}_{ij}$           | Reduced cost: $c_{ij} - \pi_i + \pi_j$               |
+| $f_{ij}$                 | Flow on arc $(i,j)$                                  |
+| $\pi_i$                  | Potential (dual variable) at node $i$                |
+| $b_i$                    | Supply/demand at node $i$ (equals residue)           |
 
 ---
 
@@ -958,24 +958,24 @@ def unwrap_linear_parity(igram, corr, nlooks, mask=None):
     Parameters
     ----------
     igram : array_like, complex
-        Complex interferogram (m × n)
+        Complex interferogram (m x n)
     corr : array_like, float
-        Coherence values [0, 1] (m × n)
+        Coherence values [0, 1] (m x n)
     nlooks : float
         Effective number of looks (≥ 1)
     mask : array_like, bool, optional
-        Valid pixel mask (True = valid) (m × n)
+        Valid pixel mask (True = valid) (m x n)
 
     Returns
     -------
     unwrapped_phase : ndarray, float
-        Unwrapped phase in radians (m × n)
+        Unwrapped phase in radians (m x n)
     """
     # Stage 1: Extract wrapped phase
     phase = angle(igram)  # [-π, π]
 
     # Stage 2: Compute residues, then match Python ww-orig boundary semantics
-    residue = compute_residues_unmasked(phase)  # (m+1) × (n+1)
+    residue = compute_residues_unmasked(phase)  # (m+1) x (n+1)
     zero_boundary_frame(residue)
 
     # Stage 3: Compute ww-orig parity costs

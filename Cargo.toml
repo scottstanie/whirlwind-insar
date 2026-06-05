@@ -18,7 +18,7 @@ edition = "2024"
 license = "MIT"
 authors = ["Scott Staniewicz <scott.stanie@utexas.edu>"]
 repository = "https://github.com/scottstanie/whirlwind"
-description = "Bayesian min-cost-flow phase unwrapper for InSAR"
+description = "Rust-backed 2D phase unwrapper for InSAR"
 
 [workspace.dependencies]
 ndarray = { version = "0.16", features = ["rayon"] }

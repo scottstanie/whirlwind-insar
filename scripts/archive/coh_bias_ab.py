@@ -1,7 +1,7 @@
 """A/B: ``ww.unwrap`` accuracy with and without ``WHIRLWIND_COH_BIAS_CORRECT``.
 
 Runs the same uniform-coherence noisy ramps that ``bench.py`` uses (γ ∈
-{0.3, 0.5, 0.7, 0.9} × L ∈ {5, 20}) but reports RMSE-vs-truth and integer
+{0.3, 0.5, 0.7, 0.9} x L ∈ {5, 20}) but reports RMSE-vs-truth and integer
 cycle errors instead of wall-time. Invocation:
 
     uv run python scripts/coh_bias_ab.py        # raw sample coherence
@@ -19,6 +19,7 @@ worse. See the per-scene numbers below and the discussion in
 This script is reproducible evidence supporting the "leave it default-off"
 decision recorded in ``cost/mod.rs::coh_bias_correct_enabled``.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,7 +30,9 @@ import numpy as np
 import whirlwind as ww
 
 
-def make_scenes(seed: int = 42) -> list[tuple[float, int, np.ndarray, np.ndarray, np.ndarray]]:
+def make_scenes(
+    seed: int = 42,
+) -> list[tuple[float, int, np.ndarray, np.ndarray, np.ndarray]]:
     scenes = []
     for gamma in (0.3, 0.5, 0.7, 0.9):
         for nlooks in (5, 20):
@@ -51,7 +54,7 @@ def metric(unw: np.ndarray, truth: np.ndarray) -> tuple[float, int]:
     k = int(np.round(float(np.median(diff)) / (2 * np.pi)))
     err = unw + 2 * np.pi * k - truth
     err = err[np.isfinite(err)]
-    return float(np.sqrt(np.mean(err ** 2))), int(np.sum(np.abs(err) > np.pi))
+    return float(np.sqrt(np.mean(err**2))), int(np.sum(np.abs(err) > np.pi))
 
 
 def main() -> None:

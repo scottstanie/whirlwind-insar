@@ -12,7 +12,6 @@ from typing import TypedDict
 import numpy as np
 from numpy.typing import NDArray
 
-
 def _unwrap_native(
     igram: NDArray[np.complex64],
     corr: NDArray[np.float32],
@@ -42,7 +41,7 @@ def _unwrap_native(
     ``multilook>1``, or ``WHIRLWIND_UNWRAP_SOLVER=tiled``. ``WHIRLWIND_UNWRAP_SOLVER``
     = ``linear|tiled|reuse|convex`` (default ``linear``); reuse/convex are
     experimental/research, not production. ``multilook=L`` (L>1) coherently
-    down-looks ×L first and routes through the opt-in tiled path.
+    down-looks xL first and routes through the opt-in tiled path.
 
     Components: grown GLOBALLY from the Carballo cost grid, independent of the
     (tiled) phase solve — a pixel edge is a cut when an underlying arc is
@@ -103,7 +102,6 @@ def unwrap_crlb_grounded(
     internal pairing for the bulk of residues on noisy data.
     """
 
-
 def unwrap_sparse(
     points: NDArray[np.float64],
     wrapped_phase: NDArray[np.float32],
@@ -122,14 +120,11 @@ def unwrap_sparse(
     edges come back as ``NaN`` in the output.
     """
 
-
 def compute_residues(wrapped_phase: NDArray[np.float32]) -> NDArray[np.int32]:
     """Compute the integer residue grid from a wrapped-phase array."""
 
 def diagonal_ramp(m: int, n: int) -> NDArray[np.float32]: ...
-
 def wrap_phase(unw: NDArray[np.float32]) -> NDArray[np.float32]: ...
-
 def label_components(mask: NDArray[np.bool_]) -> tuple[NDArray[np.int32], int]:
     """4-connected component labels of a boolean mask -> ``(labels, n)``."""
 
@@ -155,13 +150,11 @@ def simulate_ifg(
     seed: int,
 ) -> tuple[NDArray[np.complex64], NDArray[np.float32]]: ...
 
-
 class ClosureResult(TypedDict):
-    corrected:   NDArray[np.float32]   # (n_edges, m, n)
-    corrections: NDArray[np.int16]     # (n_edges, m, n)
-    date_phases: NDArray[np.float32]   # (n_dates, m, n)
-    closure_rms: NDArray[np.float32]   # (m, n)
-
+    corrected: NDArray[np.float32]  # (n_edges, m, n)
+    corrections: NDArray[np.int16]  # (n_edges, m, n)
+    date_phases: NDArray[np.float32]  # (n_dates, m, n)
+    closure_rms: NDArray[np.float32]  # (m, n)
 
 def closure_correct(
     unw_stack: NDArray[np.float32],
@@ -181,13 +174,11 @@ def closure_correct(
     Returns a dict; see ClosureResult.
     """
 
-
 class RefineResult(TypedDict):
-    corrected:           NDArray[np.float32]  # (E, m, n)
-    corrections:         NDArray[np.int16]    # (E, m, n) — additive on top of input
-    residual_violations: NDArray[np.uint16]   # (m, n)
-    iterations:          NDArray[np.uint8]    # (m, n)
-
+    corrected: NDArray[np.float32]  # (E, m, n)
+    corrections: NDArray[np.int16]  # (E, m, n) — additive on top of input
+    residual_violations: NDArray[np.uint16]  # (m, n)
+    iterations: NDArray[np.uint8]  # (m, n)
 
 def closure_refine_mcf(
     unw_stack: NDArray[np.float32],
@@ -204,7 +195,6 @@ def closure_refine_mcf(
     Routes integer cycle violations to the highest-σ² edge in each cycle.
     """
 
-
 def quality_map(
     unw_stack: NDArray[np.float32],
     edges_from: NDArray[np.uint32],
@@ -220,7 +210,6 @@ def quality_map(
     `quality_triangles` for phase-linked stacks with triangle redundancy.
     """
 
-
 def quality_triangles(
     unw_stack: NDArray[np.float32],
     edges_from: NDArray[np.uint32],
@@ -233,7 +222,6 @@ def quality_triangles(
     stacks where short-baseline triangles are the natural redundancy.
     """
 
-
 def goldstein(
     igram: NDArray[np.complex64],
     alpha: float = ...,
@@ -242,12 +230,11 @@ def goldstein(
     """Goldstein adaptive phase filter (block-parallel Rust + rustfft).
 
     Bit-equivalent to the prior numpy implementation but typically
-    5–10× faster on large scenes. Two ww-specific choices baked in
+    5–10x faster on large scenes. Two ww-specific choices baked in
     (see ``whirlwind-core/src/goldstein.rs``):
     1. Input normalised to unit magnitude before filtering.
     2. Hann overlap-add window (smoother than triangle).
     """
-
 
 def set_num_threads(n: int) -> None:
     """Set the rayon thread pool size used for all parallel ww work.
@@ -258,7 +245,6 @@ def set_num_threads(n: int) -> None:
     ``WHIRLWIND_NUM_THREADS`` > ``RAYON_NUM_THREADS`` > this function
     > rayon default (all logical CPUs).
     """
-
 
 def num_threads() -> int:
     """Return the current rayon thread pool size used by ww."""

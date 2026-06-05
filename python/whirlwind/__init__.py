@@ -77,14 +77,12 @@ def unwrap_crlb_stack(
 
     if mask is not None:
         if mask.ndim == 2:
-            assert mask.shape == (m, n), (
-                f"2D mask shape {mask.shape} != ({m}, {n})"
-            )
+            assert mask.shape == (m, n), f"2D mask shape {mask.shape} != ({m}, {n})"
             per_ig_mask = None
         elif mask.ndim == 3:
-            assert mask.shape == igram_cube.shape, (
-                f"3D mask shape {mask.shape} != igram cube shape {igram_cube.shape}"
-            )
+            assert (
+                mask.shape == igram_cube.shape
+            ), f"3D mask shape {mask.shape} != igram cube shape {igram_cube.shape}"
             per_ig_mask = mask
         else:
             raise ValueError(f"mask must be 2D or 3D, got {mask.ndim}D")
@@ -152,83 +150,122 @@ def unwrap(
     goldstein_alpha: float = 0.0,
     goldstein_psize: int = 64,
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
-    """MCF unwrap returning ``(unwrapped_phase, conn_components)``.
+    """Unwrap a wrapped interferogram with a minimum-cost-flow (MCF) solver.
 
-    The main entry point. By default the phase is solved with the **verified
-    single-tile linear solver** (``unwrap_linear``: ww-orig-parity Carballo cost,
-    capacity-1 MCF, adaptive PD/SSP fallback that drains heavily-masked frames),
-    which matches Python ``ww-orig`` across the validated NISAR frame set. The
-    older tiled robustness pipeline (auto-tile, multi-shift re-solve, coarse
-    anchor + cascade, seam-repair) is **opt-in** — it is not yet validated on all
-    NISAR frames (it can produce artifacts on fragmented scenes) — selected by
-    ``multilook > 1``, an explicit ``tile_size``, or ``WHIRLWIND_UNWRAP_SOLVER=
-    tiled``. The reuse (PHASS) whole-image solver (``=reuse``) is likewise opt-in
-    and not yet validated. Connected components are grown SNAPHU-style globally
-    from the Carballo coherence cost, independent of the phase solver.
+    Main unwrapping entry point. Estimates the integer number of 2π cycles
+    at each pixel, and adds them back to the wrapped phase, returning the
+    continuous unwrapped phase together with connected-component labels.
 
-    Optionally pre-filters with the Goldstein adaptive filter (off by
-    default; set ``goldstein_alpha > 0`` to enable). When enabled, Goldstein
-    (Goldstein & Werner 1998) informs the MCF, then the resulting 2π·k
-    integer-cycle field is *applied to the original wrapped phase* — so the
-    output preserves every per-pixel phase value the caller passed in;
-    Goldstein only decides which 2π cycle each pixel sits on. (The
-    Goldstein-on vs -off trade-off is currently under evaluation.)
+    The ``conncomp`` output labels regions believed to be unwrapped
+    self-consistently — one positive integer per region, ``0`` for background or
+    dropped pixels — analogous to SNAPHU's connected components. They are grown
+    globally from the coherence cost.
+
+    A fast default post-pass (``bridge``) repairs the relative 2π level of
+    regions that the valid mask splits apart (e.g. land slabs separated by a
+    low-coherence river).
+
 
     Parameters
     ----------
-    igram : complex64
-        Wrapped interferogram. Mask out-of-data pixels to ``0+0j``.
-    corr : float32
-        Sample coherence in ``[0, 1]``.
+    igram : ndarray of complex64
+        Wrapped interferometric phase.
+        Out-of-bounds or nodata pixels should be ``0+0j``.
+    corr : ndarray of float32
+        Sample coherence in ``[0, 1]``, same shape as ``igram``.
     nlooks : float
-        Effective number of looks (≥ 1).
-    mask : bool, optional
-        Valid-pixel mask (True = valid).
+        Effective number of looks used to estimate ``corr`` (≥ 1).
+        Higher number of looks means higher confidence in the estimates of `corr`.
+        This sets the width of the coherence cost model.
+    mask : ndarray of bool, optional
+        Valid-pixel mask, ``True`` = valid. Defaults to ``igram != 0``.
     bridge : bool, default True
-        Solver-aware integration-component gauge bridging (a fast post-pass).
-        When the valid mask splits into several disconnected regions (e.g. two
-        river/water-separated land slabs), the MCF integrator seeds each at an
-        arbitrary 2π level, so their *relative* offset is under-determined. This
-        pass re-levels each region to a coherent ×8 coarse anchor (shifts taken
-        *relative to the largest region*), gated to regions the coarse scale
-        actually connects and vetoed unless the offset is cleanly integer — so a
-        single-region or coherently-connected frame is a strict no-op. Fixes the
-        NISAR A_025 river frame (58 → ~100 %) with zero regression elsewhere.
-        Set ``False`` (or ``WHIRLWIND_NO_BRIDGE=1``) to disable.
+        Flag to perform a post-processing step to re-level regions that the
+        valid mask splits into disconnected pieces (e.g. two land slabs separated
+        by a low-coherence river).
+        The MCF seeds each piece at an arbitrary 2π level, so their *relative* offset is
+        under-determined; this post-pass snaps each region to a coherent x8
+        coarse anchor (shifts taken relative to the largest region), gated to
+        regions the coarse scale actually connects and applied only when the
+        offset is cleanly integer. A single-region or coherently-connected frame
+        is a strict no-op. Fixes the NISAR A_025 river frame (58 → ~100 %) with
+        no regression elsewhere. Disable with ``bridge=False`` or
+        ``WHIRLWIND_NO_BRIDGE=1``.
     multilook : int, default 1
-        > 1 coherently down-looks first (noisy / moderate-coherence scenes),
-        unwraps the coarse frame, then upsamples.
-    tile_size, tile_overlap : int
-        ``tile_size=0`` (default) uses the single-tile linear solver (whole
-        image). Set ``tile_size`` ≥ 4 (with ``tile_overlap`` ≥ 2) to opt into
-        the tiled pipeline at that tile size (auto-512/overlap-64 if a tiled
-        path is otherwise requested, e.g. via ``multilook`` or the env knob).
-    cost_threshold, min_size_px, max_ncomps :
-        Connected-component growing parameters (see
-        :class:`whirlwind_core::conncomp::ConnCompParams`).
+        ``> 1`` coherently down-looks the scene first (helps noisy / moderate-
+        coherence frames), unwraps the coarse frame, then upsamples.
     goldstein_alpha : float, default 0.0
-        Goldstein filter strength in ``[0, 1]``. 0 (default) disables
-        filtering; a typical "on" value is 0.7.
+        Goldstein adaptive-filter strength in ``[0, 1]``. ``0`` (default)
+        disables filtering; a typical "on" value is ``0.7``. When enabled, the
+        filter only informs the MCF — the integer 2π·k field it produces is
+        applied to the *original* wrapped phase, so every per-pixel value the
+        caller passed in is preserved.
     goldstein_psize : int, default 64
         Goldstein FFT patch size (only used when ``goldstein_alpha > 0``).
 
+    Other Parameters
+    ----------------
+    cost_threshold : int, default 50
+        Connected-component boundary threshold in raw cost units. An edge becomes
+        a component boundary when its statistical cost is ``<= cost_threshold``.
+        Larger ⇒ more boundaries ⇒ smaller, safer components. Prefer the physical
+        knobs below over tuning this directly.
+    conncomp_sigma : float or None, optional
+        Set ``cost_threshold`` from a Gaussian-equivalent noise level: an edge is
+        cut when its one-cycle-correction probability exceeds
+        ``0.5·erfc(sigma/√2)``. Higher ``sigma`` ⇒ stricter ⇒ more boundaries.
+        ``sigma ≈ 3.5`` reproduces the default ``cost_threshold=50``. Overrides
+        ``cost_threshold`` and ``conncomp_cycle_prob`` when given.
+    conncomp_cycle_prob : float or None, optional
+        Set ``cost_threshold`` directly from a target per-edge one-cycle-
+        correction probability (via :func:`cost_threshold_from_cycle_prob`). This
+        is *local edge reliability*, not a global residue-pairing probability.
+        Lower ``cycle_prob`` ⇒ stricter ⇒ more boundaries; ``≈ 2.4e-4`` matches
+        the default. Overrides ``cost_threshold`` (but ``conncomp_sigma`` wins if
+        both are given).
+    conncomp_coh_floor : float or None, optional
+        After labelling, drop any pixel whose coherence is below this floor to
+        background (label ``0``). Unlike ``cost_threshold``, a coherence floor
+        cuts regardless of the local gradient, so it cleanly removes noisy
+        low-coherence "percolation" that the cost threshold alone leaves behind.
+    min_size_px : int, default 100
+        Discard connected components smaller than this many pixels.
+    max_ncomps : int, default 1024
+        Maximum number of connected components to keep (largest first).
+    tile_size : int, default 0
+        ``0`` uses the verified single-tile solver (whole image). A value ``≥ 4``
+        (with ``tile_overlap ≥ 2``) opts into the **experimental, unvalidated**
+        tiled pipeline at that tile size — it can produce seam artifacts on
+        fragmented scenes and is not part of the validated results.
+    tile_overlap : int, default 0
+        Overlap in pixels between tiles when the tiled pipeline is used.
+
     Returns
     -------
-    unwrapped : float32, shape ``(m, n)``
-    conncomp : uint32, shape ``(m, n)``
-        Component labels; 0 = background / dropped.
+    unwrapped : ndarray of float32, shape ``(m, n)``
+        Unwrapped phase, in radians.
+    conncomp : ndarray of uint32, shape ``(m, n)``
+        Connected-component labels; ``0`` = background / dropped.
     """
     if conncomp_sigma is not None:
         import math
+
         conncomp_cycle_prob = 0.5 * math.erfc(conncomp_sigma / math.sqrt(2.0))
     if conncomp_cycle_prob is not None:
         cost_threshold = cost_threshold_from_cycle_prob(conncomp_cycle_prob)
 
     if goldstein_alpha <= 0:
         unw, cc = _unwrap_native(
-            igram, corr, nlooks,
-            mask=mask, tile_size=tile_size, tile_overlap=tile_overlap, multilook=multilook,
-            cost_threshold=cost_threshold, min_size_px=min_size_px, max_ncomps=max_ncomps,
+            igram,
+            corr,
+            nlooks,
+            mask=mask,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            multilook=multilook,
+            cost_threshold=cost_threshold,
+            min_size_px=min_size_px,
+            max_ncomps=max_ncomps,
         )
     else:
         ig_filt = goldstein(igram, alpha=goldstein_alpha, psize=goldstein_psize)
@@ -236,9 +273,16 @@ def unwrap(
             ig_filt = ig_filt.copy()
             ig_filt[~mask] = 0
         unw_filt, cc = _unwrap_native(
-            ig_filt, corr, nlooks,
-            mask=mask, tile_size=tile_size, tile_overlap=tile_overlap, multilook=multilook,
-            cost_threshold=cost_threshold, min_size_px=min_size_px, max_ncomps=max_ncomps,
+            ig_filt,
+            corr,
+            nlooks,
+            mask=mask,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            multilook=multilook,
+            cost_threshold=cost_threshold,
+            min_size_px=min_size_px,
+            max_ncomps=max_ncomps,
         )
         # Transfer the integer 2π·k field from the filtered unwrap onto the
         # *original* wrapped phase, rounding against the original (not the
@@ -253,7 +297,11 @@ def unwrap(
         if mask is not None:
             unw[~mask] = 0.0
 
-    if bridge and os.environ.get("WHIRLWIND_NO_BRIDGE", "") not in ("1", "true", "True"):
+    if bridge and os.environ.get("WHIRLWIND_NO_BRIDGE", "") not in (
+        "1",
+        "true",
+        "True",
+    ):
         unw = _bridge_components(unw, igram, corr, nlooks, mask)
     if conncomp_coh_floor:
         # Drop low-coherence pixels from their components (a quality floor):
@@ -281,7 +329,7 @@ def _bridge_components(
     The free 2π gauge is between INTEGRATION components — the connected
     components of the valid mask, which is the partition the MCF integrator seeds
     independently — NOT the (finer) connected-component labels. Each region is
-    re-levelled to a coherent ×L coarse anchor, with shifts taken *relative to
+    re-levelled to a coherent xL coarse anchor, with shifts taken *relative to
     the largest region*, gated to regions the coarse scale connects, and vetoed
     unless the offset is cleanly integer. A single-region (or coherently
     connected) frame yields no shifts and is byte-identical. Prototype +
@@ -307,14 +355,20 @@ def _bridge_components(
 
     def upsample(a):
         up = np.kron(a, np.ones((L, L), a.dtype))
-        return np.pad(up, ((0, max(0, m - up.shape[0])), (0, max(0, n - up.shape[1]))), mode="edge")[:m, :n]
+        return np.pad(
+            up,
+            ((0, max(0, m - up.shape[0])), (0, max(0, n - up.shape[1]))),
+            mode="edge",
+        )[:m, :n]
 
-    # Coherent ×L coarse anchor: unit-magnitude complex (angle 0 in masked
+    # Coherent xL coarse anchor: unit-magnitude complex (angle 0 in masked
     # pixels under either masking convention), block-averaged, unwrapped whole so
     # its single integration BFS gives one consistent gauge across the banks.
     wrapped = np.angle(igram).astype(np.float32)
     cig = block_mean(np.exp(1j * wrapped).astype(np.complex64)).astype(np.complex64)
-    ccoh = block_mean(np.clip(np.nan_to_num(corr), 0, 1).astype(np.float32)).astype(np.float32)
+    ccoh = block_mean(np.clip(np.nan_to_num(corr), 0, 1).astype(np.float32)).astype(
+        np.float32
+    )
     cmask = np.ascontiguousarray(block_mean(mask.astype(np.float32)) > 0.4)
     cunw, _ = unwrap(cig, ccoh, float(nlooks) * L * L, cmask, bridge=False)
     anchor = upsample(np.asarray(cunw, np.float32))
@@ -337,7 +391,9 @@ def _bridge_components(
         # data-support gate: region must share the reference's coarse component.
         if np.mean(coarse_region[reg] == ref_coarse) < gate_frac:
             continue
-        rel = np.median((anchor[reg] - unw[reg]) / tau) - ref_off  # relative to reference
+        rel = (
+            np.median((anchor[reg] - unw[reg]) / tau) - ref_off
+        )  # relative to reference
         s = int(np.rint(rel))
         if abs(rel - s) > amb_band:  # ambiguity-band veto -> decline (convention)
             continue
@@ -353,6 +409,13 @@ def _bridge_components(
 # 87% → 99.5% within ±π/2 on the NISAR HH test scene.
 
 
+# NOTE: the CRLB unwrappers (``unwrap_crlb``, ``unwrap_crlb_grounded``,
+# ``unwrap_crlb_stack``) and the whole-image ``unwrap_reuse`` solver are
+# intentionally NOT in ``__all__``. They are experimental / unvalidated: the
+# CRLB paths are still WIP, and ``unwrap_reuse`` is redundant with the validated
+# default (and reachable via ``WHIRLWIND_UNWRAP_SOLVER=reuse``). They remain
+# importable for internal use and parity tests but are kept off the public API
+# until validated.
 __all__ = [
     "closure_correct",
     "closure_refine_mcf",
@@ -368,10 +431,6 @@ __all__ = [
     "set_num_threads",
     "simulate_ifg",
     "unwrap",
-    "unwrap_crlb",
-    "unwrap_crlb_grounded",
-    "unwrap_crlb_stack",
-    "unwrap_reuse",
     "unwrap_sparse",
     "wrap_phase",
 ]

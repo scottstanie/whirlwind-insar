@@ -44,7 +44,7 @@ coarse grid, and use that as a starting point?*
 
 ## Why multilook-first aliases
 
-Coherently down-looking the complex igram by `L` averages `L×L` blocks. The
+Coherently down-looking the complex igram by `L` averages `LxL` blocks. The
 coarse grid's pixel spacing is `L` original pixels, so a full-res phase gradient
 `g` rad/pixel becomes `L·g` rad per *coarse* pixel. Phase unwrapping rests on
 Itoh's assumption that adjacent samples differ by less than half a cycle
@@ -65,7 +65,7 @@ Classic multigrid / multi-resolution unwrapping. Build a schedule
 `base, base/2, …, 1` and refine coarse→fine:
 
 1. **Coarsest level** (factor `base`): an ordinary whole-image unwrap of the
-   `base×` down-looked igram. This level alone must be unaliased (`base·g < π`).
+   `basex` down-looked igram. This level alone must be unaliased (`base·g < π`).
 2. **Each finer level** `f`: bilinearly upsample the previous (coarser) level's
    *unwrapped* phase to this grid → `pred`. Rotate this level's complex igram by
    `exp(−i·pred)`, so its phase becomes `wrap(angle − pred)` — the **residual**
@@ -102,7 +102,7 @@ exactly-aligned rings; a noisy real bowl dithers them. The pyramid defaults to
 
 ### Automatic `base_factor` (Itoh-violation-rate probe)
 
-The probe measures the **Itoh-violation rate** of each `f×` down-looked igram:
+The probe measures the **Itoh-violation rate** of each `fx` down-looked igram:
 the fraction of adjacent coarse-pixel wrapped phase differences whose magnitude
 exceeds `0.6π`. This directly tests the aliasing (Nyquist) condition. An
 *absolute* threshold does not work, because phase NOISE alone pushes the rate
@@ -144,7 +144,7 @@ without external information), not a tuning bug — pass an explicit
 
 ### Tiling the finest levels (memory)
 
-The MCF graph is `m×n` nodes regardless of residue count, so the finest level is
+The MCF graph is `mxn` nodes regardless of residue count, so the finest level is
 the memory bottleneck on a large frame. With `tile_size>0`, the **coarsest**
 level (absolute phase, no prediction) reuses `unwrap_tiled`, whose global coarse
 anchor is exactly right for absolute phase. The **residual** levels are
@@ -177,14 +177,14 @@ mis-reads the trend and over-downsamples. `full` (87→83 %) is the only method
 that degrades gracefully at the very steepest rates; set `base_factor=1`
 explicitly for a scene you know is a near-Nyquist ramp.
 
-| g (×π) | full | ml4 | ml8 | pyr2 | pyr4 | pyrA |
-|-------:|-----:|----:|----:|-----:|-----:|-----:|
-| 0.1 | 98 | 98 | 97 | 100 | 100 | 100 |
-| 0.2 | 94 | 91 | 6 | 100 | 100 | 100 |
-| 0.3 | 91 | 3 | 5 | 100 | 7 | 100 |
-| 0.5 | 89 | 2 | 2 | 98 | 4 | 100 |
-| 0.7 | 87 | 3 | 2 | 1 | 14 | 100 |
-| 0.9 | 83 | 1 | 1 | 1 | 2 | 1 |
+| g (xπ) | full |  ml4 |  ml8 | pyr2 | pyr4 | pyrA |
+| -----: | ---: | ---: | ---: | ---: | ---: | ---: |
+|    0.1 |   98 |   98 |   97 |  100 |  100 |  100 |
+|    0.2 |   94 |   91 |    6 |  100 |  100 |  100 |
+|    0.3 |   91 |    3 |    5 |  100 |    7 |  100 |
+|    0.5 |   89 |    2 |    2 |   98 |    4 |  100 |
+|    0.7 |   87 |    3 |    2 |    1 |   14 |  100 |
+|    0.9 |   83 |    1 |    1 |    1 |    2 |    1 |
 
 **Fringe-rate sweep, bowl, γ = 0.95 (8 looks).** The varying-gradient case (a
 volcano bowl). `pyrA` is 100 % across the whole range — the probe downsamples
@@ -192,15 +192,15 @@ where the corner annulus is still unaliased and backs off where it isn't —
 beating the fixed bases `pyr2`/`pyr4`, which degrade once their coarsest level
 aliases at the steep edge.
 
-| g_edge (×π) | full | ml4 | ml8 | pyr2 | pyr4 | pyrA |
-|------------:|-----:|----:|----:|-----:|-----:|-----:|
-| 0.2 | 95 | 94 | 83 | 100 | 100 | 100 |
-| 0.3 | 89 | 88 | 6 | 100 | 100 | 100 |
-| 0.4 | 89 | 72 | 5 | 100 | 96 | 100 |
-| 0.5 | 88 | 50 | 4 | 100 | 66 | 100 |
-| 0.6 | 88 | 3 | 5 | 100 | 15 | 100 |
-| 0.8 | 87 | 2 | 3 | 80 | 8 | 100 |
-| 0.9 | 87 | 2 | 2 | 64 | 11 | 100 |
+| g_edge (xπ) | full |  ml4 |  ml8 | pyr2 | pyr4 | pyrA |
+| ----------: | ---: | ---: | ---: | ---: | ---: | ---: |
+|         0.2 |   95 |   94 |   83 |  100 |  100 |  100 |
+|         0.3 |   89 |   88 |    6 |  100 |  100 |  100 |
+|         0.4 |   89 |   72 |    5 |  100 |   96 |  100 |
+|         0.5 |   88 |   50 |    4 |  100 |   66 |  100 |
+|         0.6 |   88 |    3 |    5 |  100 |   15 |  100 |
+|         0.8 |   87 |    2 |    3 |   80 |    8 |  100 |
+|         0.9 |   87 |    2 |    2 |   64 |   11 |  100 |
 
 **Noise sweep, mild rate g = 0.2π, 4 looks, falling coherence.** The regime that
 justifies multilooking: as γ falls the full-res solve drowns in noise residues,
@@ -208,13 +208,13 @@ but the coarse grids stay unaliased. `pyrA` matches the best fixed base at every
 γ — the Itoh probe reads the noise *falling* with `f` and downsamples as far as
 it safely can.
 
-| γ | full | ml4 | ml8 | pyr2 | pyr4 | pyrA |
-|-----:|-----:|----:|----:|-----:|-----:|-----:|
-| 0.50 | 90 | 92 | 6 | 100 | 100 | 100 |
-| 0.35 | 85 | 91 | 6 | 98 | 98 | 98 |
-| 0.30 | 76 | 90 | 6 | 97 | 97 | 97 |
-| 0.25 | 69 | 90 | 6 | 95 | 95 | 95 |
-| 0.20 | 39 | 82 | 6 | 93 | 93 | 93 |
+|    γ | full |  ml4 |  ml8 | pyr2 | pyr4 | pyrA |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.50 |   90 |   92 |    6 |  100 |  100 |  100 |
+| 0.35 |   85 |   91 |    6 |   98 |   98 |   98 |
+| 0.30 |   76 |   90 |    6 |   97 |   97 |   97 |
+| 0.25 |   69 |   90 |    6 |   95 |   95 |   95 |
+| 0.20 |   39 |   82 |    6 |   93 |   93 |   93 |
 
 Across all three sweeps `pyrA` is the best or tied-best method except at the
 near-Nyquist constant-ramp blind spot (cone `g = 0.9π`, above). `ml8` is stuck
@@ -261,13 +261,13 @@ residual pass straight to full resolution (skip the intermediate octaves). Both
 share the coarse solve and the residual-against-prediction trick. Measured
 (`scripts/pyramid_2_vs_n.py`, gentle `g=0.08π` cone, reuse solver, 3 seeds):
 
-| base | γ | looks | full | 2-level | N-level |
-|---:|---:|---:|---:|---:|---:|
-| 8 | 0.60 | 4 | 99.9 | 99.9 | 99.9 |
-| 8 | 0.15 | 4 | 54.9 | 85.1 | **89.8** |
-| 8 | 0.12 | 4 | 35.6 | 55.4 | **86.8** |
-| 16 | 0.18 | 4 | 89.6 | 60.0 | **76.6** |
-| 16 | 0.12 | 4 | 35.6 | 24.1 | **46.9** |
+| base |    γ | looks | full | 2-level |  N-level |
+| ---: | ---: | ----: | ---: | ------: | -------: |
+|    8 | 0.60 |     4 | 99.9 |    99.9 |     99.9 |
+|    8 | 0.15 |     4 | 54.9 |    85.1 | **89.8** |
+|    8 | 0.12 |     4 | 35.6 |    55.4 | **86.8** |
+|   16 | 0.18 |     4 | 89.6 |    60.0 | **76.6** |
+|   16 | 0.12 |     4 | 35.6 |    24.1 | **46.9** |
 
 They **tie on clean and mild-noise data** — there the single jump is fine, so for
 most scenes the extra levels are unnecessary machinery. But in the
@@ -314,13 +314,13 @@ cost of the strategy) and **worst-case** (its biggest single failure — the
 number that matters for a default you can't babysit). Lower is better; a strategy
 with low mean *and* low worst-case is one you can ship unattended.
 
-| strategy | mean regret | worst-case regret |
-|---|---:|---:|
-| **probe (auto)** | **0.8** | **8.1** |
-| fixed `base=1` (conservative) | 5.9 | 38.9 |
-| fixed `base=2` | 3.1 | 36.0 |
-| fixed `base=4` | 21.0 | 92.5 |
-| fixed `base=8` | 25.4 | 89.8 |
+| strategy                      | mean regret | worst-case regret |
+| ----------------------------- | ----------: | ----------------: |
+| **probe (auto)**              |     **0.8** |           **8.1** |
+| fixed `base=1` (conservative) |         5.9 |              38.9 |
+| fixed `base=2`                |         3.1 |              36.0 |
+| fixed `base=4`                |        21.0 |              92.5 |
+| fixed `base=8`                |        25.4 |              89.8 |
 
 The probe lands **within ~1 K-point of the oracle on average** and never loses
 more than 8, while *no* fixed default is safe across the grid (every one has a
@@ -367,21 +367,21 @@ topology to recover.
 single-threaded (so the cost model is what is compared, not parallelism) on
 Goodman-noise cones, time relative to linear with K-correct in parens:
 
-| scene | linear | reuse | convex |
-|------|-------|------|-------|
-| 256², γ=0.7 | 34 ms (99) | 1.36× (100) | **0.90×** (100) |
-| 512², γ=0.7 | 245 ms (94) | 1.03× (100) | **0.52×** (100) |
-| 1024², γ=0.7 | 2546 ms (89) | 0.70× (100) | **0.23×** (100) |
-| 512², γ=0.6, ~260 res | 272 ms (94) | 0.91× (100) | **0.48×** (100) |
-| 512², γ=0.4, ~7k res | 367 ms (90) | 1.12× (100) | 1.77× (100) |
-| 512², γ=0.3, ~23k res | 543 ms (90) | 1.68× (99) | 2.68× (98) |
+| scene                 | linear       | reuse       | convex          |
+| --------------------- | ------------ | ----------- | --------------- |
+| 256², γ=0.7           | 34 ms (99)   | 1.36x (100) | **0.90x** (100) |
+| 512², γ=0.7           | 245 ms (94)  | 1.03x (100) | **0.52x** (100) |
+| 1024², γ=0.7          | 2546 ms (89) | 0.70x (100) | **0.23x** (100) |
+| 512², γ=0.6, ~260 res | 272 ms (94)  | 0.91x (100) | **0.48x** (100) |
+| 512², γ=0.4, ~7k res  | 367 ms (90)  | 1.12x (100) | 1.77x (100)     |
+| 512², γ=0.3, ~23k res | 543 ms (90)  | 1.68x (99)  | 2.68x (98)      |
 
 The accuracy fix and the speed-up are the *same* phenomenon: with a correct
 preferred offset (convex) or free reuse, the solver reaches the optimum in far
 fewer augmentations instead of thrashing on the boundary-stacking pathology, and
 the margin *grows* with image size. The slowdown only appears in the
-low-coherence, tens-of-thousands-of-residues regime (convex up to ~2.7×, reuse
-~1.7×), where every arc carries multi-unit flow — and that is the same regime
+low-coherence, tens-of-thousands-of-residues regime (convex up to ~2.7x, reuse
+~1.7x), where every arc carries multi-unit flow — and that is the same regime
 where one would be multilooking/pyramiding anyway, so the relevant comparison
 there is against a coarse solve, not full-res.
 

@@ -13,7 +13,7 @@ Pipeline:
      ``σ²(γ, L) = (1 − γ²) / (2·L·γ²)``  (Lee 1994 multilook approx, valid
      at moderate-to-high γ; degrades near γ → 0 which we mask out).
   5. Build a Delaunay triangulation, compute residues and per-edge costs,
-     run MCF, integrate. ``max_edge_length`` is auto-tuned to 3× the median
+     run MCF, integrate. ``max_edge_length`` is auto-tuned to 3x the median
      nearest-neighbour distance — long convex-hull spans are carved out as
      outer-face boundary edges and integration skips them.
   6. Plot wrapped, sampled subset, unwrapped result. Save NPZ for reuse.
@@ -32,7 +32,7 @@ is open, or obtain via the NISAR Sample Product Suite from JPL.
 
 To produce the wrapped-phase / coherence rasters this script consumes, see
 the companion ``nisar_gslc_interferogram.py`` (forms the boxcar-multilooked
-complex IG and the matched coherence at 10×10 looks → 100-look effective).
+complex IG and the matched coherence at 10x10 looks → 100-look effective).
 
 Then derive a single-band wrapped-phase TIFF via GDAL:
 
@@ -57,11 +57,12 @@ How to run
 (Or activate the project venv and run with ``python`` directly.)
 
 Outputs:
-  - ``out/sparse.png``         — 2×2 overview figure
+  - ``out/sparse.png``         — 2x2 overview figure
   - ``out/sparse_zoom.png``    — top-right zoom on the mountain region
   - ``out/sparse.npz``         — points, wrapped, unwrapped, gamma, mask
   - ``out/timings.txt``        — wall-clock and basic stats
 """
+
 from __future__ import annotations
 
 import argparse
@@ -88,20 +89,37 @@ def coh_to_variance(gamma: np.ndarray, nlooks: float) -> np.ndarray:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--wrapped", type=Path, required=True,
-                    help="wrapped-phase TIFF (float32, radians)")
-    ap.add_argument("--coh", type=Path, required=True,
-                    help="coherence TIFF (float32, [0, 1])")
-    ap.add_argument("--out", type=Path, required=True,
-                    help="output directory")
-    ap.add_argument("--gamma-min", type=float, default=0.5,
-                    help="keep pixels with γ > this (default: 0.5)")
-    ap.add_argument("--nlooks", type=float, default=100.0,
-                    help="effective number of looks for variance estimate (default: 100)")
-    ap.add_argument("--n-points", type=int, default=100_000,
-                    help="target number of subsampled points (default: 100k)")
-    ap.add_argument("--seed", type=int, default=7,
-                    help="random seed for subsampling (default: 7)")
+    ap.add_argument(
+        "--wrapped",
+        type=Path,
+        required=True,
+        help="wrapped-phase TIFF (float32, radians)",
+    )
+    ap.add_argument(
+        "--coh", type=Path, required=True, help="coherence TIFF (float32, [0, 1])"
+    )
+    ap.add_argument("--out", type=Path, required=True, help="output directory")
+    ap.add_argument(
+        "--gamma-min",
+        type=float,
+        default=0.5,
+        help="keep pixels with γ > this (default: 0.5)",
+    )
+    ap.add_argument(
+        "--nlooks",
+        type=float,
+        default=100.0,
+        help="effective number of looks for variance estimate (default: 100)",
+    )
+    ap.add_argument(
+        "--n-points",
+        type=int,
+        default=100_000,
+        help="target number of subsampled points (default: 100k)",
+    )
+    ap.add_argument(
+        "--seed", type=int, default=7, help="random seed for subsampling (default: 7)"
+    )
     args = ap.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -121,8 +139,10 @@ def main() -> None:
         & np.isfinite(wrapped_full)
     )
     n_valid = int(mask.sum())
-    print(f"      γ > {args.gamma_min}: {n_valid:,} of {coh_full.size:,} pixels "
-          f"({100 * n_valid / coh_full.size:.2f}%)")
+    print(
+        f"      γ > {args.gamma_min}: {n_valid:,} of {coh_full.size:,} pixels "
+        f"({100 * n_valid / coh_full.size:.2f}%)"
+    )
     if n_valid < 1000:
         raise SystemExit(f"only {n_valid} valid pixels — γ-min too high?")
 
@@ -169,10 +189,16 @@ def main() -> None:
     print(f"[4/4] saving + plotting")
     np.savez(
         args.out / "sparse.npz",
-        points=points, wrapped=wrapped, unwrapped=unw, gamma=gamma,
-        shape=np.array(mask.shape), gamma_min=args.gamma_min,
-        nlooks=args.nlooks, n_target=args.n_points,
-        max_edge_length=max_edge, median_nn=median_nn,
+        points=points,
+        wrapped=wrapped,
+        unwrapped=unw,
+        gamma=gamma,
+        shape=np.array(mask.shape),
+        gamma_min=args.gamma_min,
+        nlooks=args.nlooks,
+        n_target=args.n_points,
+        max_edge_length=max_edge,
+        median_nn=median_nn,
         elapsed_sec=elapsed,
     )
 
@@ -187,15 +213,23 @@ def main() -> None:
 
     # Wrapped phase, full raster
     wrapped_show = np.where(mask, wrapped_full, np.nan)
-    axes[0, 0].imshow(wrapped_show, cmap="twilight",
-                      vmin=-np.pi, vmax=np.pi, interpolation="none")
+    axes[0, 0].imshow(
+        wrapped_show, cmap="twilight", vmin=-np.pi, vmax=np.pi, interpolation="none"
+    )
     axes[0, 0].set_title(f"wrapped phase (full raster, γ > {args.gamma_min} masked)")
 
     # Sampled subset as a scatter on top of the wrapped phase
-    axes[0, 1].imshow(wrapped_show, cmap="twilight",
-                      vmin=-np.pi, vmax=np.pi, interpolation="none", alpha=0.3)
-    axes[0, 1].scatter(cols, rows, c=wrapped, s=0.4,
-                       cmap="twilight", vmin=-np.pi, vmax=np.pi)
+    axes[0, 1].imshow(
+        wrapped_show,
+        cmap="twilight",
+        vmin=-np.pi,
+        vmax=np.pi,
+        interpolation="none",
+        alpha=0.3,
+    )
+    axes[0, 1].scatter(
+        cols, rows, c=wrapped, s=0.4, cmap="twilight", vmin=-np.pi, vmax=np.pi
+    )
     axes[0, 1].set_title(f"subsampled subset ({len(pick):,} pts, γ>{args.gamma_min})")
 
     # Unwrapped sparse result as a scatter
@@ -203,9 +237,15 @@ def main() -> None:
         lo, hi = np.nanpercentile(unw_show, [1, 99])
     else:
         lo, hi = -1, 1
-    axes[1, 0].scatter(cols[finite], rows[finite],
-                       c=unw_show[finite], s=0.6,
-                       cmap="turbo", vmin=lo, vmax=hi)
+    axes[1, 0].scatter(
+        cols[finite],
+        rows[finite],
+        c=unw_show[finite],
+        s=0.6,
+        cmap="turbo",
+        vmin=lo,
+        vmax=hi,
+    )
     axes[1, 0].set_aspect("equal")
     axes[1, 0].invert_yaxis()
     axes[1, 0].set_xlim(0, mask.shape[1])
@@ -239,14 +279,23 @@ def main() -> None:
     c0, c1 = int(w * 0.55), int(w * 0.99)
     inside = (rows >= r0) & (rows < r1) & (cols >= c0) & (cols < c1) & finite
     fig, axes = plt.subplots(1, 2, figsize=(14, 7), constrained_layout=True)
-    axes[0].imshow(wrapped_show[r0:r1, c0:c1], cmap="twilight",
-                   vmin=-np.pi, vmax=np.pi, interpolation="none")
+    axes[0].imshow(
+        wrapped_show[r0:r1, c0:c1],
+        cmap="twilight",
+        vmin=-np.pi,
+        vmax=np.pi,
+        interpolation="none",
+    )
     axes[0].set_title("wrapped phase (zoom on mountains)")
     if inside.any():
         axes[1].scatter(
-            cols[inside] - c0, rows[inside] - r0,
-            c=unw_show[inside], s=2.0,
-            cmap="turbo", vmin=lo, vmax=hi,
+            cols[inside] - c0,
+            rows[inside] - r0,
+            c=unw_show[inside],
+            s=2.0,
+            cmap="turbo",
+            vmin=lo,
+            vmax=hi,
         )
     axes[1].set_aspect("equal")
     axes[1].invert_yaxis()

@@ -2,6 +2,7 @@
 
 Output: /Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/phass_experiments/plots/nisar_convex_panel.png
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,13 +34,25 @@ def k_centered(k_ww):
 
 
 variants = [
-    ("SNAPHU 9×9 (reference)", snaphu_k, 1020.0, 0),
-    ("baseline (unit-cap MCF)", np.load(OUT / "nisar_baseline.npz")["k"].astype(np.int32),
-     float(np.load(OUT / "nisar_baseline.npz")["elapsed"]), None),
-    ("reuse (PHASS-style)",     np.load(OUT / "nisar_reuse.npz")["k"].astype(np.int32),
-     float(np.load(OUT / "nisar_reuse.npz")["elapsed"]), None),
-    ("convex (SNAPHU-style)",   np.load(OUT / "nisar_convex.npz")["k"].astype(np.int32),
-     float(np.load(OUT / "nisar_convex.npz")["elapsed"]), None),
+    ("SNAPHU 9x9 (reference)", snaphu_k, 1020.0, 0),
+    (
+        "baseline (unit-cap MCF)",
+        np.load(OUT / "nisar_baseline.npz")["k"].astype(np.int32),
+        float(np.load(OUT / "nisar_baseline.npz")["elapsed"]),
+        None,
+    ),
+    (
+        "reuse (PHASS-style)",
+        np.load(OUT / "nisar_reuse.npz")["k"].astype(np.int32),
+        float(np.load(OUT / "nisar_reuse.npz")["elapsed"]),
+        None,
+    ),
+    (
+        "convex (SNAPHU-style)",
+        np.load(OUT / "nisar_convex.npz")["k"].astype(np.int32),
+        float(np.load(OUT / "nisar_convex.npz")["elapsed"]),
+        None,
+    ),
 ]
 
 # Center each K-field (except SNAPHU) on its mode-of-mainland-mismatch
@@ -56,8 +69,10 @@ all_k = np.concatenate([p[1][mainland] for p in panels])
 klo, khi = np.percentile(all_k, [1, 99])
 
 fig, axes = plt.subplots(2, 4, figsize=(18, 9))
-fig.suptitle("NISAR α=0 (no Goldstein)  ·  K-fields top; Δ K vs SNAPHU bottom (mainland only)",
-             fontsize=13)
+fig.suptitle(
+    "NISAR α=0 (no Goldstein)  ·  K-fields top; Δ K vs SNAPHU bottom (mainland only)",
+    fontsize=13,
+)
 
 for col, (name, k, wall, dk) in enumerate(panels):
     axes[0, col].imshow(k, vmin=klo, vmax=khi, cmap="twilight", interpolation="nearest")
@@ -72,13 +87,16 @@ for col, (name, k, wall, dk) in enumerate(panels):
         diff = np.where(mainland, k - snaphu_k, np.nan)
         dmag = 4
         norm = mcolors.TwoSlopeNorm(vmin=-dmag, vcenter=0, vmax=dmag)
-        im = axes[1, col].imshow(diff, norm=norm, cmap="RdBu_r", interpolation="nearest")
+        im = axes[1, col].imshow(
+            diff, norm=norm, cmap="RdBu_r", interpolation="nearest"
+        )
         axes[1, col].set_title(f"Δ K vs SNAPHU")
         if col == 3:
             fig.colorbar(im, ax=axes[1, :], shrink=0.85, label="Δ K (cycles)")
 
 for ax in axes.flat:
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
 
 out = PLOTS / "nisar_convex_panel.png"
 fig.savefig(out, dpi=120, bbox_inches="tight")

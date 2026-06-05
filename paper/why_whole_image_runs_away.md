@@ -9,13 +9,13 @@ single-tile solve does not?*
 
 Per-component match vs production, ww whole-image, by **center-crop size**:
 
-| crop | ww convex | ww reuse (linear) | snaphu single-tile |
-|---:|---:|---:|---:|
-| 256 | 99.99% | 99.99% | 99.99% |
-| 512 | 77% | 80% | 99.98% |
-| 1024 | 32% | 52% | 99.98% |
-| 2048 | 24% | 22% | 99.98% |
-| full (~4200) | 2% | 1% | 99.30% |
+|         crop | ww convex | ww reuse (linear) | snaphu single-tile |
+| -----------: | --------: | ----------------: | -----------------: |
+|          256 |    99.99% |            99.99% |             99.99% |
+|          512 |       77% |               80% |             99.98% |
+|         1024 |       32% |               52% |             99.98% |
+|         2048 |       24% |               22% |             99.98% |
+| full (~4200) |        2% |                1% |             99.30% |
 
 Three facts fall out:
 
@@ -82,7 +82,7 @@ snaphu still lands at 99% single-tile:
   production additionally tiles + `SINGLETILEREOPTIMIZE`, both regularizers.)
 
 - **(a) Possible residual cost difference — open.** Under a numpy replica of
-  snaphu's *exact* smooth cost, the full-frame runaway scores ~12× more expensive
+  snaphu's *exact* smooth cost, the full-frame runaway scores ~12x more expensive
   than production, hinting snaphu's cost ranks the runaway as bad. But ww's
   offset is algebraically the same deviation `ns·(dpsi − avgdpsi)` and the weight
   A/B barely moved the result — so if a faithful-cost term matters it is *not*

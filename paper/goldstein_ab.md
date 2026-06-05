@@ -2,11 +2,11 @@
 
 Decides whether Goldstein pre-filtering should be the default for
 `whirlwind.unwrap`. Run via `scripts/report_goldstein_ab.py`: two sequential
-`unwrap` calls (α=0 and α=0.7) on the 40 MHz NISAR HH scene (6811×6912, 47 Mpx),
-K-match vs SNAPHU 9×9 on the cc=1 mainland (14.5M px), modal cycle offset removed.
+`unwrap` calls (α=0 and α=0.7) on the 40 MHz NISAR HH scene (6811x6912, 47 Mpx),
+K-match vs SNAPHU 9x9 on the cc=1 mainland (14.5M px), modal cycle offset removed.
 
 | Goldstein α | K-match | \|dK\|=1 | \|dK\|≥2 | coverage | #cc | runtime |
-|-------------|---------|----------|----------|----------|-----|---------|
+| ----------- | ------- | -------- | -------- | -------- | --- | ------- |
 | 0.0 (off)   | 99.974% | 0.024%   | 0.003%   | 30.82%   | 6   | 1096 s  |
 | 0.7 (on)    | 99.989% | 0.011%   | 0.000%   | 30.90%   | 6   | 1057 s  |
 

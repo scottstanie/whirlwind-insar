@@ -113,7 +113,9 @@ def rmse(unw: np.ndarray, truth: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 # Method runners — all return full-res unwrapped phase on the input grid.
 # ---------------------------------------------------------------------------
-def run_methods(ig: np.ndarray, corr: np.ndarray, nlooks: float) -> dict[str, np.ndarray]:
+def run_methods(
+    ig: np.ndarray, corr: np.ndarray, nlooks: float
+) -> dict[str, np.ndarray]:
     ig = ig.astype(np.complex64)
     corr = corr.astype(np.float32)
     full, _cc = ww.unwrap(ig, corr, nlooks=nlooks)
@@ -158,7 +160,9 @@ def sweep_rate(shape, shape_fn, gammas, g_fracs, nlooks, seed):
                 )
             print(
                 f"  gamma={gamma:.2f} g={gf:.2f}π  "
-                + "  ".join(f"{n}={k_correct(res[n], truth) * 100:4.0f}%" for n in METHODS)
+                + "  ".join(
+                    f"{n}={k_correct(res[n], truth) * 100:4.0f}%" for n in METHODS
+                )
             )
     return rows
 
@@ -198,7 +202,9 @@ def make_curves(out: Path, rate_rows, title, fname):
     import matplotlib.pyplot as plt
 
     gammas = sorted({r["gamma"] for r in rate_rows})
-    fig, axes = plt.subplots(1, len(gammas), figsize=(4.6 * len(gammas), 4.0), squeeze=False)
+    fig, axes = plt.subplots(
+        1, len(gammas), figsize=(4.6 * len(gammas), 4.0), squeeze=False
+    )
     for ax, gamma in zip(axes[0], gammas):
         for name in METHODS:
             xs = sorted({r["g_frac_pi"] for r in rate_rows if r["method"] == name})
@@ -206,7 +212,9 @@ def make_curves(out: Path, rate_rows, title, fname):
                 next(
                     r["k_correct"]
                     for r in rate_rows
-                    if r["method"] == name and r["gamma"] == gamma and r["g_frac_pi"] == x
+                    if r["method"] == name
+                    and r["gamma"] == gamma
+                    and r["g_frac_pi"] == x
                 )
                 for x in xs
             ]
@@ -214,7 +222,7 @@ def make_curves(out: Path, rate_rows, title, fname):
         ax.axvline(1 / 8, color="tab:red", ls=":", lw=1, alpha=0.7)
         ax.axvline(1 / 2, color="tab:green", ls=":", lw=1, alpha=0.7)
         ax.set_title(f"γ = {gamma}")
-        ax.set_xlabel("fringe rate g  (× π rad/pixel)")
+        ax.set_xlabel("fringe rate g  (x π rad/pixel)")
         ax.set_ylabel("K-correct (%)")
         ax.set_ylim(-3, 103)
         ax.grid(alpha=0.3)
@@ -236,7 +244,12 @@ def make_noise_curve(out: Path, rows, title, fname):
     fig, ax = plt.subplots(figsize=(6.2, 4.4))
     for name in METHODS:
         xs = sorted({r["gamma"] for r in rows if r["method"] == name})
-        ys = [next(r["k_correct"] for r in rows if r["method"] == name and r["gamma"] == x) for x in xs]
+        ys = [
+            next(
+                r["k_correct"] for r in rows if r["method"] == name and r["gamma"] == x
+            )
+            for x in xs
+        ]
         ax.plot(xs, np.array(ys) * 100, "o-", color=COLORS[name], label=name, ms=4)
     ax.set_xlabel("coherence γ")
     ax.set_ylabel("K-correct (%)")
@@ -284,7 +297,14 @@ def make_panels(out: Path, shape, seed):
         unw = res[name]
         off = 2 * PI * round(float(np.nanmedian(unw - truth)) / (2 * PI))
         kk = k_correct(unw, truth)
-        show(axes[0, c], unw - off, f"{name}\nK={kk * 100:.0f}%", cmap="viridis", vmin=0, vmax=vmax)
+        show(
+            axes[0, c],
+            unw - off,
+            f"{name}\nK={kk * 100:.0f}%",
+            cmap="viridis",
+            vmin=0,
+            vmax=vmax,
+        )
         err = (unw - off) - truth
         show(axes[1, c], err, "error", cmap="RdBu_r", vmin=-3 * PI, vmax=3 * PI)
     fig.suptitle(
@@ -312,7 +332,10 @@ def make_corner_panels(out: Path, shape):
     ig = np.exp(1j * truth).astype(np.complex64)  # perfectly clean
     corr = np.full(shape, 0.999, np.float32)
     solvers = ["linear", "convex", "reuse"]
-    outs = {s: ww.unwrap_pyramid(ig, corr, nlooks=1.0, base_factor=1, solver=s) for s in solvers}
+    outs = {
+        s: ww.unwrap_pyramid(ig, corr, nlooks=1.0, base_factor=1, solver=s)
+        for s in solvers
+    }
 
     fig, axes = plt.subplots(1, len(solvers), figsize=(4.0 * len(solvers), 4.2))
     im = None
@@ -354,21 +377,39 @@ def main():
     bowl_rows = sweep_rate(shape, bowl, [0.95, 0.6], g_fracs, nlooks=8, seed=args.seed)
     print("== noise sweep: mild rate g=0.2π, 4 looks, falling coherence ==")
     noise_rows = sweep_noise(
-        shape, cone, g_frac=0.2, nlooks=4,
-        gammas=[0.7, 0.6, 0.5, 0.4, 0.35, 0.3, 0.25, 0.2], seed=args.seed,
+        shape,
+        cone,
+        g_frac=0.2,
+        nlooks=4,
+        gammas=[0.7, 0.6, 0.5, 0.4, 0.35, 0.3, 0.25, 0.2],
+        seed=args.seed,
     )
 
     summary = {
-        "cone": cone_rows, "bowl": bowl_rows, "noise": noise_rows,
-        "size": args.size, "seed": args.seed,
+        "cone": cone_rows,
+        "bowl": bowl_rows,
+        "noise": noise_rows,
+        "size": args.size,
+        "seed": args.seed,
     }
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2))
 
     figs = [
-        make_curves(args.out, cone_rows, "Constant-rate cone: K-correct vs fringe rate", "curves_cone.png"),
-        make_curves(args.out, bowl_rows, "Steep bowl (paraboloid): K-correct vs edge fringe rate", "curves_bowl.png"),
+        make_curves(
+            args.out,
+            cone_rows,
+            "Constant-rate cone: K-correct vs fringe rate",
+            "curves_cone.png",
+        ),
+        make_curves(
+            args.out,
+            bowl_rows,
+            "Steep bowl (paraboloid): K-correct vs edge fringe rate",
+            "curves_bowl.png",
+        ),
         make_noise_curve(
-            args.out, noise_rows,
+            args.out,
+            noise_rows,
             "Mild rate (g=0.2π), 4 looks: K-correct vs coherence\n"
             "(full drowns in noise; ml8 aliases; pyramid holds both)",
             "curves_noise.png",

@@ -11,6 +11,7 @@ Lots of NaN in the inputs (about 39 % of pixels masked).
 Usage:  run_atlanta.py <mode>
   mode ∈ {baseline, reuse, convex, convex_raw}
 """
+
 from __future__ import annotations
 
 import os
@@ -21,7 +22,9 @@ from pathlib import Path
 import numpy as np
 import rasterio
 
-OUT_DIR = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/phass_experiments/outputs")
+OUT_DIR = Path(
+    "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/phass_experiments/outputs"
+)
 ATL = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar")
 LAMBDA_S1 = 0.05546576  # meters, Sentinel-1 C-band
 
@@ -37,25 +40,27 @@ with rasterio.open(ATL / "opera.int.cor.tif") as src:
     coh = src.read(1).astype(np.float32)
 
 # Mask: finite phase and coh, coh in (0, 1), non-zero IG. NaNs out.
-mask = (
-    np.isfinite(phase) & np.isfinite(coh)
-    & (coh > 0) & (coh < 1.0)
-)
+mask = np.isfinite(phase) & np.isfinite(coh) & (coh > 0) & (coh < 1.0)
 ig = np.exp(1j * np.where(mask, phase, 0.0)).astype(np.complex64)
 ig[~mask] = 0
 coh = np.where(mask, coh, 0).astype(np.float32)
 coh = np.clip(coh, 0.0, 1.0)
 # Roughly Sentinel-1 IW boxcar looks (Reuter 2025 OPERA: typically 5-10).
-# OPERA standard SLC-DISP-S1 uses 5×10 (range×azimuth) = 50 looks.
+# OPERA standard SLC-DISP-S1 uses 5x10 (rangexazimuth) = 50 looks.
 nlooks = 50.0
-print(f"[atlanta/{mode}] shape={phase.shape}  valid={mask.sum():,} ({mask.mean()*100:.1f}%)", flush=True)
+print(
+    f"[atlanta/{mode}] shape={phase.shape}  valid={mask.sum():,} ({mask.mean()*100:.1f}%)",
+    flush=True,
+)
 
 t0 = time.perf_counter()
 if mode == "baseline":
     unw, _cc = ww.unwrap(ig, coh, nlooks=nlooks, mask=mask)
 elif mode == "tiled":
     # Tiled coherence unwrap: bounds memory + keeps flow local (anti-runaway).
-    unw, _cc = ww.unwrap(ig, coh, nlooks=nlooks, mask=mask, tile_size=1024, tile_overlap=128)
+    unw, _cc = ww.unwrap(
+        ig, coh, nlooks=nlooks, mask=mask, tile_size=1024, tile_overlap=128
+    )
 elif mode == "reuse":
     unw = ww.unwrap_reuse(ig, coh, nlooks=nlooks, mask=mask)
 elif mode in ("convex", "convex_raw"):
@@ -63,7 +68,11 @@ elif mode in ("convex", "convex_raw"):
 elif mode == "goldstein":
     # Production path: Goldstein-filter the input, unwrap, transfer K back.
     unw, _cc = ww.unwrap(
-        ig, coh, nlooks=nlooks, mask=mask, goldstein_alpha=0.7,
+        ig,
+        coh,
+        nlooks=nlooks,
+        mask=mask,
+        goldstein_alpha=0.7,
     )
 else:
     sys.exit(2)

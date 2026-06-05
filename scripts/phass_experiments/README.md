@@ -10,15 +10,15 @@ there; they have **no inter-script imports**, so each runs standalone with
 
 ## Layout
 
-| folder | purpose | n |
-|--------|---------|---|
-| [`diag/`](diag) | investigate a specific failure mode | 12 |
-| [`proto/`](proto) | algorithm prototypes / design validation (Python, before Rust) | 17 |
-| [`plot/`](plot) | generate figures | 15 |
-| [`report/`](report) | assemble multi-figure reports (+ refresh their saved arrays) | 3 |
-| [`run/`](run) | drive the unwrapper on a scene (variant sweeps) | 20 |
-| [`bench/`](bench) | benchmarks / quantitative sweeps vs a reference | 3 |
-| [`analyze/`](analyze) | tabulate / summarize results | 2 |
+| folder                | purpose                                                        | n   |
+| --------------------- | -------------------------------------------------------------- | --- |
+| [`diag/`](diag)       | investigate a specific failure mode                            | 12  |
+| [`proto/`](proto)     | algorithm prototypes / design validation (Python, before Rust) | 17  |
+| [`plot/`](plot)       | generate figures                                               | 15  |
+| [`report/`](report)   | assemble multi-figure reports (+ refresh their saved arrays)   | 3   |
+| [`run/`](run)         | drive the unwrapper on a scene (variant sweeps)                | 20  |
+| [`bench/`](bench)     | benchmarks / quantitative sweeps vs a reference                | 3   |
+| [`analyze/`](analyze) | tabulate / summarize results                                   | 2   |
 
 History note: the **current** A_016 / fragmented-scene story lives in `diag/diag_a016_*`,
 `proto/proto_shift_selector.py`, `proto/proto_seam_repair.py`, `proto/conncomp_*`,
@@ -64,7 +64,7 @@ and `report/`; older `run_atlanta*`, `run_nisar_anchor/cascade`, and the early
 - `plot_a016_fixed.py` — A_016 before/after the fix
 - `plot_a016_cut_comparison.py` — A_016 whirlwind-vs-production cut/cost story
 - `plot_a016_valid_winding.py` — A_016 output is a valid (differently-wound) unwrap
-- `plot_nisar_tiled.py` — headline NISAR: whole-image vs tiled vs SNAPHU 9×9
+- `plot_nisar_tiled.py` — headline NISAR: whole-image vs tiled vs SNAPHU 9x9
 - `plot_nisar_variants.py` / `plot_nisar_anchor.py` / `plot_nisar_anchor_diff.py` / `plot_nisar_phase_hires.py` — NISAR anchor/cascade comparisons
 - `plot_atlanta.py` / `plot_atlanta_zoom.py` — Atlanta S-1 vs OPERA
 - `plot_convex.py` / `plot_reuse.py` — solver-variant K-fields
@@ -85,7 +85,7 @@ Drivers that unwrap a scene under a chosen mode. Key ones: `run_one.py`
 ### bench/ — benchmarks
 - `bench_nisar_gunw.py` — benchmark whirlwind vs NISAR L2 GUNW products (the readiness gate)
 - `bench_default_robust.py` — bench the actual default path (auto-512 gated)
-- `compare_dolphin_phass.py` — K-agreement: dolphin PHASS vs SNAPHU 9×9 on NISAR
+- `compare_dolphin_phass.py` — K-agreement: dolphin PHASS vs SNAPHU 9x9 on NISAR
 
 ### analyze/ — summaries
 - `analyze.py` — tabulate + plot PHASS-cost experiment results
@@ -101,12 +101,12 @@ source (`~/repos/isce3/cxx/isce3/unwrap/phass`). See
 
 Cost variants (in `crates/whirlwind-core/src/cost/mod.rs`, env-var-toggled):
 
-| mode         | env                              | what it does |
-|--------------|----------------------------------|--------------|
-| `baseline`   | (none)                           | Default Carballo: `γ_edge · (π − α_smooth)` |
-| `hard_cut`   | `WHIRLWIND_HARD_CUT_THRESH=1.0`  | + zero-cost cuts where `\|wrap(Δphase_raw)\| ≥ 1.0` rad (PHASS `phase_diff_th`) |
-| `phass_cost` | `WHIRLWIND_PHASS_COST=0.5`       | cost `γ_edge² · π` saturated at `0.5²·π` (coh-only, no `α`, no cuts) |
-| `phass_full` | both                             | PHASS cost + hard cuts |
+| mode         | env                             | what it does                                                                    |
+| ------------ | ------------------------------- | ------------------------------------------------------------------------------- |
+| `baseline`   | (none)                          | Default Carballo: `γ_edge · (π − α_smooth)`                                     |
+| `hard_cut`   | `WHIRLWIND_HARD_CUT_THRESH=1.0` | + zero-cost cuts where `\|wrap(Δphase_raw)\| ≥ 1.0` rad (PHASS `phase_diff_th`) |
+| `phass_cost` | `WHIRLWIND_PHASS_COST=0.5`      | cost `γ_edge² · π` saturated at `0.5²·π` (coh-only, no `α`, no cuts)            |
+| `phass_full` | both                            | PHASS cost + hard cuts                                                          |
 
 Reproduction (always **one heavy job at a time** on this laptop — see
 `memory/concurrency_limit.md`):

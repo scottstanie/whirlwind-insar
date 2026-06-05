@@ -269,7 +269,7 @@ pub fn correct(
     // Stripe-based parallel processing: each stripe of STRIPE_H rows is
     // computed in parallel (rayon over rows within the stripe), then scattered
     // into the output arrays serially. This bounds the peak intermediate
-    // memory to STRIPE_H × per_row_bytes instead of m × per_row_bytes — the
+    // memory to STRIPE_H x per_row_bytes instead of m x per_row_bytes — the
     // latter is multi-GB on full scenes and was the cause of severe thrashing.
     const STRIPE_H: usize = 64;
     for stripe_start in (0..m).step_by(STRIPE_H) {

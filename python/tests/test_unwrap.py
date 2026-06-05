@@ -73,7 +73,7 @@ class TestUnwrap:
         for i in range(m):
             for j in range(n):
                 truth[i, j] = 6.0 * np.exp(
-                    -((i - ci) ** 2 + (j - cj) ** 2) / (2 * sigma ** 2)
+                    -((i - ci) ** 2 + (j - cj) ** 2) / (2 * sigma**2)
                 )
 
         gamma = np.full((m, n), 0.85, dtype=np.float32)
@@ -134,9 +134,9 @@ class TestCrlb:
         corner-safe: a steep clean ramp that the plain capacity-1 CRLB solver
         mis-routes is recovered exactly (the default now routes through reuse)."""
         m, n = 96, 96
-        truth = np.fromfunction(
-            lambda i, j: 0.3 * (i + j), (m, n)
-        ).astype(np.float32)  # ~9π across, steep enough to expose corner stacking
+        truth = np.fromfunction(lambda i, j: 0.3 * (i + j), (m, n)).astype(
+            np.float32
+        )  # ~9π across, steep enough to expose corner stacking
         igram = np.exp(1j * truth).astype(np.complex64)
         var = np.full((m, n), 0.05, dtype=np.float32)  # low variance = high confidence
 
@@ -144,7 +144,9 @@ class TestCrlb:
         assert unw.shape == igram.shape and unw.dtype == np.float32
         assert cc.shape == igram.shape and cc.dtype == np.uint32
         assert cc.max() >= 1
-        assert _k_correct(unw, truth) > 0.99, "corner-safe CRLB default must recover steep ramp"
+        assert (
+            _k_correct(unw, truth) > 0.99
+        ), "corner-safe CRLB default must recover steep ramp"
 
 
 class TestBridge:
@@ -173,7 +175,7 @@ class TestBridge:
     def test_bridge_fixes_disconnected_gauge(self):
         # A gentle ramp split by a thin masked strip: the integrator seeds each
         # side independently, so the far side picks up an integer-cycle gauge
-        # error. The ×8 coarse anchor bridges the thin strip and the post-pass
+        # error. The x8 coarse anchor bridges the thin strip and the post-pass
         # re-levels it, while bridge=False leaves the error.
         m = n = 128
         tau = 2 * np.pi
@@ -190,8 +192,10 @@ class TestBridge:
         off = np.asarray(off, np.float32)
         on = np.asarray(on, np.float32)
 
-        left = mask.copy(); left[:, 62:] = False
-        right = mask.copy(); right[:, :65] = False
+        left = mask.copy()
+        left[:, 62:] = False
+        right = mask.copy()
+        right[:, :65] = False
 
         def rel_cycles(u):
             al = np.median(np.round((u[left] - truth[left]) / tau))

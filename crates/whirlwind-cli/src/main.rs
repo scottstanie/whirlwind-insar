@@ -62,7 +62,7 @@ enum Cmd {
         /// crossing masked pixels so MCF skips them — critical for large
         /// real scenes with water / shadow / decorrelated regions, where
         /// the unmasked path treats NoData pixels as real residues and
-        /// can slow down by 10–100×.
+        /// can slow down by 10–100x.
         #[arg(long)]
         mask: Option<PathBuf>,
         /// number of looks
@@ -70,17 +70,17 @@ enum Cmd {
         nlooks: f32,
         /// Goldstein adaptive-filter strength in [0, 1]. Default 0.7.
         /// Set to 0 to skip the prefilter entirely. When > 0, the wrapped
-        /// phase is Goldstein-filtered before MCF (≈ 2× faster on noisy
+        /// phase is Goldstein-filtered before MCF (≈ 2x faster on noisy
         /// scenes, fewer ±2π errors at wrap-line boundaries), then the
         /// resulting integer cycle field is transferred back to the
         /// *original* wrapped phase (dolphin PR #364 convention — avoids
         /// spurious 2π jumps at fringe boundaries).
         ///
-        /// On a 6811×6912 NISAR scene against SNAPHU `ntiles=(9,9)` as the
+        /// On a 6811x6912 NISAR scene against SNAPHU `ntiles=(9,9)` as the
         /// land-area reference (17 min wall): α=0.5 gave 93.5 % per-pixel
         /// integer-cycle agreement on the cc=1 mainland; α=0.7 gives
         /// 99.90 % — essentially pixel-perfect agreement — while still
-        /// running 27× faster than SNAPHU. α=0.75 is marginally worse
+        /// running 27x faster than SNAPHU. α=0.75 is marginally worse
         /// (99.87 %), so 0.7 is a good "on" value for typical InSAR scenes.
         /// Default is 0 (off) while the Goldstein-on-vs-off trade-off is
         /// under evaluation; pass `--goldstein-alpha 0.7` to enable.
@@ -224,7 +224,7 @@ fn cmd_unwrap(
     let igram_orig = ph.mapv(|p| Complex32::from_polar(1.0, p));
 
     // Optional Goldstein prefilter. The filter denoises the wrapped phase so
-    // MCF sees fewer spurious residues at low-coherence pixels; ~2× faster on
+    // MCF sees fewer spurious residues at low-coherence pixels; ~2x faster on
     // noisy scenes and visibly cleaner at wrap-line boundaries.
     let (igram_for_unwrap, used_goldstein) = if goldstein_alpha > 0.0 {
         let ig_filt = whirlwind_core::goldstein::goldstein(

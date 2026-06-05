@@ -13,23 +13,23 @@ For an arc connecting adjacent residue nodes, with per-arc coherence
 `γ_edge` (= min of endpoint coherences), arc flow `k ∈ ℤ`, and locally
 windowed wrapped gradient `α_smooth`:
 
-| | whirlwind (Carballo) | SNAPHU smooth |
-|---|---|---|
-| Cost shape | `γ_edge · max(0, π − sign(k)·α_smooth)` per unit `|k|` | `(k·nshortcycle − offset_smooth)² / σ²_edge` |
-| In flow `k` | **Linear** per unit | **Quadratic**, with non-zero minimiser |
-| Arc capacity | **1** (unit) | Many cycles (network sized to allow it) |
-| Coherence weighting | γ, raw | `(1−ρ)^rhopow` (rhopow ≈ 8.4 at L=100) |
-| Phase-gradient input | `α_smooth` (7×7 box of wrapped gradient) | `offset = round(avgdpsi · nshortcycle / 2π)` |
-| Role of the smoothed gradient | **Cost modifier**: arcs in regions with `|α_smooth| ≈ π` get low cost — "this region looks like a wrap line" | **Cost offset**: the arc actively wants `flow ≈ offset` |
-| Solver | SSP / primal-dual Dijkstra, integer cost | MCM-flavoured convex MCF |
+|                               | whirlwind (Carballo)                               | SNAPHU smooth                                |
+| ----------------------------- | -------------------------------------------------- | -------------------------------------------- |
+| Cost shape                    | `γ_edge · max(0, π − sign(k)·α_smooth)` per unit ` | k                                            | `                                                        | `(k·nshortcycle − offset_smooth)² / σ²_edge`            |
+| In flow `k`                   | **Linear** per unit                                | **Quadratic**, with non-zero minimiser       |
+| Arc capacity                  | **1** (unit)                                       | Many cycles (network sized to allow it)      |
+| Coherence weighting           | γ, raw                                             | `(1−ρ)^rhopow` (rhopow ≈ 8.4 at L=100)       |
+| Phase-gradient input          | `α_smooth` (7x7 box of wrapped gradient)           | `offset = round(avgdpsi · nshortcycle / 2π)` |
+| Role of the smoothed gradient | **Cost modifier**: arcs in regions with `          | α_smooth                                     | ≈ π` get low cost — "this region looks like a wrap line" | **Cost offset**: the arc actively wants `flow ≈ offset` |
+| Solver                        | SSP / primal-dual Dijkstra, integer cost           | MCM-flavoured convex MCF                     |
 
 ## Why a "use SNAPHU's exact numbers" port fails in our solver
 
 Two qualitative properties of the SNAPHU cost are *unrepresentable* by a
 single integer cost-per-unit-flow:
 
-1. **Curvature.** A quadratic cost penalises 2 cycles 4× more than 1.
-   A linear cost only penalises it 2×. So with linear cost, MCF
+1. **Curvature.** A quadratic cost penalises 2 cycles 4x more than 1.
+   A linear cost only penalises it 2x. So with linear cost, MCF
    doesn't strongly resist routing multi-cycle paths through cheap
    noise channels.
 2. **Per-arc preferred non-zero offset.** SNAPHU's quadratic has its
@@ -58,12 +58,12 @@ the *per-arc deviation* `wrap(dpsi_arc − dpsi_smoothed_7x7)` into its
 would then become locally cheap routing channels — emulating SNAPHU's
 "this arc's preferred flow is non-zero" without changing the solver.
 
-Result on the NISAR 9×9 reference scene at α=0 (no Goldstein):
+Result on the NISAR 9x9 reference scene at α=0 (no Goldstein):
 
-| α=0 mode | wall | cc>0 coverage | K-agreement vs SNAPHU on cc=1 mainland |
-|---|---:|---:|---:|
-| baseline (`α_smooth` input) | 84 s | 3.47 % | **92.52 %** |
-| deviation input | 87 s | 1.71 % | **86.50 %** ↓ |
+| α=0 mode                    | wall | cc>0 coverage | K-agreement vs SNAPHU on cc=1 mainland |
+| --------------------------- | ---: | ------------: | -------------------------------------: |
+| baseline (`α_smooth` input) | 84 s |        3.47 % |                            **92.52 %** |
+| deviation input             | 87 s |        1.71 % |                          **86.50 %** ↓ |
 
 Why it loses: the substitution does succeed in making noise arcs cheap
 to route through — but in a smooth coherent ramp with random per-arc
@@ -71,7 +71,7 @@ noise, *those noise arcs have no geometric link to true wrap-line
 topology*. MCF routes 2π discontinuities through them and creates
 K-flips in the wrong places.
 
-Conclusion: **the 7×7 smoothing in the current cost is load-bearing,
+Conclusion: **the 7x7 smoothing in the current cost is load-bearing,
 not incidental**. It's the mechanism that confines cheap-routing to
 regions that *consistently* look like wrap lines (multiple aligned
 arcs). Replacing it with raw-minus-smoothed destroys that regional
@@ -113,7 +113,7 @@ is a uniquely cheap channel, not one of many.
 ## So is Goldstein really necessary?
 
 **Practically, with the current cost: yes.** α = 0.7 gives 99.9 %
-K-match with SNAPHU on the NISAR scene at 27× the speed. That's the
+K-match with SNAPHU on the NISAR scene at 27x the speed. That's the
 working answer in PR #19.
 
 **Structurally: no.** Both SNAPHU and PHASS unwrap that scene without
@@ -136,7 +136,7 @@ solver, the practical paths are (in order of how much code they need):
   MCM. Larger change; not tried here.
 - **Goldberg parallel-arc convex reduction**: replace each arc with K
   parallel arcs of increasing marginal cost. Lets the existing solver
-  express any monotone convex cost at K× the arcs. Larger still.
+  express any monotone convex cost at Kx the arcs. Larger still.
 
 ## Reproduction
 
@@ -150,9 +150,9 @@ cd /tmp/ww-nisar
 python test_deviation_cost.py baseline   # default Carballo cost
 WHIRLWIND_DEVIATION_COST=1 \
   python test_deviation_cost.py deviation
-python test_deviation_cost.py compare    # cross-tabulate vs SNAPHU 9×9
+python test_deviation_cost.py compare    # cross-tabulate vs SNAPHU 9x9
 ```
 
-SNAPHU 9×9 reference TIFFs live next to the NISAR inputs at
+SNAPHU 9x9 reference TIFFs live next to the NISAR inputs at
 `/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar/`. The whirlwind
 α=0.5 and α=0.7 references are alongside (saved by earlier work).

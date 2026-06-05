@@ -8,6 +8,7 @@ a new status/benchmark subsection). §1, §2 (with a §2.4 fix), §10, and the
 appendices (Appendix C fixed) are preserved. Idempotent-ish: operates on the
 current ATBD by top-level "## " section boundaries.
 """
+
 from __future__ import annotations
 import re
 from pathlib import Path
@@ -16,13 +17,17 @@ ROOT = Path("/Users/staniewi/repos/whirlwind-insar")
 AUDIT = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/atbd_audit")
 ATBD = ROOT / "ATBD-whirlwind.md"
 
+
 def draft(name: str) -> str:
     return (AUDIT / f"{name}_draft.md").read_text().rstrip("\n")
+
 
 # §7 = solver draft §7.1–§7.5 + ssp draft §7.6–§7.7 (ssp's are more detailed).
 solver = draft("solver")
 ssp = draft("ssp")
-solver_head = solver.split("### 7.6", 1)[0].rstrip("\n")   # keep 7.1–7.5 (+ the "## 7." heading)
+solver_head = solver.split("### 7.6", 1)[0].rstrip(
+    "\n"
+)  # keep 7.1–7.5 (+ the "## 7." heading)
 section7 = solver_head + "\n\n" + ssp.strip()
 
 DRAFTS = {
@@ -114,7 +119,7 @@ relaxed one.
 
 Float LLR costs are converted to `i32` to drive Dial's bucket-queue Dijkstra.
 The **production** Carballo path scales by `CARBALLO_COST_SCALE = 6.0` with a
-50-nat LLR cap, so the maximum integer cost is `6 × 50 = 300`. The diagnostic
+50-nat LLR cap, so the maximum integer cost is `6 x 50 = 300`. The diagnostic
 parity path (`compute_carballo_costs_parity`) scales by `100` to match Python
 `ww-orig`. (A separate `COST_SCALE = 100.0` constant is used by the CRLB and
 convex cost builders, **not** by the production Carballo path.)
@@ -124,7 +129,7 @@ convex cost builders, **not** by the production Carballo path.)
 Masks (`true` = valid) are handled differently per stage and per entry point:
 
 - **Residue compute** (`compute_with_mask`): zeros any interior residue whose
-  2×2 pixel loop touches a masked pixel, and skips boundary-edge deposits with a
+  2x2 pixel loop touches a masked pixel, and skips boundary-edge deposits with a
   masked endpoint (§4.2). Without this, `0+0j` masked pixels generate a wall of
   spurious residues at every mask boundary.
 - **Network construction**: *two* mechanisms (§6.3). Arc-forbidding
@@ -145,7 +150,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
   end-to-end runtime. The SSP fallback is the sharpest cost if it uses the
   multi-source search; the full-Dijkstra single-tile path therefore uses
   single-source SSP (see §9.6).
-- **Memory**: `O(pixels)`; a whole-image solve of a 4176×4257 NISAR frame peaks
+- **Memory**: `O(pixels)`; a whole-image solve of a 4176x4257 NISAR frame peaks
   at ≈6.4 GB RSS (the ≈72 M-arc residual network). Tiling bounds peak memory to
   tile scale.
 
@@ -155,7 +160,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
    `ATBD-3d.md`.
 2. **Statistical model**: assumes the Carballo/Lee cost model fits the data, and
    an accurate effective number of looks.
-3. **Filter size**: 7×7 smoothing (Carballo's original used 5×5).
+3. **Filter size**: 7x7 smoothing (Carballo's original used 5x5).
 4. **Tiled robustness layer is heuristic**: the default large-frame path
    (`unwrap_tiled_robust`) — seam reconciliation, coarse anchor + multi-scale
    cascade, sliver healing, gated multi-shift re-solve — is empirically tuned
@@ -180,7 +185,7 @@ baseline.
 | `unwrap_convex` | convex | `compute_snaphu_smooth_costs` | heap | forbid | research prototype (#65) |
 | `components_only` | unit-capacity | `compute_carballo_costs` | forbid | no MCF solve | — |
 
-**Single-tile benchmark (D_077, 4176×4257, vs production GUNW = SNAPHU).** The
+**Single-tile benchmark (D_077, 4176x4257, vs production GUNW = SNAPHU).** The
 single-tile kernel is both faster and more accurate than single-tile SNAPHU:
 
 | Unwrapper (single tile) | Runtime | per-component match vs production |
@@ -317,6 +322,7 @@ VERIFIED_NEW = """The single-tile kernel of §3.1 is the validated core: `unwrap
 checked against the Python reference, and the whole-image `unwrap_reuse`
 solve reaches its cost optimum (no negative cycles remain)."""
 
+
 def replace_section(text: str, num: int, new_body: str) -> str:
     # Match "## {num}. ..." up to the next top-level "## " (or end).
     pat = re.compile(rf"^## {num}\. .*?(?=^## |\Z)", re.S | re.M)
@@ -326,12 +332,14 @@ def replace_section(text: str, num: int, new_body: str) -> str:
     assert k == 1, f"section {num}: expected 1 match, got {k}"
     return out
 
+
 def replace_once(text: str, old: str, new: str, label: str) -> str:
     n_old = text.count(old)
     if n_old == 0 and text.count(new) == 1:
         return text
     assert n_old == 1, f"{label}: expected exactly 1 occurrence, got {n_old}"
     return text.replace(old, new)
+
 
 t = ATBD.read_text()
 for num in (3, 4, 5, 6, 7, 8):

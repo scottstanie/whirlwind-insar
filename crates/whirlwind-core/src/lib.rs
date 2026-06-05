@@ -87,7 +87,11 @@ pub fn unwrap_coherence(
     // layer is still empirically tuned and not validated across all NISAR
     // frames, so it is no longer the silent default for large frames.
     if multilook > 1 || explicit_tile || solver == "tiled" {
-        let (ts, to) = if tile_size == 0 { (512, 64) } else { (tile_size, tile_overlap) };
+        let (ts, to) = if tile_size == 0 {
+            (512, 64)
+        } else {
+            (tile_size, tile_overlap)
+        };
         return tile::unwrap_tiled_robust(igram, corr, nlooks, mask, ts, to, multilook);
     }
     // Whole-image default kernel.
@@ -350,7 +354,7 @@ pub fn unwrap_linear(
     // regions and degrading quality on ~50%-masked NISAR scenes. Use new() here
     // (no mask forbidding) to match Python. Masked arcs have cost=0 so MCF
     // routes through them freely, then we NaN masked pixels post-integration.
-    // Parity cost mode: 100× scale + zero only where both endpoints are
+    // Parity cost mode: 100x scale + zero only where both endpoints are
     // invalid — matches Python _cost.compute_carballo_costs exactly.
     let costs = cost::compute_carballo_costs_parity(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
@@ -408,7 +412,11 @@ pub fn unwrap_linear_ext_costs(
         residues.column_mut(rn - 1).fill(0);
     }
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    assert_eq!(ext_costs.len(), graph.num_forward, "cost length must equal num_forward arcs");
+    assert_eq!(
+        ext_costs.len(),
+        graph.num_forward,
+        "cost length must equal num_forward arcs"
+    );
     let mut net = network::Network::new(&graph, residues.view(), ext_costs);
     primal_dual::run_full_dijkstra(&graph, &mut net, 8);
     let mut unw = integrate::integrate(wrapped_phase.view(), &graph, &net);

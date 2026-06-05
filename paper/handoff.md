@@ -42,7 +42,7 @@ RSS **6.4 GB**. Merged: PR #66 (parity), #67 (LUT override + buffer reuse).
    on the 6.4 GB D_077 run reported **0 swaps, 565 page faults** — it does not
    swap. A 1472 s wall-time was misread as swap twice; it was (a) CPU contention
    from running `cargo`/`maturin` *concurrently* with the measurement (starved
-   rayon → ~1.4× parallelism instead of ~13×), and (b) the SSP algorithm (below).
+   rayon → ~1.4x parallelism instead of ~13x), and (b) the SSP algorithm (below).
    *Lesson:* measure peak RSS with `/usr/bin/time -l` (default in benches), use
    `mprof` only to chase spikes, and never run other heavy jobs during a timing
    run.
@@ -66,7 +66,7 @@ RSS **6.4 GB**. Merged: PR #66 (parity), #67 (LUT override + buffer reuse).
      near-whole-image Dijkstra *per single unit*);
    * new **single-source** SSP: fast on whole-image (D_077 158 s) but slow on
      tiled (A_016 145 s).
-   Since the **product is single-tile**, reverting the single-source SSP was a 9×
+   Since the **product is single-tile**, reverting the single-source SSP was a 9x
    regression there. Don't pick one globally.
 
 **DONE: dual-SSP.** Multi-source `ssp::run` kept for the early-exit (`run`,
@@ -88,12 +88,12 @@ fix that comment as part of the dual-SSP work.
 
 ## tl;dr — what works today, α=0 (no Goldstein)
 
-| function | mechanism | PV K-match | NISAR K-match | wall (NISAR) |
-|---|---|---:|---:|---:|
-| `unwrap`                  | linear coherence, unit-capacity MCF      | 90.67 % | 80.01 % |  75 s |
-| **`unwrap` tiled ts=512** | per-tile MCF + consensus 2π stitch       | — | **96.6 %** |  **3.5 s** |
-| **`unwrap_reuse`**        | linear coh + PHASS-style flow reuse      | **99.75 %** | **92.70 %** |  93 s |
-| `unwrap_convex`           | SNAPHU-style quadratic cost (BUGGY — see `tiling.md`) | 99.80 % | 68.80 % | 409 s |
+| function                  | mechanism                                             |  PV K-match | NISAR K-match | wall (NISAR) |
+| ------------------------- | ----------------------------------------------------- | ----------: | ------------: | -----------: |
+| `unwrap`                  | linear coherence, unit-capacity MCF                   |     90.67 % |       80.01 % |         75 s |
+| **`unwrap` tiled ts=512** | per-tile MCF + consensus 2π stitch                    |           — |    **96.6 %** |    **3.5 s** |
+| **`unwrap_reuse`**        | linear coh + PHASS-style flow reuse                   | **99.75 %** |   **92.70 %** |         93 s |
+| `unwrap_convex`           | SNAPHU-style quadratic cost (BUGGY — see `tiling.md`) |     99.80 % |       68.80 % |        409 s |
 
 **Update (session 2): the tiled path (`unwrap(..., tile_size=512,
 tile_overlap=64)`) is the new fast/low-memory no-Goldstein winner and
@@ -104,7 +104,7 @@ wrong quantity. See `paper/tiling.md` for the full corrected picture.**
 | `unwrap_crlb_*`           | CRLB-variance cost variants              | (designed for phase-linked stacks) | — | — |
 
 References (same NISAR scene):
-* SNAPHU 9×9 tiled: K-match definition, ~17 min wall.
+* SNAPHU 9x9 tiled: K-match definition, ~17 min wall.
 * `dolphin --unwrap-method PHASS`: 97.93 % K-match, ~60 s, no Goldstein.
 * whirlwind `unwrap` + `--goldstein-alpha 0.7`: **99.90 %**, **38 s**.
 
@@ -126,14 +126,14 @@ The original production path (Carballo cost + Goldstein α=0.7 + Dial
 bucket-queue Dijkstra + unit-capacity MCF) still clocks **38 s on
 NISAR for 99.90 % K-match** — unchanged from PR #19.
 
-Per-prototype wall times (NISAR 6811×6912, 25M valid px):
+Per-prototype wall times (NISAR 6811x6912, 25M valid px):
 
-| function | wall | × baseline | notes |
-|---|---:|---:|---|
-| `unwrap`         |  75 s | 1.0 × | linear coh cost, unit-cap MCF, Dial |
-| `unwrap`+Goldstein α=0.7 | 38 s | 0.5 × | *faster* than no Goldstein (filter shrinks the residue field) |
-| `unwrap_reuse`   |  93 s | 1.2 × | linear coh + multi-unit flow + reduced-cost-0 on used arcs |
-| `unwrap_convex`  | 402 s | 5.4 × | quadratic cost, heap backend (Dial bucket vec would be GB-scale on convex weights) |
+| function                 |  wall | x baseline | notes                                                                              |
+| ------------------------ | ----: | ---------: | ---------------------------------------------------------------------------------- |
+| `unwrap`                 |  75 s |      1.0 x | linear coh cost, unit-cap MCF, Dial                                                |
+| `unwrap`+Goldstein α=0.7 |  38 s |      0.5 x | *faster* than no Goldstein (filter shrinks the residue field)                      |
+| `unwrap_reuse`           |  93 s |      1.2 x | linear coh + multi-unit flow + reduced-cost-0 on used arcs                         |
+| `unwrap_convex`          | 402 s |      5.4 x | quadratic cost, heap backend (Dial bucket vec would be GB-scale on convex weights) |
 
 The convex prototype is the only one with notable slowdown. Two
 contributing factors:
@@ -145,12 +145,12 @@ contributing factors:
   backend, which is O(E log V) vs Dial's O(V + E + K) and slower
   per-edge in practice.
 * The Lee 1994 variance LUT replacement for Just/Bamler (committed
-  earlier as the σ² fix) gave a side-effect 90× speedup on the
+  earlier as the σ² fix) gave a side-effect 90x speedup on the
   synthetic diagonal-ramp test (91 s → 0.97 s) because the weight
   magnitudes are now more sensible. So the convex runtime is
   *much* better than the first-cut implementation.
 
-The reuse prototype runtime tax (1.2× on NISAR, 5× on PV) is the
+The reuse prototype runtime tax (1.2x on NISAR, 5x on PV) is the
 honest cost of multi-unit flow without saturation. If we ever ship
 reuse as a non-prototype path, profiling its per-relax overhead is
 the obvious cleanup.
@@ -196,7 +196,7 @@ plausible knobs tested, none move it:
   ~1M-pixel +4-cycle blob in the upper-right. Ruled out.
 
 The diagnostic also showed NISAR's max offset is 22 (vs ±50 saturation
-point) even with raw gradients, because the 7×7 box smoothing or the
+point) even with raw gradients, because the 7x7 box smoothing or the
 nshortcycle=100 scaling doesn't capture wrap-line geometry on this scene.
 But the *answer* doesn't depend on this — so it's not the cause of the
 regression.
@@ -297,7 +297,7 @@ suspect 4 (Bellman-Ford pre-pass for convex). If that doesn't fix it,
 the parallel-arc decomposition is the next step.
 
 If your goal is *production unwrapping quality today*: the Goldstein
-α=0.7 default is already at 99.90 % vs SNAPHU 9×9 on NISAR in 38 s.
+α=0.7 default is already at 99.90 % vs SNAPHU 9x9 on NISAR in 38 s.
 There is no current production reason to pursue the convex track.
 
 If the scientific framing for a paper is the priority: the reuse-vs-

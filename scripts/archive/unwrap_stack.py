@@ -56,9 +56,11 @@ import whirlwind as ww
 # Filename parsing / discovery
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class IgFile:
     """An interferogram triplet on disk: complex IG + mask + (optional) coherence."""
+
     date_a: str
     date_b: str
     ig_path: Path
@@ -79,8 +81,8 @@ def _parse_ig_name(stem: str) -> tuple[str, str] | None:
 
 def discover_stack(dolphin: Path) -> tuple[list[IgFile], dict[str, Path]]:
     """Walk `dolphin/interferograms/` and return:
-       - list of IG files (with companion mask + cor paths if they exist)
-       - map of date → crlb_<date>.tif path
+    - list of IG files (with companion mask + cor paths if they exist)
+    - map of date → crlb_<date>.tif path
     """
     ig_dir = dolphin / "interferograms"
     if not ig_dir.is_dir():
@@ -95,13 +97,15 @@ def discover_stack(dolphin: Path) -> tuple[list[IgFile], dict[str, Path]]:
         a, b = parsed
         mask = ig_dir / f"{stem}.int.mask.tif"
         cor = ig_dir / f"{stem}.int.cor.tif"
-        igs.append(IgFile(
-            date_a=a,
-            date_b=b,
-            ig_path=p,
-            mask_path=mask if mask.exists() else None,
-            cor_path=cor if cor.exists() else None,
-        ))
+        igs.append(
+            IgFile(
+                date_a=a,
+                date_b=b,
+                ig_path=p,
+                mask_path=mask if mask.exists() else None,
+                cor_path=cor if cor.exists() else None,
+            )
+        )
 
     crlb_paths: dict[str, Path] = {}
     for p in ig_dir.glob("crlb_*.tif"):
@@ -114,6 +118,7 @@ def discover_stack(dolphin: Path) -> tuple[list[IgFile], dict[str, Path]]:
 # ---------------------------------------------------------------------------
 # Reading
 # ---------------------------------------------------------------------------
+
 
 def _window_from_args(window: list[int] | None) -> Window | None:
     if window is None:
@@ -147,7 +152,9 @@ def _read_bool(path: Path, win: Window | None) -> np.ndarray:
     return a.astype(bool)
 
 
-def _output_profile(template_path: Path, win: Window | None, dtype: str, count: int = 1) -> dict:
+def _output_profile(
+    template_path: Path, win: Window | None, dtype: str, count: int = 1
+) -> dict:
     """Build a rasterio profile suitable for writing outputs in the same CRS
     as the template, possibly cropped to a window."""
     with rasterio.open(template_path) as src:
@@ -173,6 +180,7 @@ def _output_profile(template_path: Path, win: Window | None, dtype: str, count: 
 # Pipeline
 # ---------------------------------------------------------------------------
 
+
 def _resolve_reference(
     arg: str | None,
     dolphin: Path,
@@ -195,7 +203,11 @@ def _resolve_reference(
         # Avoid nodata (zero) pixels in the auto-pick.
         score = np.where(score > 0, score, np.inf)
         i, j = np.unravel_index(int(score.argmin()), score.shape)
-        return int(i), int(j), f"auto (min Σ_d CRLB, score={float(crlb_cube.sum(axis=0)[i,j]):.3g})"
+        return (
+            int(i),
+            int(j),
+            f"auto (min Σ_d CRLB, score={float(crlb_cube.sum(axis=0)[i,j]):.3g})",
+        )
     if arg == "dolphin":
         rp = dolphin / "timeseries" / "reference_point.txt"
         if not rp.exists():
@@ -207,11 +219,17 @@ def _resolve_reference(
         if window is not None:
             full_i -= int(window.row_off)
             full_j -= int(window.col_off)
-        return full_i, full_j, f"dolphin reference_point.txt = ({full_i}, {full_j}) in window"
+        return (
+            full_i,
+            full_j,
+            f"dolphin reference_point.txt = ({full_i}, {full_j}) in window",
+        )
     # explicit "i,j"
     parts = arg.replace(" ", "").split(",")
     if len(parts) != 2:
-        raise ValueError(f"--reference must be 'auto', 'dolphin', or 'i,j'; got {arg!r}")
+        raise ValueError(
+            f"--reference must be 'auto', 'dolphin', or 'i,j'; got {arg!r}"
+        )
     return int(parts[0]), int(parts[1]), f"explicit ({parts[0]}, {parts[1]})"
 
 
@@ -262,8 +280,10 @@ def run(
     crlb_cube[0] = sample
     for k, d in enumerate(dates[1:], start=1):
         crlb_cube[k] = _read_f32(crlb_paths[d], win)
-    print(f"[crlb] shape={crlb_cube.shape} median={np.median(crlb_cube[crlb_cube > 0]):.3g} rad² "
-          f"({time.perf_counter() - t0:.1f}s)")
+    print(
+        f"[crlb] shape={crlb_cube.shape} median={np.median(crlb_cube[crlb_cube > 0]):.3g} rad² "
+        f"({time.perf_counter() - t0:.1f}s)"
+    )
 
     # Build edge arrays for the closure pass.
     edges_from = np.array([date_idx[e.date_a] for e in igs], dtype=np.uint32)
@@ -280,8 +300,10 @@ def run(
         return float(np.median(v[valid]))
 
     edge_priority = np.array([median_var(e) for e in igs], dtype=np.float32)
-    print(f"[tree] edge variance priorities: min={edge_priority.min():.3g} "
-          f"median={np.median(edge_priority):.3g} max={edge_priority.max():.3g}")
+    print(
+        f"[tree] edge variance priorities: min={edge_priority.min():.3g} "
+        f"median={np.median(edge_priority):.3g} max={edge_priority.max():.3g}"
+    )
 
     # 2D unwrap each IG, with CRLB-weighted cost.
     t0 = time.perf_counter()
@@ -296,38 +318,56 @@ def run(
             mask = _read_bool(e.mask_path, win)
         # `.cor` (sample coherence) is a better anchor/cascade confidence map than
         # the variance-derived pseudo-coherence (#58): higher dynamic range → pins
-        # tile-block offsets and avoids tripping the multi-shift gate (~4× faster).
+        # tile-block offsets and avoids tripping the multi-shift gate (~4x faster).
         # NOT used as the cost — the cost stays CRLB variance.
         coherence = _read_f32(e.cor_path, win) if e.cor_path is not None else None
         t = time.perf_counter()
         unw, _cc = ww.unwrap_crlb(
-            igram, variance, mask, coherence=coherence,
-            tile_size=tile_size, tile_overlap=tile_overlap,
+            igram,
+            variance,
+            mask,
+            coherence=coherence,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
         )
         unw_stack[idx] = unw
         return idx, time.perf_counter() - t
 
-    tile_desc = (f"tiled {tile_size}x{tile_size} overlap {tile_overlap}"
-                 if tile_size > 0 else "single-tile (whole IG in memory)")
-    print(f"[unwrap] running 2D unwrap on {n_edges} IGs (CRLB cost, "
-          f"{n_threads} outer threads, {tile_desc})")
+    tile_desc = (
+        f"tiled {tile_size}x{tile_size} overlap {tile_overlap}"
+        if tile_size > 0
+        else "single-tile (whole IG in memory)"
+    )
+    print(
+        f"[unwrap] running 2D unwrap on {n_edges} IGs (CRLB cost, "
+        f"{n_threads} outer threads, {tile_desc})"
+    )
     # Within-Rust rayon parallelises each unwrap; the outer ThreadPool lets us
     # overlap I/O (reading the next IG while the current one solves).
     with ThreadPoolExecutor(max_workers=n_threads) as ex:
         results = list(ex.map(unwrap_one, enumerate(igs)))
     dt = time.perf_counter() - t0
     per_ig = np.array([r[1] for r in results])
-    print(f"[unwrap] done in {dt:.1f}s "
-          f"(median {np.median(per_ig):.2f}s/IG, max {per_ig.max():.2f}s)")
+    print(
+        f"[unwrap] done in {dt:.1f}s "
+        f"(median {np.median(per_ig):.2f}s/IG, max {per_ig.max():.2f}s)"
+    )
 
     # Temporal closure correction (optional).
     reference = 0
     if closure_mode == "tree":
         t0 = time.perf_counter()
-        print(f"[closure] tree-based correction over {n_edges} IGs across "
-              f"{len(dates)} dates (reference={dates[reference]})")
+        print(
+            f"[closure] tree-based correction over {n_edges} IGs across "
+            f"{len(dates)} dates (reference={dates[reference]})"
+        )
         closure = ww.closure_correct(
-            unw_stack, edges_from, edges_to, len(dates), reference, edge_priority,
+            unw_stack,
+            edges_from,
+            edges_to,
+            len(dates),
+            reference,
+            edge_priority,
         )
         print(f"[closure] done in {time.perf_counter() - t0:.1f}s")
     else:
@@ -357,22 +397,29 @@ def run(
     if mcf_refine:
         t0 = time.perf_counter()
         mcf = ww.closure_refine_mcf(
-            unw_stack,          # NOTE: raw 2D-unwrapped stack, not closure["corrected"]
-            edges_from, edges_to, len(dates), reference,
+            unw_stack,  # NOTE: raw 2D-unwrapped stack, not closure["corrected"]
+            edges_from,
+            edges_to,
+            len(dates),
+            reference,
             crlb_cube,
             edge_priority,
             32,
         )
         dt = time.perf_counter() - t0
-        print(f"[mcf] refined in {dt:.1f}s; "
-              f"{int((mcf['residual_violations'] > 0).sum()):,} pixels with unresolved cycles")
+        print(
+            f"[mcf] refined in {dt:.1f}s; "
+            f"{int((mcf['residual_violations'] > 0).sum()):,} pixels with unresolved cycles"
+        )
         # Compare against tree-based output for a useful diagnostic.
         diff = np.abs(mcf["corrected"] - closure["corrected"])
         per_ig_max = diff.max(axis=(1, 2))
         n_different = int((diff > 1e-3).sum())
         print(f"[mcf] vs tree-based: {n_different:,} edge-pixels differ by >1e-3 rad")
-        print(f"[mcf] max per-IG diff vs tree-based: median {np.median(per_ig_max):.4g}, "
-              f"max {per_ig_max.max():.4g} rad")
+        print(
+            f"[mcf] max per-IG diff vs tree-based: median {np.median(per_ig_max):.4g}, "
+            f"max {per_ig_max.max():.4g} rad"
+        )
 
     # Reference-pixel anchoring (sparse-to-dense lite): subtract a single
     # high-quality pixel's per-IG value to remove the arbitrary global
@@ -383,8 +430,10 @@ def run(
     ref_i, ref_j, ref_mode = _resolve_reference(reference_arg, dolphin, crlb_cube, win)
     ref_vals = closure["corrected"][:, ref_i, ref_j].copy()
     print(f"[reference] anchoring on pixel ({ref_i}, {ref_j}) — {ref_mode}")
-    print(f"[reference] per-IG offsets removed: median {np.median(ref_vals):.3f} rad, "
-          f"std {ref_vals.std():.3f} rad")
+    print(
+        f"[reference] per-IG offsets removed: median {np.median(ref_vals):.3f} rad, "
+        f"std {ref_vals.std():.3f} rad"
+    )
     closure["corrected"] -= ref_vals[:, None, None]
     # Date phases: subtract the per-date reference value too.
     ref_dates = closure["date_phases"][:, ref_i, ref_j].copy()
@@ -407,24 +456,31 @@ def run(
     # Anchor a working copy of the raw unwrap stack at the reference (so the
     # quality map reflects per-IG unwrap consistency relative to the same
     # absolute datum, not the IG-arbitrary global integer offsets).
-    unw_anchored = unw_stack - unw_stack[:, ref_i:ref_i + 1, ref_j:ref_j + 1]
+    unw_anchored = unw_stack - unw_stack[:, ref_i : ref_i + 1, ref_j : ref_j + 1]
     quality = ww.quality_triangles(
-        unw_anchored, edges_from, edges_to, len(dates),
+        unw_anchored,
+        edges_from,
+        edges_to,
+        len(dates),
     )
     dt = time.perf_counter() - t0
     q_hist = np.bincount(quality.ravel(), minlength=4)
     n_high = int(quality.size - q_hist[0] - q_hist[1] - q_hist[2])
-    print(f"[quality] map computed in {dt:.1f}s. K-histogram: "
-          f"0:{q_hist[0]:,}  1:{q_hist[1]:,}  2:{q_hist[2]:,}  "
-          f">2:{n_high:,}  "
-          f"({100*q_hist[0]/quality.size:.1f}% perfectly consistent)")
+    print(
+        f"[quality] map computed in {dt:.1f}s. K-histogram: "
+        f"0:{q_hist[0]:,}  1:{q_hist[1]:,}  2:{q_hist[2]:,}  "
+        f">2:{n_high:,}  "
+        f"({100*q_hist[0]/quality.size:.1f}% perfectly consistent)"
+    )
 
     if quality_mask_threshold is not None:
         bad = quality > quality_mask_threshold
         n_bad = int(bad.sum())
         closure["corrected"][:, bad] = np.nan
-        print(f"[quality] NaN'd {n_bad:,} pixels ({100*n_bad/bad.size:.1f}%) "
-              f"with K > {quality_mask_threshold}")
+        print(
+            f"[quality] NaN'd {n_bad:,} pixels ({100*n_bad/bad.size:.1f}%) "
+            f"with K > {quality_mask_threshold}"
+        )
 
     # Per-date posterior variance from the tree.
     # With independent linked-SLC errors, telescoping along the tree gives
@@ -440,10 +496,14 @@ def run(
     finite = np.isfinite(rms) & (rms > 0)
     n_corrected = int(np.count_nonzero(closure["corrections"]))
     n_total = int(closure["corrections"].size)
-    print(f"[closure] median closure RMS: {np.median(rms[finite]):.3f} rad   "
-          f"max: {rms.max():.3f} rad")
-    print(f"[closure] {n_corrected:,} / {n_total:,} edge-pixels received nonzero "
-          f"integer corrections ({100*n_corrected/n_total:.2f}%)")
+    print(
+        f"[closure] median closure RMS: {np.median(rms[finite]):.3f} rad   "
+        f"max: {rms.max():.3f} rad"
+    )
+    print(
+        f"[closure] {n_corrected:,} / {n_total:,} edge-pixels received nonzero "
+        f"integer corrections ({100*n_corrected/n_total:.2f}%)"
+    )
 
     # Write outputs.
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -466,12 +526,16 @@ def run(
         (out_dir / "mcf_diagnostic").mkdir(exist_ok=True)
         for idx, e in enumerate(igs):
             name = f"{e.date_a}_{e.date_b}.unw.tif"
-            with rasterio.open(out_dir / "mcf_diagnostic" / name, "w", **prof_unw) as dst:
+            with rasterio.open(
+                out_dir / "mcf_diagnostic" / name, "w", **prof_unw
+            ) as dst:
                 dst.write(mcf["corrected"][idx], 1)
         # Also write the per-pixel residual_violations count.
         prof_u16 = dict(prof_unw)
         prof_u16["dtype"] = "uint16"
-        with rasterio.open(out_dir / "mcf_diagnostic" / "residual_violations.tif", "w", **prof_u16) as dst:
+        with rasterio.open(
+            out_dir / "mcf_diagnostic" / "residual_violations.tif", "w", **prof_u16
+        ) as dst:
             dst.write(mcf["residual_violations"], 1)
 
     # Quality map: per-pixel max |K| over fundamental cycles. uint16.
@@ -521,11 +585,17 @@ def run(
         "reference_pixel": {"i": int(ref_i), "j": int(ref_j), "source": ref_mode},
         "dates": dates,
         "edges": [
-            {"e": i, "from": e.date_a, "to": e.date_b,
-             "median_variance_rad2": float(edge_priority[i])}
+            {
+                "e": i,
+                "from": e.date_a,
+                "to": e.date_b,
+                "median_variance_rad2": float(edge_priority[i]),
+            }
             for i, e in enumerate(igs)
         ],
-        "median_closure_rms_rad": float(np.median(rms[finite])) if finite.any() else None,
+        "median_closure_rms_rad": float(np.median(rms[finite]))
+        if finite.any()
+        else None,
         "n_edge_pixels_corrected": n_corrected,
         "n_edge_pixels_total": n_total,
     }
@@ -535,59 +605,108 @@ def run(
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--dolphin", type=Path, required=True,
-                   help="dolphin output directory (contains interferograms/, phase_linking/, ...)")
-    p.add_argument("--out", type=Path, required=True,
-                   help="output directory")
-    p.add_argument("--window", type=int, nargs=4, metavar=("I0", "J0", "I1", "J1"),
-                   default=None, help="optional crop window (rows i0:i1, cols j0:j1)")
-    p.add_argument("--max-igs", type=int, default=None,
-                   help="cap the number of IGs (handy for fast smoke tests)")
-    p.add_argument("--threads", type=int, default=4,
-                   help="outer thread pool for I/O overlap (rayon handles inner parallelism)")
-    p.add_argument("--mcf-refine", action="store_true",
-                   help="run cycle-greedy MCF refinement on the raw 2D-unwrapped stack "
-                        "instead of tree-based closure correction (slower, diagnostic)")
-    p.add_argument("--closure", choices=["off", "tree"], default="off",
-                   help="temporal-closure correction. 'off' (default, production-recommended): "
-                        "emit raw per-IG unwraps with reference-pixel anchoring only — best "
-                        "per-IG accuracy (median absolute RMS vs SNAPHU 2.29 rad). 'tree': run "
-                        "CRLB-priority tree closure correction — guarantees exact temporal "
-                        "consistency Σ_e ε_e·y_e=0 but REGRESSES to 5.61 rad (2.4× worse) by "
-                        "propagating per-IG outliers across the stack; use only if you require "
-                        "exact closure (see ATBD-3d §10.2)")
-    p.add_argument("--reference", default="auto",
-                   help="reference pixel for absolute-phase anchoring: 'auto' "
-                        "(lowest-Σ-CRLB pixel), 'dolphin' (read timeseries/reference_point.txt), "
-                        "or 'i,j' for explicit window-local coords")
-    p.add_argument("--tile-size", type=int, default=0,
-                   help="if > 0, tile each IG into tile_size x tile_size sub-images "
-                        "with --tile-overlap pixels of overlap, unwrap each tile in "
-                        "parallel, and stitch with CRLB-weighted overlap-median 2π "
-                        "reconciliation. Bounds per-IG MCF memory to tile-size scale. "
-                        "Output ≈ non-tiled in coherent areas; smaller tiles ⇒ more "
-                        "independent per-tile integer ambiguity choices ⇒ less stable "
-                        "stitching. 1024 or larger recommended on real data — at "
-                        "512+128 we see 99.78%% per-pixel agreement with non-tiled on "
-                        "the Palos-Verdes 1024² test tile, at 256+64 only 3.5%% (a "
-                        "single fictitious wrap-line at a tile boundary). Disabled "
-                        "by default; turn on for scenes that don't fit in memory.")
-    p.add_argument("--tile-overlap", type=int, default=128,
-                   help="overlap in pixels between adjacent tiles when --tile-size > 0. "
-                        "More overlap = more robust stitching median. ~tile_size/8 is "
-                        "a reasonable starting point.")
-    p.add_argument("--quality-mask-threshold", type=int, default=None,
-                   help="NaN pixels in the corrected/ output where the quality "
-                        "map (per-pixel max |K| over fundamental temporal cycles) "
-                        "exceeds this integer. K=0 = all loops agree on integer "
-                        "ambiguities (PS/coherent land). K≥1 = at least one loop "
-                        "disagrees (typically water / decorrelated). Recommended "
-                        "starting value: 0 (strictest) or 1 (allow occasional "
-                        "noise). Off by default — quality.tif is always written.")
+    p.add_argument(
+        "--dolphin",
+        type=Path,
+        required=True,
+        help="dolphin output directory (contains interferograms/, phase_linking/, ...)",
+    )
+    p.add_argument("--out", type=Path, required=True, help="output directory")
+    p.add_argument(
+        "--window",
+        type=int,
+        nargs=4,
+        metavar=("I0", "J0", "I1", "J1"),
+        default=None,
+        help="optional crop window (rows i0:i1, cols j0:j1)",
+    )
+    p.add_argument(
+        "--max-igs",
+        type=int,
+        default=None,
+        help="cap the number of IGs (handy for fast smoke tests)",
+    )
+    p.add_argument(
+        "--threads",
+        type=int,
+        default=4,
+        help="outer thread pool for I/O overlap (rayon handles inner parallelism)",
+    )
+    p.add_argument(
+        "--mcf-refine",
+        action="store_true",
+        help="run cycle-greedy MCF refinement on the raw 2D-unwrapped stack "
+        "instead of tree-based closure correction (slower, diagnostic)",
+    )
+    p.add_argument(
+        "--closure",
+        choices=["off", "tree"],
+        default="off",
+        help="temporal-closure correction. 'off' (default, production-recommended): "
+        "emit raw per-IG unwraps with reference-pixel anchoring only — best "
+        "per-IG accuracy (median absolute RMS vs SNAPHU 2.29 rad). 'tree': run "
+        "CRLB-priority tree closure correction — guarantees exact temporal "
+        "consistency Σ_e ε_e·y_e=0 but REGRESSES to 5.61 rad (2.4x worse) by "
+        "propagating per-IG outliers across the stack; use only if you require "
+        "exact closure (see ATBD-3d §10.2)",
+    )
+    p.add_argument(
+        "--reference",
+        default="auto",
+        help="reference pixel for absolute-phase anchoring: 'auto' "
+        "(lowest-Σ-CRLB pixel), 'dolphin' (read timeseries/reference_point.txt), "
+        "or 'i,j' for explicit window-local coords",
+    )
+    p.add_argument(
+        "--tile-size",
+        type=int,
+        default=0,
+        help="if > 0, tile each IG into tile_size x tile_size sub-images "
+        "with --tile-overlap pixels of overlap, unwrap each tile in "
+        "parallel, and stitch with CRLB-weighted overlap-median 2π "
+        "reconciliation. Bounds per-IG MCF memory to tile-size scale. "
+        "Output ≈ non-tiled in coherent areas; smaller tiles ⇒ more "
+        "independent per-tile integer ambiguity choices ⇒ less stable "
+        "stitching. 1024 or larger recommended on real data — at "
+        "512+128 we see 99.78%% per-pixel agreement with non-tiled on "
+        "the Palos-Verdes 1024² test tile, at 256+64 only 3.5%% (a "
+        "single fictitious wrap-line at a tile boundary). Disabled "
+        "by default; turn on for scenes that don't fit in memory.",
+    )
+    p.add_argument(
+        "--tile-overlap",
+        type=int,
+        default=128,
+        help="overlap in pixels between adjacent tiles when --tile-size > 0. "
+        "More overlap = more robust stitching median. ~tile_size/8 is "
+        "a reasonable starting point.",
+    )
+    p.add_argument(
+        "--quality-mask-threshold",
+        type=int,
+        default=None,
+        help="NaN pixels in the corrected/ output where the quality "
+        "map (per-pixel max |K| over fundamental temporal cycles) "
+        "exceeds this integer. K=0 = all loops agree on integer "
+        "ambiguities (PS/coherent land). K≥1 = at least one loop "
+        "disagrees (typically water / decorrelated). Recommended "
+        "starting value: 0 (strictest) or 1 (allow occasional "
+        "noise). Off by default — quality.tif is always written.",
+    )
     args = p.parse_args()
-    run(args.dolphin, args.out, args.window, args.max_igs, args.threads,
-        args.mcf_refine, args.reference, args.closure,
-        args.quality_mask_threshold, args.tile_size, args.tile_overlap)
+    run(
+        args.dolphin,
+        args.out,
+        args.window,
+        args.max_igs,
+        args.threads,
+        args.mcf_refine,
+        args.reference,
+        args.closure,
+        args.quality_mask_threshold,
+        args.tile_size,
+        args.tile_overlap,
+    )
 
 
 if __name__ == "__main__":

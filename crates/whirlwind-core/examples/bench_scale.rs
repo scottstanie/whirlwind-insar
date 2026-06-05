@@ -137,7 +137,7 @@ fn run_one(igram: &Array2<Complex32>, cor: &Array2<f32>, nlooks: f32) -> StageTi
 }
 
 fn analytic_mem_bytes(m: usize, n: usize) -> u64 {
-    // Working-set estimate (per-pixel bytes × m·n + small per-arc overhead).
+    // Working-set estimate (per-pixel bytes x m·n + small per-arc overhead).
     // Values reflect the actual data structures whirlwind-core allocates.
     let mn = (m as u64) * (n as u64);
     let res_grid = ((m as u64) + 1) * ((n as u64) + 1);

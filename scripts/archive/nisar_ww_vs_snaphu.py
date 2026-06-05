@@ -1,6 +1,6 @@
-"""NISAR 40 MHz HH 50 m posting (~6.8k × 6.9k) — ww vs SNAPHU comparison.
+"""NISAR 40 MHz HH 50 m posting (~6.8k x 6.9k) — ww vs SNAPHU comparison.
 
-Three methods on the same interferogram (10 × 10 boxcar looks):
+Three methods on the same interferogram (10 x 10 boxcar looks):
 
 * ``ww``           — ``ww.unwrap_with_conncomp`` (whirlwind-rs MCF).
 * ``snaphu_plain`` — ``snaphu.unwrap`` single-tile, ``cost='smooth'``.
@@ -467,7 +467,7 @@ def main():
         "--nlooks",
         type=float,
         default=100.0,
-        help="10 range × 10 az boxcar looks ⇒ nlooks=100",
+        help="10 range x 10 az boxcar looks ⇒ nlooks=100",
     )
     ap.add_argument(
         "--stage",

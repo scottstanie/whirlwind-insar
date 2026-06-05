@@ -83,7 +83,11 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
     // mismatch is still open). The final imbalance is always reported.
     let dbg = debug_enabled();
     let excess_now = |net: &Network| -> i64 {
-        net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum()
+        net.excess
+            .iter()
+            .filter(|&&e| e > 0)
+            .map(|&e| e as i64)
+            .sum()
     };
     if excess_now(net) > 0 {
         let cap: usize = std::env::var("WHIRLWIND_LINEAR_PD_CAP")
@@ -132,7 +136,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     // when no more excess/deficit pairs are connected.
 
     // Reusable scratch buffers — kept alive across PD iterations so we don't
-    // pay a ~n_nodes × 4-byte allocation per iter (on 8192² that's 268 MiB
+    // pay a ~n_nodes x 4-byte allocation per iter (on 8192² that's 268 MiB
     // each, churned tens of times across the run).
     let n_nodes = net.num_nodes();
     let mut visited_epoch: Vec<u32> = vec![0; n_nodes];

@@ -29,8 +29,8 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
-import whirlwind          # the C++ implementation
-import whirlwind       # the Rust implementation
+import whirlwind  # the C++ implementation
+import whirlwind  # the Rust implementation
 
 try:
     import rasterio
@@ -44,7 +44,7 @@ DOLPHIN = Path(
     "palos-verdes/Palos_Verdes_C13_RO23_SP/e2e_output_20260519/dolphin"
 )
 SYNTHETIC_SIZES = [256, 512, 1024, 2048]
-REAL_TILE = (1000, 1500, 2024, 2524)   # (i0, j0, i1, j1) — 1024×1024
+REAL_TILE = (1000, 1500, 2024, 2524)  # (i0, j0, i1, j1) — 1024x1024
 REAL_MAX_IGS = 10
 
 
@@ -52,13 +52,16 @@ REAL_MAX_IGS = 10
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def rss_mb() -> float:
     """Best-effort peak RSS in MiB. On macOS rusage returns bytes."""
     r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return r / (1024 * 1024) if sys.platform == "darwin" else r / 1024
 
 
-def time_unwrap(fn, *args, warmup_runs: int = 1, timing_runs: int = 3) -> tuple[float, float, np.ndarray]:
+def time_unwrap(
+    fn, *args, warmup_runs: int = 1, timing_runs: int = 3
+) -> tuple[float, float, np.ndarray]:
     """Run `fn(*args)` once for warmup, then `timing_runs` times. Return
     (median wall clock seconds, max RSS during measurement, last output)."""
     rss_before = rss_mb()
@@ -86,10 +89,10 @@ def compare(unw_cpp: np.ndarray, unw_rust: np.ndarray) -> dict:
     d_mod = np.angle(np.exp(1j * d))
     abs_mod = np.abs(d_mod)
     return {
-        "valid_pixels":   int(valid.sum()),
-        "max_diff_mod":   float(abs_mod.max()),
-        "mean_diff_mod":  float(abs_mod.mean()),
-        "rms_mod":        float(np.sqrt(np.mean(d_mod ** 2))),
+        "valid_pixels": int(valid.sum()),
+        "max_diff_mod": float(abs_mod.max()),
+        "mean_diff_mod": float(abs_mod.mean()),
+        "rms_mod": float(np.sqrt(np.mean(d_mod**2))),
         "pct_within_1e3": float(100 * np.mean(abs_mod < 1e-3)),
         "pct_within_1e1": float(100 * np.mean(abs_mod < 1e-1)),
     }
@@ -99,16 +102,17 @@ def compare(unw_cpp: np.ndarray, unw_rust: np.ndarray) -> dict:
 # Synthetic benchmark
 # ---------------------------------------------------------------------------
 
+
 def gen_noisy_bump(size: int, gamma: float = 0.7, nlooks: int = 4, seed: int = 0):
     """A noisy Gaussian-bump IG. Matches the existing tests/bench style."""
     rng = np.random.default_rng(seed)
     i = np.arange(size)[:, None] - size / 2
     j = np.arange(size)[None, :] - size / 2
-    r2 = i ** 2 + j ** 2
+    r2 = i**2 + j**2
     truth = 8.0 * np.exp(-r2 / ((size / 6) ** 2)).astype(np.float32)
     g = np.full((size, size), gamma, dtype=np.float32)
     # Lee 1994 noise: σ²_φ ≈ (1 - γ²) / (2 N γ²) for boxcar averaging
-    sigma = np.sqrt((1 - g ** 2) / (2 * nlooks * g ** 2))
+    sigma = np.sqrt((1 - g**2) / (2 * nlooks * g**2))
     noise = rng.standard_normal(truth.shape).astype(np.float32) * sigma
     igram = np.exp(1j * (truth + noise)).astype(np.complex64)
     return igram, g, truth
@@ -125,22 +129,27 @@ def synthetic_bench() -> list[dict]:
         agree = compare(unw_cpp, unw_rust)
         print(f"  C++:   {t_cpp*1000:7.1f} ms")
         print(f"  Rust:  {t_rust*1000:7.1f} ms  ({t_cpp/t_rust:.2f}x speedup)")
-        print(f"  agreement: max|Δ mod 2π| = {agree['max_diff_mod']:.4g}, "
-              f"pct < 1e-3 = {agree['pct_within_1e3']:.2f}%")
-        results.append({
-            "case": f"synthetic_{size}",
-            "size": size,
-            "cpp_ms": t_cpp * 1000,
-            "rust_ms": t_rust * 1000,
-            "speedup": t_cpp / t_rust,
-            "agree": agree,
-        })
+        print(
+            f"  agreement: max|Δ mod 2π| = {agree['max_diff_mod']:.4g}, "
+            f"pct < 1e-3 = {agree['pct_within_1e3']:.2f}%"
+        )
+        results.append(
+            {
+                "case": f"synthetic_{size}",
+                "size": size,
+                "cpp_ms": t_cpp * 1000,
+                "rust_ms": t_rust * 1000,
+                "speedup": t_cpp / t_rust,
+                "agree": agree,
+            }
+        )
     return results
 
 
 # ---------------------------------------------------------------------------
 # Real-data benchmark (Palos Verdes)
 # ---------------------------------------------------------------------------
+
 
 def real_bench() -> list[dict]:
     if rasterio is None:
@@ -185,26 +194,39 @@ def real_bench() -> list[dict]:
         )
         if mask is not None:
             t_rust, _, unw_rust = time_unwrap(
-                whirlwind.unwrap, igram, cor, nlooks, mask,
-                warmup_runs=0, timing_runs=1,
+                whirlwind.unwrap,
+                igram,
+                cor,
+                nlooks,
+                mask,
+                warmup_runs=0,
+                timing_runs=1,
             )
         else:
             t_rust, _, unw_rust = time_unwrap(
-                whirlwind.unwrap, igram, cor, nlooks,
-                warmup_runs=0, timing_runs=1,
+                whirlwind.unwrap,
+                igram,
+                cor,
+                nlooks,
+                warmup_runs=0,
+                timing_runs=1,
             )
         agree = compare(unw_cpp, unw_rust)
-        print(f"  {stem[:25]}... cpp={t_cpp*1000:7.1f} ms, rust={t_rust*1000:7.1f} ms, "
-              f"speedup={t_cpp/t_rust:.2f}x, agree pct<1e-3={agree['pct_within_1e3']:6.2f}%")
-        results.append({
-            "case": "real",
-            "ig": stem,
-            "shape": list(igram.shape),
-            "cpp_ms": t_cpp * 1000,
-            "rust_ms": t_rust * 1000,
-            "speedup": t_cpp / t_rust,
-            "agree": agree,
-        })
+        print(
+            f"  {stem[:25]}... cpp={t_cpp*1000:7.1f} ms, rust={t_rust*1000:7.1f} ms, "
+            f"speedup={t_cpp/t_rust:.2f}x, agree pct<1e-3={agree['pct_within_1e3']:6.2f}%"
+        )
+        results.append(
+            {
+                "case": "real",
+                "ig": stem,
+                "shape": list(igram.shape),
+                "cpp_ms": t_cpp * 1000,
+                "rust_ms": t_rust * 1000,
+                "speedup": t_cpp / t_rust,
+                "agree": agree,
+            }
+        )
     return results
 
 
@@ -223,13 +245,17 @@ def main() -> None:
     print("\n--- summary ---")
     if syn:
         speedups = [r["speedup"] for r in syn]
-        print(f"synthetic ({len(syn)} sizes): median speedup {np.median(speedups):.2f}x, "
-              f"max {max(speedups):.2f}x")
+        print(
+            f"synthetic ({len(syn)} sizes): median speedup {np.median(speedups):.2f}x, "
+            f"max {max(speedups):.2f}x"
+        )
     if real:
         speedups = [r["speedup"] for r in real]
         agree = [r["agree"]["pct_within_1e3"] for r in real]
-        print(f"real ({len(real)} IGs):       median speedup {np.median(speedups):.2f}x, "
-              f"median pct<1e-3 agreement {np.median(agree):.2f}%")
+        print(
+            f"real ({len(real)} IGs):       median speedup {np.median(speedups):.2f}x, "
+            f"median pct<1e-3 agreement {np.median(agree):.2f}%"
+        )
 
 
 if __name__ == "__main__":

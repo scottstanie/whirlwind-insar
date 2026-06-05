@@ -190,7 +190,7 @@ const N_GAMMA_CARB: usize = 101;
 pub const MAX_CARBALLO_COST: f32 = 50.0;
 
 pub struct CarballoLut {
-    values: Vec<f32>, // [N_GAMMA_CARB × N_ALPHA_CARB], row = gamma, col = alpha
+    values: Vec<f32>, // [N_GAMMA_CARB x N_ALPHA_CARB], row = gamma, col = alpha
 }
 
 impl CarballoLut {

@@ -8,12 +8,12 @@ from PHASS — closes the gap without changing the solver.
 **Bottom line — two answers, depending on what you ask:**
 
 * **Our PHASS-flavoured *cost* in our solver: no.** On both NISAR (47 M
-  px, snaphu_9×9 reference) and Palos Verdes (Capella C13_SP, 750 k
+  px, snaphu_9x9 reference) and Palos Verdes (Capella C13_SP, 750 k
   px), none of the PHASS-style cost variants at α=0 (no Goldstein)
   beats our Carballo cost by more than 1 pp in K-agreement, and most
   are noticeably worse.
 * **PHASS as an algorithm (run via dolphin's binding): yes.** Dolphin's
-  `--unwrap-method PHASS` at α=0 hits **97.93 % K-match with SNAPHU 9×9
+  `--unwrap-method PHASS` at α=0 hits **97.93 % K-match with SNAPHU 9x9
   on NISAR in ~1 minute** (29 % conncomp coverage, 53 components).
   That's within 2 pp of SNAPHU at zero filtering, using the actual ISCE3
   PHASS C++ code we read in `~/repos/isce3/cxx/isce3/unwrap/phass`.
@@ -30,15 +30,15 @@ without inheriting the degeneracies we hit below.
 Whirlwind α=0 with four cost variants (toggled via env vars in
 `crates/whirlwind-core/src/cost/mod.rs`):
 
-| mode         | env                                                | what it does |
-|--------------|----------------------------------------------------|---|
-| `baseline`   | (none)                                             | Default Carballo `γ·(π − α_smooth)` |
-| `hard_cut`   | `WHIRLWIND_HARD_CUT_THRESH=2.0`                    | Plus: any arc with `|wrap(Δphase_raw)| ≥ 2.0` is forced to cost = 0 (PHASS-style cut, but at 2.0 rad — see below). |
-| `phass_cost` | `WHIRLWIND_PHASS_COST=0.5`                         | Replace cost with `γ² · π` saturated at `0.5² · π` (PHASS coh-only, no α term). Conncomp threshold lowered 4× to match the lower magnitudes. |
-| `phass_full` | both env vars set                                  | PHASS cost + cuts. |
+| mode         | env                             | what it does                                                                                                                                 |
+| ------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline`   | (none)                          | Default Carballo `γ·(π − α_smooth)`                                                                                                          |
+| `hard_cut`   | `WHIRLWIND_HARD_CUT_THRESH=2.0` | Plus: any arc with `                                                                                                                         | wrap(Δphase_raw) | ≥ 2.0` is forced to cost = 0 (PHASS-style cut, but at 2.0 rad — see below). |
+| `phass_cost` | `WHIRLWIND_PHASS_COST=0.5`      | Replace cost with `γ² · π` saturated at `0.5² · π` (PHASS coh-only, no α term). Conncomp threshold lowered 4x to match the lower magnitudes. |
+| `phass_full` | both env vars set               | PHASS cost + cuts.                                                                                                                           |
 
 The conncomp `cost_threshold` is scaled by 0.25 for `phass_cost` /
-`phass_full` because PHASS γ² magnitudes (≈ 78 at γ_sat) are about 3-4×
+`phass_full` because PHASS γ² magnitudes (≈ 78 at γ_sat) are about 3-4x
 smaller than Carballo (≈ 250 in a coherent ramp); without rescaling,
 every component is rejected as "below threshold" and coverage is 0%.
 
@@ -57,36 +57,36 @@ slow/bad case.
 
 ## Results
 
-### Palos Verdes (Capella C13_SP `20251129_20251205`, 871×864)
+### Palos Verdes (Capella C13_SP `20251129_20251205`, 871x864)
 
 K-agreement is on SNAPHU's `cc=1` mainland (191 478 px, 25 % of frame).
 SNAPHU smooth single-tile is the reference, run in 12.3 s.
 
-| mode | wall | K=match % | `|dK|`=1 % | `|dK|`≥2 % |
-|---|---:|---:|---:|---:|
-| default Carballo            |   0.7 s | **90.67** | 1.09 | 8.25 |
-| Carballo + cut @2.0 rad     |   0.6 s | **91.64** | 0.53 | 7.83 |
-| Carballo + cut @1.0 rad     | 472.2 s | 47.34 | 12.17 | 40.49 |
-| PHASS γ²                    |   0.9 s | 88.39 | 4.27 | 7.34 |
-| PHASS γ² + cut @2.0         |  86.6 s | 76.24 | 2.55 | 21.21 |
+| mode                    |    wall | K=match % |     ` |    dK | `=1 % | ` | dK | `≥2 % |
+| ----------------------- | ------: | --------: | ----: | ----: |
+| default Carballo        |   0.7 s | **90.67** |  1.09 |  8.25 |
+| Carballo + cut @2.0 rad |   0.6 s | **91.64** |  0.53 |  7.83 |
+| Carballo + cut @1.0 rad | 472.2 s |     47.34 | 12.17 | 40.49 |
+| PHASS γ²                |   0.9 s |     88.39 |  4.27 |  7.34 |
+| PHASS γ² + cut @2.0     |  86.6 s |     76.24 |  2.55 | 21.21 |
 
-### NISAR (HH 50 m posting `20251224_20260117`, 6811×6912)
+### NISAR (HH 50 m posting `20251224_20260117`, 6811x6912)
 
-K-agreement vs the saved SNAPHU 9×9 reference (`cc=1` mainland: 14.5 M
-px, 31 % of frame; SNAPHU wall: 17 min, 9×9 tiling).
+K-agreement vs the saved SNAPHU 9x9 reference (`cc=1` mainland: 14.5 M
+px, 31 % of frame; SNAPHU wall: 17 min, 9x9 tiling).
 
-| mode | wall | K=match % | `|dK|`=1 % | `|dK|`≥2 % |
-|---|---:|---:|---:|---:|
-| default Carballo            |  75.0 s | **80.01** | 1.71 | 18.28 |
-| Carballo + cut @2.0 rad     |  69.8 s | 73.55 | 8.26 | 18.18 |
-| PHASS γ²                    |  92.5 s | 67.45 | 2.30 | 30.26 |
-| PHASS γ² + cut @2.0 (skipped) | — | — | — | — |
-| **dolphin `--unwrap-method PHASS`** | ~60 s | **97.93** | 2.07 | 0.00 |
-| Goldstein α=0.7 (PR #19)    |  38 s |  **99.90** | — | — |
+| mode                                |   wall | K=match % |    ` |    dK | `=1 % | ` | dK | `≥2 % |
+| ----------------------------------- | -----: | --------: | ---: | ----: |
+| default Carballo                    | 75.0 s | **80.01** | 1.71 | 18.28 |
+| Carballo + cut @2.0 rad             | 69.8 s |     73.55 | 8.26 | 18.18 |
+| PHASS γ²                            | 92.5 s |     67.45 | 2.30 | 30.26 |
+| PHASS γ² + cut @2.0 (skipped)       |      — |         — |    — |     — |
+| **dolphin `--unwrap-method PHASS`** |  ~60 s | **97.93** | 2.07 |  0.00 |
+| Goldstein α=0.7 (PR #19)            |   38 s | **99.90** |    — |     — |
 
 The last row is from earlier work — same NISAR scene with the production
 default of `--goldstein-alpha 0.7`. **38 s and 99.9 % match.** With
-Goldstein on, whirlwind beats SNAPHU's 17 min wall by 27× while
+Goldstein on, whirlwind beats SNAPHU's 17 min wall by 27x while
 agreeing with it pixel-for-pixel on the cc=1 mainland.
 
 ### Visual evidence
@@ -113,7 +113,7 @@ dolphin unwrap --ifg-filenames .../20251224_20260117.int.looked.tif \
 
 Completed in roughly 60 s on this laptop, no Goldstein, and produced
 **29.41 % conncomp coverage** (53 components, vs SNAPHU's 1 component
-at 30.84 %) with **97.93 % K-match against SNAPHU 9×9** on the cc=1
+at 30.84 %) with **97.93 % K-match against SNAPHU 9x9** on the cc=1
 mainland (after a uniform −5 cycle global offset — expected, since
 PHASS doesn't pin to any particular K=0 anchor). `|dK|=1: 2.07 %`,
 `|dK|≥2: 0.00 %` — no multi-cycle misroutes anywhere.
@@ -177,7 +177,7 @@ Closing the gap inside whirlwind would mean either:
 * Promoting the solver to convex per-arc cost (iterative-recost SSP or
   Goldberg parallel-arc reduction). Neither is prototyped here.
 * Keeping Goldstein and shipping the PR #19 default. **38 s, 99.9 %
-  K-match with SNAPHU 9×9** — that's the working answer today, and the
+  K-match with SNAPHU 9x9** — that's the working answer today, and the
   only PHASS-class number we beat empirically.
 
 If a user truly needs no-Goldstein at scale, the practical
@@ -202,10 +202,10 @@ restoring the 255-cliff to close most of the gap.
 A faithful port was implemented (γ²·100 base; cost=2.55 above good_corr,
 which times COST_SCALE=100 reproduces the 255 PHASS emits) and tested:
 
-| scene | mode | wall | result |
-|---|---|---:|---|
-| PV (750k px, baseline 0.7 s)   | γ²+255-cliff, no cuts | **>14 min, killed** | pathological |
-| NISAR (47M px, baseline 75 s)   | γ²+255-cliff, no cuts | **>17 min, killed**  | pathological |
+| scene                         | mode                  |                wall | result       |
+| ----------------------------- | --------------------- | ------------------: | ------------ |
+| PV (750k px, baseline 0.7 s)  | γ²+255-cliff, no cuts | **>14 min, killed** | pathological |
+| NISAR (47M px, baseline 75 s) | γ²+255-cliff, no cuts | **>17 min, killed** | pathological |
 
 The 255-cliff is fundamentally incompatible with our Dial bucket-queue
 linear-cost SSP. Reason (after re-reading `ASSP.cc:2034`): PHASS's own
@@ -250,15 +250,15 @@ Reviewer also suggested testing `unwrap_grounded` (parallel to
 test proves ground fixes stacked-boundary failures. Added the function
 and tested both scenes (ground_cost values 0, 50, 100, 200):
 
-| scene | mode | wall | K=match |
-|---|---|---:|---:|
-| PV    | baseline           | 0.7 s | 90.67 % |
-| PV    | grounded gc=0      | 0.7 s | 18.70 % |
-| PV    | grounded gc=50     | 0.7 s | 22.63 % |
-| PV    | grounded gc=100    | 0.7 s | 22.63 % |
-| PV    | grounded gc=200    | 0.7 s | 22.07 % |
-| NISAR | baseline           | 75 s  | 80.01 % |
-| NISAR | grounded gc=100    | 49 s  | 41.91 % |
+| scene | mode            |  wall | K=match |
+| ----- | --------------- | ----: | ------: |
+| PV    | baseline        | 0.7 s | 90.67 % |
+| PV    | grounded gc=0   | 0.7 s | 18.70 % |
+| PV    | grounded gc=50  | 0.7 s | 22.63 % |
+| PV    | grounded gc=100 | 0.7 s | 22.63 % |
+| PV    | grounded gc=200 | 0.7 s | 22.07 % |
+| NISAR | baseline        |  75 s | 80.01 % |
+| NISAR | grounded gc=100 |  49 s | 41.91 % |
 
 Strictly worse on real data, at every ground cost tested. Ground node
 drains interior residues to the boundary along non-physical paths
@@ -284,7 +284,7 @@ the local cost independently every time, so it cannot express either.
 Where that leaves the scientific story:
 
 * **What works empirically today, with Goldstein α=0.7.** 38 s, 99.9 %
-  K-match with SNAPHU 9×9 on the 6811×6912 NISAR scene; SNAPHU's own
+  K-match with SNAPHU 9x9 on the 6811x6912 NISAR scene; SNAPHU's own
   tiled wall on the same scene is 17 min. That's the only "we beat
   the reference" data point we currently have, and it is the publishable
   claim *if* the K-transfer back to original wrapped phase counts as
@@ -319,18 +319,18 @@ relaxation of the existing one.
 
 Result on the same two scenes, α=0 (no Goldstein), no other changes:
 
-| scene | mode | wall | K=match | `|dK|`=1 | `|dK|`≥2 |
-|---|---|---:|---:|---:|---:|
-| PV    | baseline (unit-cap)  |   0.7 s | 90.67 % |  1.09 % | 8.25 % |
-| PV    | **reuse**            |   3.7 s | **99.75 %** | 0.25 % | **0.00 %** |
-| NISAR | baseline (unit-cap)  |  75 s   | 80.01 % |  1.71 % | 18.28 % |
-| NISAR | **reuse**            |  93 s   | **92.70 %** | 0.24 % | **7.06 %** |
-| NISAR | dolphin PHASS (ref)  | ~60 s   | 97.93 % | 2.07 % | 0.00 % |
-| NISAR | Goldstein α=0.7      |  38 s   | 99.90 % |   —    |   —    |
+| scene | mode                |  wall |     K=match |      ` |         dK | `=1 | ` | dK | `≥2 |
+| ----- | ------------------- | ----: | ----------: | -----: | ---------: |
+| PV    | baseline (unit-cap) | 0.7 s |     90.67 % | 1.09 % |     8.25 % |
+| PV    | **reuse**           | 3.7 s | **99.75 %** | 0.25 % | **0.00 %** |
+| NISAR | baseline (unit-cap) |  75 s |     80.01 % | 1.71 % |    18.28 % |
+| NISAR | **reuse**           |  93 s | **92.70 %** | 0.24 % | **7.06 %** |
+| NISAR | dolphin PHASS (ref) | ~60 s |     97.93 % | 2.07 % |     0.00 % |
+| NISAR | Goldstein α=0.7     |  38 s |     99.90 % |      — |          — |
 
 The diagnosis holds. Flow-reuse alone (with the existing cost shape,
 no amplitude edges, no curvature) closes essentially all of the PV gap
-and ~2/3 of the NISAR gap to dolphin PHASS. The runtime tax is 1.2-5×
+and ~2/3 of the NISAR gap to dolphin PHASS. The runtime tax is 1.2-5x
 baseline, well inside acceptable. And — possibly the cleanest signal —
 the ignored `diagonal_ramp_512` regression test (6π smooth ramp,
 boundary stacking failure under unit-capacity MCF) **passes** under
@@ -361,11 +361,11 @@ relaxing the unit-capacity piece alone closes most of the gap.
 Tested reuse + `WHIRLWIND_HARD_CUT_THRESH=1.0` (PHASS's actual
 threshold) and `=2.0` (the practical pre-reuse setting):
 
-| mode | wall | K=match | `|dK|`=1 | `|dK|`≥2 |
-|---|---:|---:|---:|---:|
-| reuse alone           |  93 s   | **92.70 %** | 0.24 %  |  7.06 % |
-| reuse + hard_cut 1.0  | killed at >8 min  | — | — | — |
-| reuse + hard_cut 2.0  | 125 s   | 91.30 % | 1.73 % | 6.98 % |
+| mode                 |             wall |     K=match |      ` |     dK | `=1 | ` | dK | `≥2 |
+| -------------------- | ---------------: | ----------: | -----: | -----: |
+| reuse alone          |             93 s | **92.70 %** | 0.24 % | 7.06 % |
+| reuse + hard_cut 1.0 | killed at >8 min |           — |      — |      — |
+| reuse + hard_cut 2.0 |            125 s |     91.30 % | 1.73 % | 6.98 % |
 
 `hard_cut=1.0` is still pathological even with reuse — the zero-cost
 subgraph creates an unbounded bucket-0 in Dial. `hard_cut=2.0` runs
@@ -423,7 +423,7 @@ Outputs land in
 * `outputs/results.md`         — the tables above
 * `plots/<scene>_k_panel.png`  — side-by-side K-field comparison
 
-For NISAR the SNAPHU 9×9 reference is the `.snaphu_9x9.{unw,cc}.tif`
+For NISAR the SNAPHU 9x9 reference is the `.snaphu_9x9.{unw,cc}.tif`
 TIFFs next to the input data, generated in earlier work.
 
 `phass_full` mode is parameterised but expected to take ~hours on

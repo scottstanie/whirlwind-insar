@@ -36,7 +36,7 @@ pub fn compute(wrapped_phase: ArrayView2<f32>) -> Array2<i32> {
     compute_with_mask(wrapped_phase, None)
 }
 
-/// Compute the residue grid, zeroing residues whose 2×2 pixel-loop touches
+/// Compute the residue grid, zeroing residues whose 2x2 pixel-loop touches
 /// any masked-out pixel (where `mask[i, j] == false`).
 ///
 /// Without this, NaN/invalid pixels (replaced by zeros before unwrap) generate

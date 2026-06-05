@@ -1,7 +1,9 @@
 """Type stubs for the `whirlwind` package.
 
-``unwrap`` and ``unwrap_crlb_stack`` are Python wrappers defined in
-``__init__.py``; everything else is re-exported from the ``_native`` extension.
+``unwrap`` is the Python wrapper defined in ``__init__.py``; everything below is
+re-exported from the ``_native`` extension. The experimental CRLB unwrappers and
+the ``unwrap_reuse`` solver are importable but intentionally kept off the public
+API (not in ``__all__``) until validated.
 """
 
 from __future__ import annotations
@@ -21,9 +23,6 @@ from ._native import (
     quality_triangles as quality_triangles,
     set_num_threads as set_num_threads,
     simulate_ifg as simulate_ifg,
-    unwrap_crlb as unwrap_crlb,
-    unwrap_crlb_grounded as unwrap_crlb_grounded,
-    unwrap_reuse as unwrap_reuse,
     unwrap_sparse as unwrap_sparse,
     wrap_phase as wrap_phase,
 )
@@ -47,22 +46,11 @@ def unwrap(
     goldstein_alpha: float = ...,
     goldstein_psize: int = ...,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
-    """MCF unwrap returning ``(phase, conn_components)``.
+    """Unwrap an interferogram, returning ``(unwrapped_phase, conncomp)``.
 
-    Single-tile linear MCF (ww-orig-parity) + global connected components + a
-    default-on integration-component "bridge" gauge re-level (``bridge=True``;
-    disable with ``WHIRLWIND_NO_BRIDGE=1``). Goldstein pre-filtering is OFF by
-    default (``goldstein_alpha=0``); the tiled pipeline is opt-in/unvalidated.
-    The main entry point. See the docstring in ``whirlwind/__init__.py`` for
-    parameter detail.
+    The main entry point: an exact MCF solver (SNAPHU-comparable quality, faster)
+    plus a default-on ``bridge`` post-pass that re-levels mask-disconnected
+    regions. See the full docstring in ``whirlwind/__init__.py`` for the
+    connected-component knobs (``cost_threshold`` / ``conncomp_sigma`` /
+    ``conncomp_cycle_prob`` / ``conncomp_coh_floor``) and other parameters.
     """
-
-def unwrap_crlb_stack(
-    igram_cube: NDArray[np.complex64],
-    variance_cube: NDArray[np.float32],
-    mask: NDArray[np.bool_] | None = ...,
-    cost_threshold: int = ...,
-    min_size_px: int = ...,
-    max_ncomps: int = ...,
-) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
-    """Per-IG CRLB unwrap + connected components over a 3D stack."""

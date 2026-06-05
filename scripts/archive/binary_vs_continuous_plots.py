@@ -43,7 +43,9 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 
-def load_variants(pv_out: Path) -> tuple[dict[str, Any], dict[str, dict[str, np.ndarray]]]:
+def load_variants(
+    pv_out: Path,
+) -> tuple[dict[str, Any], dict[str, dict[str, np.ndarray]]]:
     with (pv_out / "summary.json").open() as f:
         summary = json.load(f)
     variants: dict[str, dict[str, np.ndarray]] = {}
@@ -88,32 +90,56 @@ def pick_test_pixels(
     flat = temp_coh.ravel()
     high_thresh = np.nanpercentile(flat[np.isfinite(flat)], 99)
     yy, xx = np.mgrid[0:m, 0:n]
-    far = (yy - ref_i) ** 2 + (xx - ref_j) ** 2 > 100 ** 2
+    far = (yy - ref_i) ** 2 + (xx - ref_j) ** 2 > 100**2
     candidates = np.argwhere((temp_coh >= high_thresh) & far)
     if len(candidates):
         c = candidates[rng.integers(len(candidates))]
-        picks.append({"name": "high_coh", "i": int(c[0]), "j": int(c[1]),
-                      "temp_coh": float(temp_coh[c[0], c[1]])})
+        picks.append(
+            {
+                "name": "high_coh",
+                "i": int(c[0]),
+                "j": int(c[1]),
+                "temp_coh": float(temp_coh[c[0], c[1]]),
+            }
+        )
 
     # low-coh
     candidates = np.argwhere((temp_coh > 0.25) & (temp_coh < 0.35) & far)
     if len(candidates):
         c = candidates[rng.integers(len(candidates))]
-        picks.append({"name": "low_coh", "i": int(c[0]), "j": int(c[1]),
-                      "temp_coh": float(temp_coh[c[0], c[1]])})
+        picks.append(
+            {
+                "name": "low_coh",
+                "i": int(c[0]),
+                "j": int(c[1]),
+                "temp_coh": float(temp_coh[c[0], c[1]]),
+            }
+        )
 
     # near-threshold (~0.7)
     candidates = np.argwhere((temp_coh > 0.65) & (temp_coh < 0.75) & far)
     if len(candidates):
         c = candidates[rng.integers(len(candidates))]
-        picks.append({"name": "near_threshold", "i": int(c[0]), "j": int(c[1]),
-                      "temp_coh": float(temp_coh[c[0], c[1]])})
+        picks.append(
+            {
+                "name": "near_threshold",
+                "i": int(c[0]),
+                "j": int(c[1]),
+                "temp_coh": float(temp_coh[c[0], c[1]]),
+            }
+        )
 
     # near-reference: 20 pixels in each direction
     pi, pj = ref_i + 20, ref_j + 20
     if 0 <= pi < m and 0 <= pj < n:
-        picks.append({"name": "near_reference", "i": pi, "j": pj,
-                      "temp_coh": float(temp_coh[pi, pj])})
+        picks.append(
+            {
+                "name": "near_reference",
+                "i": pi,
+                "j": pj,
+                "temp_coh": float(temp_coh[pi, pj]),
+            }
+        )
 
     # If binary has any survivors, pick one inside that region so the
     # time-series panel can show a binary-vs-continuous comparison on
@@ -121,8 +147,14 @@ def pick_test_pixels(
     if binary_finite is not None and binary_finite.any():
         candidates = np.argwhere(binary_finite)
         c = candidates[rng.integers(len(candidates))]
-        picks.append({"name": "binary_survives", "i": int(c[0]), "j": int(c[1]),
-                      "temp_coh": float(temp_coh[c[0], c[1]])})
+        picks.append(
+            {
+                "name": "binary_survives",
+                "i": int(c[0]),
+                "j": int(c[1]),
+                "temp_coh": float(temp_coh[c[0], c[1]]),
+            }
+        )
 
     return picks
 
@@ -142,7 +174,8 @@ def plot_coverage(
     ax = axes[0]
     im = ax.imshow(temp_coh, cmap="cividis", vmin=0, vmax=1, interpolation="none")
     ax.set_title("temporal_coherence_average", fontsize=10)
-    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     for i, label in enumerate(labels, start=1):
@@ -154,19 +187,22 @@ def plot_coverage(
         # (BFS-reached pixels). Continuous has no variant_mask so just
         # show coverage.
         vm = variants[label].get("variant_mask")
-        finite_any = (coverage > 0)
+        finite_any = coverage > 0
         if vm is None:
             im = ax.imshow(coverage, cmap="magma", vmin=0, vmax=1, interpolation="none")
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         else:
             disp = np.zeros(coverage.shape, dtype=np.float32)
-            disp[vm] = 0.4       # gray: in mask
+            disp[vm] = 0.4  # gray: in mask
             disp[finite_any] = 1.0  # bright: finite anywhere
             ax.imshow(disp, cmap="magma", vmin=0, vmax=1, interpolation="none")
         kept_pct = 100 * float(vm.mean()) if vm is not None else 100.0
         finite_pct = 100 * float(finite_any.mean())
-        ax.set_title(f"{label}\nin mask: {kept_pct:.1f}% • finite: {finite_pct:.2f}%", fontsize=9)
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_title(
+            f"{label}\nin mask: {kept_pct:.1f}% • finite: {finite_pct:.2f}%", fontsize=9
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
 
     ref_i, ref_j = summary["reference_pixel"]
     for ax in axes:
@@ -174,7 +210,7 @@ def plot_coverage(
 
     fig.suptitle(
         "Coverage: temp_coh map + per-variant fraction of IGs with a finite unwrap value.\n"
-        "Red × marks the reference pixel. Binary thresholding sparsifies the kept set; "
+        "Red x marks the reference pixel. Binary thresholding sparsifies the kept set; "
         "the 4-connected grid then disconnects most kept pixels from the seed.",
         fontsize=10,
     )
@@ -196,10 +232,13 @@ def plot_per_ig(variants: dict, ig_index: int, out: Path) -> None:
     for j, label in enumerate(labels):
         unw = variants[label]["unw_stack"][ig_index]
         ax = axes[0, j]
-        im = ax.imshow(unw, cmap="RdBu_r", vmin=-vmax_unw, vmax=vmax_unw, interpolation="none")
+        im = ax.imshow(
+            unw, cmap="RdBu_r", vmin=-vmax_unw, vmax=vmax_unw, interpolation="none"
+        )
         finite_frac = float(np.isfinite(unw).mean())
         ax.set_title(f"{label}\nfinite: {100*finite_frac:.1f}%", fontsize=10)
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
         ax = axes[1, j]
@@ -213,12 +252,21 @@ def plot_per_ig(variants: dict, ig_index: int, out: Path) -> None:
         both = np.isfinite(unw) & np.isfinite(cont)
         diff_plot = np.where(both, diff, np.nan)
         vmax = max(np.pi, float(np.nanpercentile(np.abs(diff_plot), 99) or np.pi))
-        im = ax.imshow(diff_plot, cmap="RdBu_r", vmin=-vmax, vmax=vmax, interpolation="none")
-        ax.set_title(f"{label} − continuous\n(NaN-safe; finite both: {100*float(both.mean()):.1f}%)", fontsize=10)
-        ax.set_xticks([]); ax.set_yticks([])
+        im = ax.imshow(
+            diff_plot, cmap="RdBu_r", vmin=-vmax, vmax=vmax, interpolation="none"
+        )
+        ax.set_title(
+            f"{label} − continuous\n(NaN-safe; finite both: {100*float(both.mean()):.1f}%)",
+            fontsize=10,
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f"IG index {ig_index}: per-variant unwrap and difference from continuous", fontsize=11)
+    fig.suptitle(
+        f"IG index {ig_index}: per-variant unwrap and difference from continuous",
+        fontsize=11,
+    )
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -247,7 +295,14 @@ def plot_timeseries(
             phases = payload["date_phases"][:, i, j]
             color = colors.get(label, None)
             finite_n = int(np.isfinite(phases).sum())
-            ax.plot(t, phases, "o-", color=color, label=f"{label} ({finite_n}/{len(dates)} finite)", alpha=0.85)
+            ax.plot(
+                t,
+                phases,
+                "o-",
+                color=color,
+                label=f"{label} ({finite_n}/{len(dates)} finite)",
+                alpha=0.85,
+            )
         ax.set_title(title, fontsize=10)
         ax.set_ylabel("date phase [rad]")
         ax.grid(alpha=0.3)
@@ -288,12 +343,16 @@ def compute_aggregate(variants: dict) -> dict[str, Any]:
         diff = unw[both] - cont[both]
         # Cycle-fold the diff so we measure cycle disagreement (∈ (-π, π]).
         diff_folded = ((diff + np.pi) % (2 * np.pi)) - np.pi
-        out["per_variant"][label].update({
-            "rms_diff_vs_continuous_rad": float(np.sqrt(np.mean(diff ** 2))),
-            "rms_cycle_diff_vs_continuous_rad": float(np.sqrt(np.mean(diff_folded ** 2))),
-            "n_cycle_disagreements": int((np.abs(diff) > np.pi).sum()),
-            "common_finite_pixels": int(both.sum()),
-        })
+        out["per_variant"][label].update(
+            {
+                "rms_diff_vs_continuous_rad": float(np.sqrt(np.mean(diff**2))),
+                "rms_cycle_diff_vs_continuous_rad": float(
+                    np.sqrt(np.mean(diff_folded**2))
+                ),
+                "n_cycle_disagreements": int((np.abs(diff) > np.pi).sum()),
+                "common_finite_pixels": int(both.sum()),
+            }
+        )
     return out
 
 
@@ -303,12 +362,17 @@ def compute_aggregate(variants: dict) -> dict[str, Any]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--pv-out", type=Path, required=True)
-    ap.add_argument("--ig-index", type=int, default=10,
-                    help="which IG to use for the per-IG triptych")
-    ap.add_argument("--seed", type=int, default=0,
-                    help="seed for pixel selection")
+    ap.add_argument(
+        "--ig-index",
+        type=int,
+        default=10,
+        help="which IG to use for the per-IG triptych",
+    )
+    ap.add_argument("--seed", type=int, default=0, help="seed for pixel selection")
     args = ap.parse_args()
 
     summary, variants = load_variants(args.pv_out)
@@ -317,7 +381,9 @@ def main() -> None:
     print(f"[plot] coverage maps → {args.pv_out}/coverage.png")
     plot_coverage(summary, variants, temp_coh, args.pv_out / "coverage.png")
 
-    print(f"[plot] per-IG triptych for IG {args.ig_index} → {args.pv_out}/per_ig_triptych.png")
+    print(
+        f"[plot] per-IG triptych for IG {args.ig_index} → {args.pv_out}/per_ig_triptych.png"
+    )
     plot_per_ig(variants, args.ig_index, args.pv_out / "per_ig_triptych.png")
 
     ref_list = summary["reference_pixel"]
@@ -334,10 +400,14 @@ def main() -> None:
             unw_b = variants[binary_labels[0]]["unw_stack"]
             bf = np.asarray(np.isfinite(unw_b).any(axis=0))
         binary_finite = bf
-    picks = pick_test_pixels(temp_coh, ref, rng_seed=args.seed, binary_finite=binary_finite)
+    picks = pick_test_pixels(
+        temp_coh, ref, rng_seed=args.seed, binary_finite=binary_finite
+    )
     print(f"[plot] picked pixels:")
     for p in picks:
-        print(f"        {p['name']:18s} ({p['i']}, {p['j']})  temp_coh={p['temp_coh']:.3f}")
+        print(
+            f"        {p['name']:18s} ({p['i']}, {p['j']})  temp_coh={p['temp_coh']:.3f}"
+        )
     plot_timeseries(summary, variants, picks, args.pv_out / "timeseries.png")
 
     print(f"[plot] aggregate metrics → {args.pv_out}/aggregate.json")

@@ -11,7 +11,7 @@ benchmark (`paper/nisar_gunw_bench.md`).
 `~/repos/whirlwind` (original **Python**) → `~/repos/libwhirlwind` (**C++** header-only,
 "work in progress, not for general use") → `~/repos/whirlwind-insar` (**Rust**, current).
 All three use the **same Carballo linear coherence cost** and a primal-dual MCF solver;
-the Rust version is a 3–72× faster rewrite (pixel-identical mod 2π to libwhirlwind) that
+the Rust version is a 3–72x faster rewrite (pixel-identical mod 2π to libwhirlwind) that
 *added* tiling, the coarse-anchor/cascade, CRLB cost, solve-free conncomps, and the
 flow-reuse + (prototype) convex modes. There is no `whirlwind-cpp` — that's `libwhirlwind`.
 
@@ -25,14 +25,14 @@ linear-cost MCF**, distinct from both PHASS (pure-coherence cost) and snaphu (co
 
 ## The three, side by side
 
-| | **whirlwind** (Rust) | **PHASS** (isce3) | **snaphu** |
-|---|---|---|---|
-| Cost | Carballo **linear**: `γ·max(0, π∓α)` per unit, direction-aware; γ=min-endpoint coherence, α=7×7-smoothed phase gradient (**phase-aware**) | **pure coherence**: `min(coh_i,coh_j)`, no phase info | **convex/statistical (MAP)**: `w·(k − offset)²`, quadratic in flow |
-| Marginal cost | **constant** (linear) | constant | **increasing** (curvature) |
-| Solver | primal-dual MCF + Dial bucket-queue; **flow-reuse** (uncapacitated, reused arcs free) | primal-dual MCF (ASSP) + **flow-reuse**, then region-grow | nonlinear network-flow (curvature) |
-| Whole-image | **runs away** on noisy/steep (linear optimum ≠ truth) → needs tiling | **runs away** too (same solver family) | **single-tile is the quality ceiling** |
-| Tiling | per-tile MCF + global coarse anchor + multi-scale cascade + feathered composite + gated multi-shift | whole-image (tiled at caller level, e.g. tophu) | tile + secondary tile-MCF merge |
-| Conncomps | **solve-free** from cost grid; `min_size_px=100`; **~53 / frame**, recall ~94% | region-grow flood-fill; `good_correlation=0.7`, `min_region=200`; **hundreds–thousands**, gives up <0.7 coh | BFS post-solve; `min_region_size=300` |
+|               | **whirlwind** (Rust)                                                                                                                      | **PHASS** (isce3)                                                                                           | **snaphu**                                                         |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Cost          | Carballo **linear**: `γ·max(0, π∓α)` per unit, direction-aware; γ=min-endpoint coherence, α=7x7-smoothed phase gradient (**phase-aware**) | **pure coherence**: `min(coh_i,coh_j)`, no phase info                                                       | **convex/statistical (MAP)**: `w·(k − offset)²`, quadratic in flow |
+| Marginal cost | **constant** (linear)                                                                                                                     | constant                                                                                                    | **increasing** (curvature)                                         |
+| Solver        | primal-dual MCF + Dial bucket-queue; **flow-reuse** (uncapacitated, reused arcs free)                                                     | primal-dual MCF (ASSP) + **flow-reuse**, then region-grow                                                   | nonlinear network-flow (curvature)                                 |
+| Whole-image   | **runs away** on noisy/steep (linear optimum ≠ truth) → needs tiling                                                                      | **runs away** too (same solver family)                                                                      | **single-tile is the quality ceiling**                             |
+| Tiling        | per-tile MCF + global coarse anchor + multi-scale cascade + feathered composite + gated multi-shift                                       | whole-image (tiled at caller level, e.g. tophu)                                                             | tile + secondary tile-MCF merge                                    |
+| Conncomps     | **solve-free** from cost grid; `min_size_px=100`; **~53 / frame**, recall ~94%                                                            | region-grow flood-fill; `good_correlation=0.7`, `min_region=200`; **hundreds–thousands**, gives up <0.7 coh | BFS post-solve; `min_region_size=300`                              |
 
 ## The crux: cost *shape*, not magnitude
 
@@ -73,9 +73,9 @@ tuning issue.
 Decisive head-to-head on the two steep-ramp D-frames where ww fails:
 
 | frame | ww reuse whole-image | ww **convex** prototype whole-image | ww tiled (best 512/256) | **snaphu single-tile** |
-|---|--:|--:|--:|--:|
-| D_077 | 1% (119 s) | **2%** (86 s) | 72% (58 s) | **99.3% (736 s)** |
-| D_078 | 7% (111 s) | **24%** (63 s) | 72% (43 s) | **99.9% (749 s)** |
+| ----- | -------------------: | ----------------------------------: | ----------------------: | ---------------------: |
+| D_077 |           1% (119 s) |                       **2%** (86 s) |              72% (58 s) |      **99.3% (736 s)** |
+| D_078 |           7% (111 s) |                      **24%** (63 s) |              72% (43 s) |      **99.9% (749 s)** |
 
 Three results, all clean:
 
@@ -88,7 +88,7 @@ Three results, all clean:
    can't handle without a Bellman-Ford/SPFA pre-pass). So the lever is a *sound* convex
    cost, not the current prototype.
 3. **Speed is not ww's problem.** snaphu single-tile = **~12 min/frame**; ww tiled = 2–20 s,
-   ww whole-image = 119–290 s. ww is **6–60× faster than snaphu**. "Like snaphu but faster"
+   ww whole-image = 119–290 s. ww is **6–60x faster than snaphu**. "Like snaphu but faster"
    reduces to "match snaphu quality at ww speed."
 
 - **Tile size/overlap can't fully fix the steep ramps.** Best D_077: 512/64=48%,
@@ -127,7 +127,7 @@ does snaphu directly; tophu adds ICU + PHASS for free.
 ## Bottom line
 
 whirlwind is already a fast, phase-aware-linear-cost MCF that **beats PHASS** on
-conncomp count + recall, and is **6–60× faster than snaphu**. The single remaining gap to
+conncomp count + recall, and is **6–60x faster than snaphu**. The single remaining gap to
 "matches single-tile snaphu, no artifacts" is the **cost shape**: a sound convex cost. The
 tile-block/checkerboard/streak artifacts are not tiling bugs to patch one-by-one — they're
 symptoms of the linear cost needing tiling as a crutch. Fix the cost and they disappear.

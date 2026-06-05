@@ -4,13 +4,13 @@ _2026-05-28. Builds on `tiling.md` (tiled MCF + secondary-net reconciliation + c
 
 ## TL;DR
 
-| scene | path | match vs SNAPHU/OPERA mainland | \|dK\|≥2 | wall | reference |
-|---|---|---|---|---|---|
-| **NISAR** | tiled + **anchor + cascade** (default) | **99.89%** | **0.00%** | 3.9 s | SNAPHU 9×9 = 17 min |
-| NISAR | tiled + anchor (single f=8) | 99.63% | 0.00% | 4.1 s | |
-| NISAR | tiled, no anchor (prior) | 99.21% | 0.21% | 3.5 s | |
-| **Atlanta S-1** | **multilook-8 + tiled** | **97.66%** | 0.03% | ~0.1 s coarse solve | OPERA/SNAPHU; snaphu(3×3) = 97.89% / 59 s |
-| Atlanta S-1 | fine tiled (no multilook) | 26.4% | 41.2% | 8.7 s | — fails (noise) |
+| scene           | path                                   | match vs SNAPHU/OPERA mainland | \|dK\|≥2  | wall                | reference                                 |
+| --------------- | -------------------------------------- | ------------------------------ | --------- | ------------------- | ----------------------------------------- |
+| **NISAR**       | tiled + **anchor + cascade** (default) | **99.89%**                     | **0.00%** | 3.9 s               | SNAPHU 9x9 = 17 min                       |
+| NISAR           | tiled + anchor (single f=8)            | 99.63%                         | 0.00%     | 4.1 s               |                                           |
+| NISAR           | tiled, no anchor (prior)               | 99.21%                         | 0.21%     | 3.5 s               |                                           |
+| **Atlanta S-1** | **multilook-8 + tiled**                | **97.66%**                     | 0.03%     | ~0.1 s coarse solve | OPERA/SNAPHU; snaphu(3x3) = 97.89% / 59 s |
+| Atlanta S-1     | fine tiled (no multilook)              | 26.4%                          | 41.2%     | 8.7 s               | — fails (noise)                           |
 
 Both scenes now reach SNAPHU/OPERA quality with no Goldstein workaround. **The lever is different per scene, and that difference is the whole story:** NISAR is high-coherence so the fine per-tile solve is trustworthy and only needs its integer cycle levels pinned (anchor + cascade); Atlanta is noisy moderate-coherence, where the fine solve is *garbage* and must be replaced by a multilooked solve that suppresses the noise first.
 
@@ -22,7 +22,7 @@ Figures: `plots/report_nisar.png`, `plots/report_atlanta_ml8.png`, `plots/nisar_
 
 The prior tiled result (99.21%) had a visible multi-cycle vertical streak and a couple of rectangular blocks. Both were *wrong integer cycle levels* of sub-regions that the per-tile MCF + secondary-net reconciliation could not reach (a coherent wrong island sharing no high-confidence seam with the mainland is invisible to the relative largest-region vote).
 
-**1. Global coarse anchor** (`compute_coarse_anchor` in `tile.rs`). Multilook the complex igram ×8 (coherent down-look — never average wrapped phase), unwrap that tiny image in ONE whole-image solve (no tiles ⇒ no seams ⇒ one self-consistent surface; ×64 fewer pixels and ×64 effective looks ⇒ no runaway), upsample, and snap each no-jump region's integer 2π level to it via a coherence-weighted **mode over the whole region** (robust to local anchor error). This pins absolute cycle levels rather than relative ones → reaches the no-seam wrong islands. → 99.21% → **99.63%**, |dK|≥2 0.21% → **0.00%** (the streak is gone).
+**1. Global coarse anchor** (`compute_coarse_anchor` in `tile.rs`). Multilook the complex igram x8 (coherent down-look — never average wrapped phase), unwrap that tiny image in ONE whole-image solve (no tiles ⇒ no seams ⇒ one self-consistent surface; x64 fewer pixels and x64 effective looks ⇒ no runaway), upsample, and snap each no-jump region's integer 2π level to it via a coherence-weighted **mode over the whole region** (robust to local anchor error). This pins absolute cycle levels rather than relative ones → reaches the no-seam wrong islands. → 99.21% → **99.63%**, |dK|≥2 0.21% → **0.00%** (the streak is gone).
 
 **2. Multi-scale cascade** `coarse_refine` at f = 16 → 8 → 4 (each re-anchored to the same global field). A block fragmented at one scale is caught whole at a coarser one; region boundaries resolve below the single-pass 8-px granularity. → 99.63% → **99.89%**.
 
@@ -34,7 +34,7 @@ Both are gated behind the existing tiled path; `WHIRLWIND_NO_ANCHOR=1` reverts t
 
 ## Atlanta S-1 OPERA — fine solve fails on noise; multilook-first recovers it
 
-whirlwind's fine tiled unwrap produces **vertical stripes everywhere** on Atlanta (26% match, |dK|≥2 = 41%, 38 k fragmented components). This is **not** a tiling/scale problem and **not** bad input: on *identical* 5×-subsampled input, snaphu unwraps cleanly (97.89%) while whirlwind whole-image gets 11% and tiled gets 41%.
+whirlwind's fine tiled unwrap produces **vertical stripes everywhere** on Atlanta (26% match, |dK|≥2 = 41%, 38 k fragmented components). This is **not** a tiling/scale problem and **not** bad input: on *identical* 5x-subsampled input, snaphu unwraps cleanly (97.89%) while whirlwind whole-image gets 11% and tiled gets 41%.
 
 The decisive experiment: **decimation** (subsample, no averaging) by 5 → whirlwind 11%; **multilooking** (coherent block-average) by 8 → whirlwind whole-image **83%**, and **multilook-8 + tiled** → **97.66%** (matching snaphu's 97.89%). So:
 
@@ -45,7 +45,7 @@ The decisive experiment: **decimation** (subsample, no averaging) by 5 → whirl
 This validates the user's "multilook to constrain the large-scale features" intuition. L=8 is the sweet spot (L=16 over-aliases the ramp → 59%; L=4 keeps too much noise → 35%).
 
 **Two real options for an Atlanta-class (noisy) product path:**
-1. **Multilook-first mode** — multilook ×L, run tiled+anchor+cascade, upsample. Already validated at 97.7% / sub-second. Cheapest; aliases sub-L fringes (fine for low-gradient scenes). Natural next step: expose as a `multilook=` kwarg on `unwrap`.
+1. **Multilook-first mode** — multilook xL, run tiled+anchor+cascade, upsample. Already validated at 97.7% / sub-second. Cheapest; aliases sub-L fringes (fine for low-gradient scenes). Natural next step: expose as a `multilook=` kwarg on `unwrap`.
 2. **Statistical / convex cost** (`convex_cost_diagnosis`) so the *fine* solve survives noise like snaphu's does — the general fix, larger effort.
 
 ## Reproduce

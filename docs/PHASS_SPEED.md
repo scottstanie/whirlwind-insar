@@ -1,13 +1,13 @@
-# Whirlwind performance: why it's ~15–40× faster than SNAPHU (and ~2–4× slower than PHASS)
+# Whirlwind performance: why it's ~15–40x faster than SNAPHU (and ~2–4x slower than PHASS)
 
 Two questions come up on the benchmark: **why is whirlwind so much faster than
-SNAPHU** (the headline ~15–40× on single-tile NISAR frames), and **why is isce3
-PHASS still ~2–4× faster than whirlwind** (e.g. D_077 ≈ 20 s vs ≈ 37 s). This note
+SNAPHU** (the headline ~15–40x on single-tile NISAR frames), and **why is isce3
+PHASS still ~2–4x faster than whirlwind** (e.g. D_077 ≈ 20 s vs ≈ 37 s). This note
 answers both. (Aside: a tiled or reoptimize warm-start can cut runtime but **not**
 full-frame memory — the final single-tile solve still allocates the whole-image
 network.)
 
-## Why ~15–40× faster than SNAPHU?
+## Why ~15–40x faster than SNAPHU?
 
 On these NISAR frames whirlwind unwraps in ~14–41 s vs single-tile SNAPHU's
 ~500–900 s. The honest framing first: **this is the same algorithm class.** SNAPHU
@@ -30,12 +30,12 @@ impact:
 
 2. **An efficient *serial* solver — not parallelism.** It is tempting to credit
    rayon, but measured (`scripts/rayon_bench.py`): 1 thread vs 12 is only
-   **~1.2–1.3×** (D_077 43.6 → 37.4 s), because the PD/SSP solver is largely serial
+   **~1.2–1.3x** (D_077 43.6 → 37.4 s), because the PD/SSP solver is largely serial
    and rayon only parallelizes the O(mn) cost/residue/conncomp build. The telling
-   number: **whirlwind on a single thread is still ~13× faster than single-tile
+   number: **whirlwind on a single thread is still ~13x faster than single-tile
    SNAPHU.** So the gap is the *solver and cost model*, not core count — a lean
    per-arc linear cost and a tuned Dial-bucket Dijkstra MCF (with the recent
-   per-source-rescan fix, ~1.4–2.4×). SNAPHU v2 is mature, portable C; parallelism
+   per-source-rescan fix, ~1.4–2.4x). SNAPHU v2 is mature, portable C; parallelism
    is not where the difference comes from.
 
 3. **Single-tile is SNAPHU's *slow* configuration.** SNAPHU's operational strength
@@ -81,19 +81,19 @@ So the trade is **heuristic-cut-down-flow + flood-fill + reuse (PHASS)** vs
 
 ## Where whirlwind actually spent its time
 
-Profiled on D_077 (4176 × 4257, `WHIRLWIND_DEBUG=1`):
+Profiled on D_077 (4176 x 4257, `WHIRLWIND_DEBUG=1`):
 
-| stage | time | notes |
-|---|---|---|
-| **SSP fallback** | ~45 s | 927 single-source Dijkstras after PD hands off |
-| PD (8 full Dijkstra) | ~13 s | early iters drain thousands of units, later ones < 100 |
-| cost / residue / integrate / conncomp | ~8 s | all O(*mn*), rayon-parallel |
+| stage                                 | time  | notes                                                  |
+| ------------------------------------- | ----- | ------------------------------------------------------ |
+| **SSP fallback**                      | ~45 s | 927 single-source Dijkstras after PD hands off         |
+| PD (8 full Dijkstra)                  | ~13 s | early iters drain thousands of units, later ones < 100 |
+| cost / residue / integrate / conncomp | ~8 s  | all O(*mn*), rayon-parallel                            |
 
 More PD iterations are strictly slower for identical quality (the residual past
 iter 8 is "stranded" for multi-source PD), so 8 is the sweet spot and SSP draining
 is the real cost.
 
-## The fix that came out of it (~1.4–2.4×, shipped)
+## The fix that came out of it (~1.4–2.4x, shipped)
 
 Drilling into the SSP fallback with `WHIRLWIND_DEBUG` showed the dominant cost was
 **not** the Dijkstra traversals but `max_reduced_cost_par` — an O(E) scan over
@@ -107,7 +107,7 @@ alias the circular buckets and return a wrong answer. The fix maintains `max_rc`
 any relaxation observes `rc ≥ k`, it discards that source's partial Dijkstra,
 recomputes `max_rc` tight, and retries, so an under-sized `k` can never commit.
 
-**Result:** D_077 61 → 37 s, D_075 2.44×, A_035 1.65×, several others 1.4–1.5×;
+**Result:** D_077 61 → 37 s, D_075 2.44x, A_035 1.65x, several others 1.4–1.5x;
 the optimal cost is byte-identical, per-component match is unchanged on all 13
 NISAR frames, and the 79 core tests stay green. Residue-light frames are
 unchanged (they barely touch the SSP fallback).
@@ -120,6 +120,6 @@ Profile it yourself: `scripts/prof_pdssp.py` (a PD-iters sweep) and
 - **Reliability region-growing / reoptimize warm-start** — borrow PHASS's idea as
   an *init*: a fast coarse/tiled pass produces a near-solution, the single-tile
   MCF then *reoptimizes* from it, so far fewer residues remain for PD/SSP. Speed
-  only (the final solve is still full-image memory); estimated 2–3× more.
+  only (the final solve is still full-image memory); estimated 2–3x more.
 - **Parallelize the SSP source loop** — disjoint residual components are
   independent.

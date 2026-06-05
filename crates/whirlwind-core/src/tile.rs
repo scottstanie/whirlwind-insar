@@ -45,8 +45,8 @@ impl Tile {
     }
 }
 
-/// Decompose an `m × n` image into a regular grid of tiles of size up to
-/// `tile_size × tile_size` with `overlap` overlap between adjacent tiles.
+/// Decompose an `m x n` image into a regular grid of tiles of size up to
+/// `tile_size x tile_size` with `overlap` overlap between adjacent tiles.
 /// Tiles on the right / bottom edge are smaller if `m`/`n` don't divide
 /// evenly; every tile has at least `min(tile_size, m)` rows and similarly
 /// for columns (no degenerate tiny tiles).
@@ -251,7 +251,7 @@ fn assemble_and_refine(
     } else {
         let lk = anchor_lk(igram.dim());
         // Cross-validated dual anchor: lk_fine (current adaptive) + lk_coarse
-        // (2× more multilook, ~128px coarse, well below the runaway threshold).
+        // (2x more multilook, ~128px coarse, well below the runaway threshold).
         // Regions where lk_fine runs away are detected via integer-cycle
         // disagreement vs lk_coarse and overwritten with the more-reliable
         // lk_coarse value. In well-behaved frames both anchors agree and the
@@ -382,7 +382,7 @@ pub fn unwrap_tiled(
     }
     // MULTILOOK-FIRST (for noisy / moderate-coherence scenes, e.g. Sentinel-1).
     // whirlwind's linear cost mis-routes through noisy phase; coherently
-    // down-looking ×`multilook` suppresses that noise, after which the SAME
+    // down-looking x`multilook` suppresses that noise, after which the SAME
     // tiled+anchor+cascade pipeline reaches SNAPHU quality. We tile the coarse
     // (a whole-image coarse solve still has residual runaway), then upsample.
     if multilook > 1 {
@@ -449,7 +449,7 @@ const COH_CUT_THR: f32 = 0.7;
 /// Coherent-cut rate (coherence-weighted cuts per valid pixel) above which the
 /// gated multi-shift re-solve fires. Empirically the fragmented GUNW A_016 sits
 /// at ≈6.7e-3 while every clean / noisy-but-fine scene (NISAR, Atlanta, the four
-/// clean GUNW frames) is ≤5.6e-4 — a >3× margin on each side.
+/// clean GUNW frames) is ≤5.6e-4 — a >3x margin on each side.
 const COH_CUT_FLOOR: f64 = 1.5e-3;
 
 #[inline]
@@ -522,7 +522,7 @@ fn coherent_cut_rate(
 /// realised by zero-padding the top-left by `s` (those pixels are masked out), so
 /// no change to the tile decomposition is needed.
 ///
-/// No-op (1× cost) on clean scenes (rate ≈ 0); ~4× on the rare fragmented frame
+/// No-op (1x cost) on clean scenes (rate ≈ 0); ~4x on the rare fragmented frame
 /// that needs it (speed is not the constraint there). Validated: A_016 55% → 97%
 /// with the high-coherence seam-strip artifact removed, and the four clean GUNW
 /// frames + NISAR + Atlanta unchanged (gate does not fire).
@@ -1094,7 +1094,7 @@ fn reconcile_offsets_mcf(
         return o;
     }
 
-    // Residue (curl) per interior face: the clockwise 2×2-tile loop with
+    // Residue (curl) per interior face: the clockwise 2x2-tile loop with
     // top-left tile (fr, fc). Zero iff the four seam measurements close.
     let nf = (rows - 1) * (cols - 1);
     let outer = nf;
@@ -1169,14 +1169,14 @@ fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
 /// showing as a rectangular block bounded by a 2π discontinuity *ring*).
 ///
 /// Per-pixel jump detection fragments under phase noise, so we coarsen `unw`
-/// by `f`× (block mean over valid pixels — noise averages out, large-scale
+/// by `f`x (block mean over valid pixels — noise averages out, large-scale
 /// offsets survive), group coarse pixels into regions by no-jump connectivity,
 /// then shift each region by the integer that zeroes its **coherence-weighted**
 /// boundary jumps (high-coherence rings are expensive → flipped away;
 /// legitimate low-coherence cuts are cheap → kept). The per-region integer
-/// offset (× 2π) is added back to the full-resolution `unw` in place.
+/// offset (x 2π) is added back to the full-resolution `unw` in place.
 /// Build a globally-consistent coarse "anchor" unwrap to pin per-region cycle
-/// levels to. Multilook the COMPLEX igram by `lk`× (coherent down-look — never
+/// levels to. Multilook the COMPLEX igram by `lk`x (coherent down-look — never
 /// average wrapped phase, which is meaningless across 2π), unwrap the tiny
 /// coarse image in ONE whole-image solve (no tiles ⇒ no seams ⇒ one
 /// self-consistent surface), and block-replicate it back to full resolution.
@@ -1188,7 +1188,7 @@ fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
 /// INTEGER 2π level (via a coherence-weighted mode over the whole region), so a
 /// sub-cycle smoothing error in the anchor does not propagate, and a local
 /// anchor error is outvoted by the rest of its region.
-/// Coherent ×`lk` down-look of the complex igram: unit-phasor block mean (the
+/// Coherent x`lk` down-look of the complex igram: unit-phasor block mean (the
 /// physically-correct coherent average — never average wrapped phase across
 /// 2π), block-mean coherence, and validity = a majority of the block valid.
 /// Suppresses noise and re-estimates phase; effective looks scale by `lk²`.
@@ -1248,7 +1248,7 @@ fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Arr
 
 /// Adaptive multilook factor for the global coarse anchor (issue #65).
 ///
-/// The anchor is a whole-image solve on the `lk×`-multilooked image. A whole-
+/// The anchor is a whole-image solve on the `lkx`-multilooked image. A whole-
 /// image MCF solve "runs away" once the domain exceeds ~256 px (the per-arc cost
 /// optimum drifts to a wrong large-scale winding; see
 /// `paper/why_whole_image_runs_away.md`). The historical hardcoded `lk = 8` left
@@ -1291,7 +1291,7 @@ fn compute_coarse_anchor(
         return None;
     }
     let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, lk);
-    // One whole-image solve on the tiny coarse image; effective looks ×lk².
+    // One whole-image solve on the tiny coarse image; effective looks xlk².
     // Corner-safe reuse (the coarse image is gentle, but #50 removed the plain
     // capacity-1 solver entirely).
     let cunw = crate::unwrap_reuse(
@@ -1728,7 +1728,7 @@ enum TileSolver {
 ///
 /// The old `linear` unit-capacity solver was removed in #50: it had the
 /// capacity-1 boundary-stacking bug on steep clean ramps (12.6 rad error vs
-/// reuse's 0.0) AND ~6× more single-cycle errors than reuse on real scenes
+/// reuse's 0.0) AND ~6x more single-cycle errors than reuse on real scenes
 /// (NISAR 99.86% vs 99.97%), for only a speed win — not worth an ever-artifacty
 /// solver. Reuse (PHASS flow-reuse) is the corner-safe default; convex is
 /// research-only.
@@ -1907,7 +1907,7 @@ mod tests {
 
     #[test]
     fn decompose_evenly_divides() {
-        // 256 = 2 × 128, with 0 overlap → 2 starts.
+        // 256 = 2 x 128, with 0 overlap → 2 starts.
         let starts = axis_starts(256, 128, 128);
         // axis_starts(256, 128, 128): start=[0]. last=0, next=128, 128+128=256 not >= 256? 256>=256 → push 256-128=128.
         assert_eq!(starts, vec![0, 128]);
@@ -1915,7 +1915,7 @@ mod tests {
 
     #[test]
     fn stitching_offset_recovers_integer_step() {
-        // Two horizontally-adjacent 8×16 tiles with 8-pixel column overlap.
+        // Two horizontally-adjacent 8x16 tiles with 8-pixel column overlap.
         // tile_a spans cols 0..16, tile_b spans cols 8..24 → overlap cols 8..16.
         // tile_b's pixels are at +3·2π relative to tile_a; stitching should
         // give K = +3 (so subtracting 3·2π from tile_b aligns it with tile_a).
@@ -1940,7 +1940,7 @@ mod tests {
         assert_eq!(k, 3, "stitching should recover the planted +3·2π step");
     }
 
-    // Build seam-gradient arrays from a per-tile truth field on an R×C grid.
+    // Build seam-gradient arrays from a per-tile truth field on an RxC grid.
     fn seams_from_truth(rows: usize, cols: usize, truth: &[i64]) -> (Vec<i64>, Vec<i64>) {
         let mut gh = vec![0_i64; rows * (cols - 1)];
         let mut gv = vec![0_i64; (rows - 1) * cols];
@@ -2009,7 +2009,7 @@ mod tests {
     fn coarse_refine_flips_block_offset() {
         use ndarray::Array2;
         // Smooth ramp (gradient ≪ π) with a planted +2-cycle rectangular block
-        // offset (block edges aligned to the 8× coarsen grid). coarse_refine
+        // offset (block edges aligned to the 8x coarsen grid). coarse_refine
         // must flip the block back so the field is smooth again.
         let (m, n) = (64usize, 64usize);
         let truth = Array2::from_shape_fn((m, n), |(i, j)| 0.1 * i as f32 + 0.07 * j as f32);
@@ -2047,7 +2047,7 @@ mod tests {
         let (m, n) = (64usize, 64usize);
         let truth = Array2::from_shape_fn((m, n), |(i, j)| 0.05 * i as f32 + 0.04 * j as f32);
         let mut unw = truth.clone();
-        // Island [16,48)×[16,48) offset by +2 cycles; ring [8,16)∪[48,56) invalid.
+        // Island [16,48)x[16,48) offset by +2 cycles; ring [8,16)∪[48,56) invalid.
         let mut mask = Array2::<bool>::from_elem((m, n), true);
         for i in 0..m {
             for j in 0..n {

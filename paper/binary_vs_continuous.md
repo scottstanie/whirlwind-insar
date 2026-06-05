@@ -51,11 +51,11 @@ quantify below.
 
 Variants compared:
 
-| label              | cost on good pixels                          | cost on bad pixels |
-|--------------------|----------------------------------------------|---------------------|
-| `continuous`       | full continuous γ-weighted (or CRLB-weighted) | low (γ-weighted)   |
-| `binary T=0.6`     | uniform γ = 0.95 (Carballo) / CRLB (PV)       | 0 (mask=False)     |
-| `binary T=0.9`     | uniform γ = 0.95 (Carballo) / CRLB (PV)       | 0 (mask=False)     |
+| label          | cost on good pixels                           | cost on bad pixels |
+| -------------- | --------------------------------------------- | ------------------ |
+| `continuous`   | full continuous γ-weighted (or CRLB-weighted) | low (γ-weighted)   |
+| `binary T=0.6` | uniform γ = 0.95 (Carballo) / CRLB (PV)       | 0 (mask=False)     |
+| `binary T=0.9` | uniform γ = 0.95 (Carballo) / CRLB (PV)       | 0 (mask=False)     |
 
 Reference pixel for the PV run is chosen as the location of maximum
 `temporal_coherence` in the window so it survives every threshold up to
@@ -96,11 +96,11 @@ Two high-coherence (γ = 0.9) blobs separated by a thin γ = 0.7 bridge
 embedded in a γ = 0.3 background, with a phase ramp running across.
 Truth puts the right blob ~6π ahead of the left.
 
-| variant        | RMSE [rad] | cycle errors | blob1 offset | blob2 offset |
-|----------------|------------|--------------|--------------|--------------|
-| continuous     | **4.45**   | 5521 / 11042 | k = 0        | k = 1        |
-| binary T=0.6   | 0.15       | 0 / 11042    | k = 1        | k = 1        |
-| binary T=0.8   | 0.15       | 0 / 5521 (NaN: 5521) | k = 1 | k = 0 (NaN)  |
+| variant      | RMSE [rad] | cycle errors         | blob1 offset | blob2 offset |
+| ------------ | ---------- | -------------------- | ------------ | ------------ |
+| continuous   | **4.45**   | 5521 / 11042         | k = 0        | k = 1        |
+| binary T=0.6 | 0.15       | 0 / 11042            | k = 1        | k = 1        |
+| binary T=0.8 | 0.15       | 0 / 5521 (NaN: 5521) | k = 1        | k = 0 (NaN)  |
 
 This is the only scenario in the suite where binary outperforms
 continuous.  At T = 0.6 the bridge is kept and forces a consistent
@@ -135,11 +135,11 @@ trades coverage for nothing.
 
 The real-data run is the dominant finding.
 
-| variant       | temp_coh > T (% kept) | unwrap finite anywhere | finite cell fraction across stack |
-|---------------|------------------------|--------------------------|-----------------------------------|
-| continuous    | n/a                    | 1 048 576 / 1 048 576 (100 %) | 100 %                       |
-| binary T=0.6  | 149 707 (14.3 %)       | 223 (0.02 %)                  | 0.021 %                     |
-| binary T=0.9  | 12 335 (1.2 %)         | 1 (<0.001 %)                  | 1 × 10⁻⁶                    |
+| variant      | temp_coh > T (% kept) | unwrap finite anywhere        | finite cell fraction across stack |
+| ------------ | --------------------- | ----------------------------- | --------------------------------- |
+| continuous   | n/a                   | 1 048 576 / 1 048 576 (100 %) | 100 %                             |
+| binary T=0.6 | 149 707 (14.3 %)      | 223 (0.02 %)                  | 0.021 %                           |
+| binary T=0.9 | 12 335 (1.2 %)        | 1 (<0.001 %)                  | 1 x 10⁻⁶                          |
 
 Of the 14.3 % of pixels that the T = 0.6 mask designates as "good", only
 **0.02 %** are in the same 4-connected component as the seed.  The rest
@@ -292,13 +292,13 @@ Two scenes:
    components at several thresholds.  Headline numbers (256², γ̂ ∈
    {0.3, 0.7, 0.9}):
 
-   | Method | Components | Coverage |
-   |---|---|---|
-   | spurt-style `γ̂ > 0.60` | 1 | 17.2% |
-   | spurt-style `γ̂ > 0.85` | 2 | 16.8% (bridge cut) |
-   | MCF `cost_threshold = 50` | 1 | 100.0% |
-   | MCF `cost_threshold = 150` | 1 | 17.2% (bridge kept) |
-   | MCF `cost_threshold = 250` | 2 | 16.9% (bridge cut) |
+   | Method                     | Components | Coverage            |
+   | -------------------------- | ---------- | ------------------- |
+   | spurt-style `γ̂ > 0.60`     | 1          | 17.2%               |
+   | spurt-style `γ̂ > 0.85`     | 2          | 16.8% (bridge cut)  |
+   | MCF `cost_threshold = 50`  | 1          | 100.0%              |
+   | MCF `cost_threshold = 150` | 1          | 17.2% (bridge kept) |
+   | MCF `cost_threshold = 250` | 2          | 16.9% (bridge cut)  |
 
    The MCF threshold sweep (`conncomp_sweep_bridge.png`) tracks the
    spurt sweep very closely once you align them: the same step

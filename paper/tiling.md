@@ -10,15 +10,15 @@ conclusions after reading the SNAPHU 2.0.7, ISCE3 PHASS, and original C++
 
 ## tl;dr
 
-| NISAR vs SNAPHU 9×9 | wall | K-match | \|dK\|≥2 | memory |
-|---|---:|---:|---:|---|
-| `unwrap` whole-image | 78 s | 80.0 % | 18.3 % | whole-scene |
-| **`unwrap` tiled ts=512** | **3.5 s** | **96.6 %** | **2.7 %** | per-tile |
-| tiled ts=1024 | 5.9 s | 92.0 % | 5.8 % | per-tile |
-| `unwrap_reuse` | 93 s | 92.7 % | 7.1 % | whole-scene |
-| Goldstein α=0.7 | 38 s | 99.9 % | — | whole-scene |
+| NISAR vs SNAPHU 9x9       |      wall |    K-match |  \|dK\|≥2 | memory      |
+| ------------------------- | --------: | ---------: | --------: | ----------- |
+| `unwrap` whole-image      |      78 s |     80.0 % |    18.3 % | whole-scene |
+| **`unwrap` tiled ts=512** | **3.5 s** | **96.6 %** | **2.7 %** | per-tile    |
+| tiled ts=1024             |     5.9 s |     92.0 % |     5.8 % | per-tile    |
+| `unwrap_reuse`            |      93 s |     92.7 % |     7.1 % | whole-scene |
+| Goldstein α=0.7           |      38 s |     99.9 % |         — | whole-scene |
 
-**Tiling at ts≈512 beats whole-image (80→96.6 %), runs ~22× faster, and
+**Tiling at ts≈512 beats whole-image (80→96.6 %), runs ~22x faster, and
 bounds memory to tile scale** — the "fast unwrapper that isn't a memory
 exploder" goal. It is exposed on the existing Python `unwrap` via
 `tile_size` / `tile_overlap` (mirrors `unwrap_crlb`).
@@ -27,7 +27,7 @@ exploder" goal. It is exposed on the existing Python `unwrap` via
 > is now the **shippable default** and beats the table above. Tiled + a
 > **global coarse anchor** + a **multi-scale cascade** + a **feathered seam
 > composite** reach **99.79 % K-match (0 % multi-cycle) in 3.9 s** on this
-> NISAR frame — visually identical to SNAPHU 9×9, no Goldstein. For noisy
+> NISAR frame — visually identical to SNAPHU 9x9, no Goldstein. For noisy
 > S-1-class scenes a `multilook=8` down-look first gets Atlanta to **97.7 %**
 > (SNAPHU = 97.9 %). Goldstein α=0.7 is now a **legacy/alternative**, not the
 > recommended default; convex cost is a longer-term lever, **not** the fix
@@ -52,7 +52,7 @@ regularizer that compensates for the cost's defect. Evidence:
 * A clean window unwrapped **standalone** had K-std ≈ 1; the *same pixels*
   extracted from the **whole-scene** solve had K-std ≈ 6–10. The global
   solve injects the error.
-* The reference itself is SNAPHU **9×9 — tiled**. SNAPHU's quality comes
+* The reference itself is SNAPHU **9x9 — tiled**. SNAPHU's quality comes
   substantially from tiling + its secondary network, so matching it favors
   a tiled solver.
 
@@ -97,7 +97,7 @@ Read against `~/repos/snaphu-v2.0.7/src`, `~/repos/isce3/cxx/isce3/unwrap/phass`
 1. **The convex `offset` is the wrong quantity.** SNAPHU smooth/defo cost is
    `(flow·nshortcycle + offset)²/sigsq` with
    `offset = nshortcycle·(dpsi_raw − avgdpsi)` (snaphu_cost.c:1113-1120) —
-   the *deviation* of the raw wrapped gradient from its 7×7 boxcar mean, so
+   the *deviation* of the raw wrapped gradient from its 7x7 boxcar mean, so
    the preferred unwrapped gradient is the smooth neighborhood gradient
    (`flow* = avgdpsi − dpsi`). whirlwind's `compute_snaphu_smooth_costs`
    uses `offset = round(α_smooth·100/2π)` (the smoothed gradient itself),
@@ -119,7 +119,7 @@ Read against `~/repos/snaphu-v2.0.7/src`, `~/repos/isce3/cxx/isce3/unwrap/phass`
    (multi-unit) and `RectangularGridGraph<P>` (parallel arcs = the textbook
    convex reduction) — both unused by the unwrap path. `unwrap_reuse` is
    essentially turning on uncapacitated flow. Parallel-arc convex is the
-   "clean" convex route but is a **memory exploder** (K× arcs); the in-place
+   "clean" convex route but is a **memory exploder** (Kx arcs); the in-place
    warm-start route above is preferred.
 4. **`reuse` amplifies runaway on hard scenes.** It won NISAR (92.7 %) but
    on noisy data the free-highway extends spurious wrap-lines for free
@@ -129,7 +129,7 @@ Read against `~/repos/snaphu-v2.0.7/src`, `~/repos/isce3/cxx/isce3/unwrap/phass`
 
 Earlier this was mis-diagnosed twice. Final, correct status: **the
 `opera.displacement` reference is valid** — `snaphu-py` (SNAPHU 2.0.7,
-`ntiles=(2,2)`, 5× subsampled) unwraps `opera.int.tif` cleanly in ~1 min.
+`ntiles=(2,2)`, 5x subsampled) unwraps `opera.int.tif` cleanly in ~1 min.
 So whirlwind producing K-std 8–10 garbage there is **our problem**. Prep is
 *not* the cause: `opera.int.phs` ≡ `angle(opera.int.tif)` exactly, the
 provided coherence is not overstating (the IG's own phase coherence is
@@ -141,7 +141,7 @@ tiling helps (8.5→3.2 K-std) but the real fixes are the secondary network +
 convex cost. **Judge no-Goldstein quality on NISAR/PV; treat Atlanta as the
 hard target the secondary-network + convex work must crack.**
 
-Open idea (from S.S.): **multiscale** — unwrap a coarsened (e.g. 5×) version
+Open idea (from S.S.): **multiscale** — unwrap a coarsened (e.g. 5x) version
 to fix the large-scale ambiguities, then constrain the full-res solve to it.
 Aliases fast/small features but stabilizes the big picture; worth testing
 once the secondary network lands.
@@ -159,15 +159,15 @@ SPFA-based MCF). Because it minimizes the *summed* seam cost globally, it
 flips a wrong island whenever that lowers total cost — breaking a satisfied
 seam when warranted. Guarded by `reconcile_mcf_breaks_low_confidence_wrong_seam`.
 
-NISAR vs SNAPHU 9×9 (ts=512, no Goldstein):
+NISAR vs SNAPHU 9x9 (ts=512, no Goldstein):
 
-| reconciler | wall | K-match | \|dK\|≥2 |
-|---|---:|---:|---:|
-| consensus voting | 3.5 s | 96.6 % | 2.7 % |
+| reconciler            |      wall |    K-match |  \|dK\|≥2 |
+| --------------------- | --------: | ---------: | --------: |
+| consensus voting      |     3.5 s |     96.6 % |     2.7 % |
 | **MCF secondary net** | **3.4 s** | **97.5 %** | **1.7 %** |
 
 97.5 % now exceeds `unwrap_reuse` (92.7 %) and approaches dolphin-PHASS
-(97.9 %) at ~18× its speed and bounded memory. The residual (worst-crop
+(97.9 %) at ~18x its speed and bounded memory. The residual (worst-crop
 ~83 %) is **no longer the reconciliation** — the MCF optimally reconciles
 the measured seams, but those per-seam measurements are themselves wrong in
 genuinely low-coherence overlaps. Closing that needs the **convex per-tile
@@ -177,8 +177,8 @@ lever. **96–97.5 % is a fast/low-memory foundation, not a shippable
 unwrap quality yet** (per S.S.).
 
 Longer-term product framing (S.S.): if the primal-dual + tiling path can get
-*near* SNAPHU/PHASS quality but markedly faster, ship it as a "2–3× speedup"
-option. Tiling already shows ~18–22× on NISAR; the gating factor is quality
+*near* SNAPHU/PHASS quality but markedly faster, ship it as a "2–3x speedup"
+option. Tiling already shows ~18–22x on NISAR; the gating factor is quality
 parity, which is the convex-cost work.
 
 ## Coarse region-refinement → 99 % (session 2c)
@@ -193,22 +193,22 @@ What distinguishes the artifact from the correct unwrap is the **global
 smoothness**: the wrong block has a 2π ring through *high coherence*, which a
 correct unwrap never cuts. So a coherence-aware post-pass removes them
 (`coarse_refine` in `tile.rs`). Per-pixel jump detection fragments under phase
-noise (22 M components on NISAR), so we **coarsen 8×** (block-mean — noise
+noise (22 M components on NISAR), so we **coarsen 8x** (block-mean — noise
 averages out, the 100s-of-px artifacts survive), group coarse pixels into
 regions by no-jump connectivity, and shift each region by the integer that
 zeroes its **coherence-weighted** boundary jumps. High-coh rings are expensive
 → flipped away; legitimate low-coh cuts are cheap → kept.
 
-NISAR vs SNAPHU 9×9 (ts=512, no Goldstein), full pipeline:
+NISAR vs SNAPHU 9x9 (ts=512, no Goldstein), full pipeline:
 
-| stage | K-match | \|dK\|≥2 |
-|---|---:|---:|
-| tiled + consensus stitch | 96.6 % | 2.7 % |
-| + MCF secondary net | 97.5 % | 1.7 % |
-| + coarse region-refine | 99.2 % | 0.21 % |
-| + global coarse anchor | 99.63 % | 0.00 % |
+| stage                                |     K-match |   \|dK\|≥2 |
+| ------------------------------------ | ----------: | ---------: |
+| tiled + consensus stitch             |      96.6 % |      2.7 % |
+| + MCF secondary net                  |      97.5 % |      1.7 % |
+| + coarse region-refine               |      99.2 % |     0.21 % |
+| + global coarse anchor               |     99.63 % |     0.00 % |
 | **+ multi-scale cascade (f=16,8,4)** | **99.89 %** | **0.00 %** |
-| + feathered seam composite | 99.79 % | 0.00 % |
+| + feathered seam composite           |     99.79 % |     0.00 % |
 
 **A strong intermediate at 99.2 %; the final winning path** adds a **global
 coarse anchor** (snaps each region's integer cycle level to a seam-free
@@ -216,7 +216,7 @@ multilooked whole-image solve → reaches the no-seam wrong islands the relative
 vote misses; 99.2→99.63, kills the multi-cycle streak), a **multi-scale
 cascade** (`coarse_refine` at f=16,8,4 → 99.63→99.89), and a **feathered seam
 composite** (blends overlaps to erase tile-seam lines — trades 0.10 % mainland
-K-match to cut seam tears 3–5×; 99.89→99.79). All visually match SNAPHU 9×9.
+K-match to cut seam tears 3–5x; 99.89→99.79). All visually match SNAPHU 9x9.
 Full method + figures: [`report_anchor_cascade.md`](report_anchor_cascade.md).
 
 ## Where the code lives
@@ -270,7 +270,7 @@ Two workarounds were prototyped (both since closed):
   warm-start*: when two stitching errors' divergence pairs match up *across*
   stitches, PD routes flow through a corridor and every edge along it gets its
   cycle count shifted by 1, leaving a 2π error in some region. (Exposed on a 64²
-  ramp with 4×4 tiles: the median stitch left 6 source/sink pairs; PD balanced
+  ramp with 4x4 tiles: the median stitch left 6 source/sink pairs; PD balanced
   all but one, which routed non-locally → unwrap 2π off at one pixel vs
   non-tiled.)
 - **(C) Saturate the bitvec *and* recompute potentials by SPFA.** Set `π = -d`

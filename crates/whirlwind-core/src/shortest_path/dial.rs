@@ -22,7 +22,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Compute the per-arc bucket count `k = max_unsaturated_reduced_cost + 1`.
-/// Parallelized via rayon — O(E) but trivially data-parallel and ~5× faster
+/// Parallelized via rayon — O(E) but trivially data-parallel and ~5x faster
 /// at 4096² where E ≈ 32M.
 pub(crate) fn max_reduced_cost_par<G: ResidualGraph>(g: &G, net: &Network) -> i64 {
     use rayon::prelude::*;

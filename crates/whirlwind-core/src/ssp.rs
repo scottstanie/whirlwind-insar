@@ -8,7 +8,7 @@
 //!   Used by the early-exit primal-dual path (`primal_dual::run`).
 //! * [`run_single_source`] — SINGLE-source: one source at a time, early-exiting
 //!   at the first popped deficit, using **Dial's bucket queue** (not a binary
-//!   heap). ~10× faster on whole-image graphs (single-tile D_077 ≈1472 s →
+//!   heap). ~10x faster on whole-image graphs (single-tile D_077 ≈1472 s →
 //!   ≈158 s) AND robust to the zero-cost masked "sea" on heavily-masked frames,
 //!   which makes a binary heap balloon (millions of equal-distance entries) but
 //!   which Dial processes in O(nodes) per bucket. Used by the full-completion
@@ -140,8 +140,18 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     let sources: Vec<usize> = net.excess_nodes().collect();
     let total = sources.len();
     if dbg {
-        let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
-        let df: i64 = net.excess.iter().filter(|&&e| e < 0).map(|&e| -e as i64).sum();
+        let ex: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e > 0)
+            .map(|&e| e as i64)
+            .sum();
+        let df: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e < 0)
+            .map(|&e| -e as i64)
+            .sum();
         eprintln!(
             "[ssp1] single-source SSP (Dial): {total} sources; excess={ex} deficit={df} balanced={}",
             ex == df
@@ -169,7 +179,12 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             continue; // already drained by a prior augmentation
         }
         if dbg && idx % 1000 == 0 {
-            let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
+            let ex: i64 = net
+                .excess
+                .iter()
+                .filter(|&&e| e > 0)
+                .map(|&e| e as i64)
+                .sum();
             eprintln!("[ssp1] source {idx}/{total}, excess_remaining={ex}");
         }
         crate::primal_dual::record_ssp_iter();
@@ -352,7 +367,12 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         }
     }
     if dbg {
-        let ex: i64 = net.excess.iter().filter(|&&e| e > 0).map(|&e| e as i64).sum();
+        let ex: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e > 0)
+            .map(|&e| e as i64)
+            .sum();
         eprintln!(
             "[ssp1] DONE: stranded_sources={stranded} remaining_excess={ex} \
              max_reduced_cost_scan={:.1}ms",

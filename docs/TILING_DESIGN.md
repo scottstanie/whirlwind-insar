@@ -22,7 +22,7 @@ The opt-in tiled path unwrapped frames as follows:
 
 1. **Per-tile MCF** — each overlapping tile is unwrapped independently with the
    corner-safe reuse solver, bounding peak memory to tile scale.
-2. **Global coarse anchor** — the complex igram is multilooked ×8, solved whole
+2. **Global coarse anchor** — the complex igram is multilooked x8, solved whole
    (seam-free, runaway-free), upsampled, and each tile region's integer-2π level
    is snapped to it by coherence-weighted mode.
 3. **Multi-scale cascade** (`coarse_refine` at f=16,8,4) + a **feathered seam

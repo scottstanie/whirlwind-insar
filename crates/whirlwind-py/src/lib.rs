@@ -667,7 +667,7 @@ fn _unwrap_with_costs<'py>(
 ///
 /// Block-parallel Rust port of the Python helper. See
 /// :func:`whirlwind.goldstein` for the documentation; this version
-/// is bit-identical to the Python one but typically 10×–30× faster on
+/// is bit-identical to the Python one but typically 10x–30x faster on
 /// large scenes thanks to rustfft + rayon over independent FFT blocks.
 ///
 /// * ``igram`` — complex64, shape ``(m, n)``.

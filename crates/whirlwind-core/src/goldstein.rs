@@ -1,7 +1,7 @@
 //! Goldstein adaptive phase filter (Goldstein & Werner 1998).
 //!
 //! Overlapping-block 2D FFT filter on the wrapped interferogram. Each
-//! `psize × psize` block is FFT-transformed, its magnitudes are shaped
+//! `psize x psize` block is FFT-transformed, its magnitudes are shaped
 //! by `|F|^alpha`, inverse-transformed, and overlap-added with a Hann
 //! window into the output.
 //!

@@ -87,7 +87,7 @@ pub fn phase_gradients_raw(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2
 }
 
 /// Same as [`smooth_phase_gradients`] but mask-aware: at pixels whose
-/// 7×7 window overlaps masked-out pixels, the average is taken over the
+/// 7x7 window overlaps masked-out pixels, the average is taken over the
 /// *valid* pixels only (rather than including masked zeros). This is
 /// critical for real-data mask boundaries — without it, masked pixels
 /// (set to `0+0j`) drag the smoothed gradient toward 0 within 3 pixels
@@ -97,7 +97,7 @@ pub fn phase_gradients_raw(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2
 /// Implementation uses the algebraic identity `mean_valid = sum / count`
 /// with two separable box-filter passes (one on `phase * valid`, one on
 /// `valid` itself), then a per-pixel divide. Same O(k) complexity as the
-/// unmasked path; ~2× the work.
+/// unmasked path; ~2x the work.
 pub fn smooth_phase_gradients_with_mask(
     igram: ArrayView2<Complex32>,
     pixel_mask: Option<ArrayView2<bool>>,
@@ -336,9 +336,7 @@ pub fn compute_carballo_costs(
     // The asymmetry between +/− directions is essential (see earlier
     // Carballo comment block); the LUT encodes it via the sign of α.
     let carb_lut = lut::get_or_build_carballo(nlooks);
-    let cost_dir = |alpha: f32, gamma: f32| -> f32 {
-        carb_lut.eval(alpha, gamma)
-    };
+    let cost_dir = |alpha: f32, gamma: f32| -> f32 { carb_lut.eval(alpha, gamma) };
 
     // Forward-arc cost vector split into 4 direction slabs. Each slab is a
     // disjoint &mut [i32], so we fill them in parallel without aliasing.
@@ -362,7 +360,7 @@ pub fn compute_carballo_costs(
     //   right_arc(i+1, j)     → right_slab[(i+1)*stride_h + j]
     //   left_arc(i+1, j+1)    → left_slab [(i+1)*stride_h + j]
     // Skip residue row 0 so chunk index = pixel-edge row i; both slabs have
-    // m grid rows × stride_h cells; we touch rows 1..m_phase (= rows 0..m_phase-1
+    // m grid rows x stride_h cells; we touch rows 1..m_phase (= rows 0..m_phase-1
     // of the body view).
     let stride_h = g.n - 1; // = n_phase
     let right_body = &mut right_slab[stride_h..];
@@ -853,7 +851,7 @@ pub fn compute_snaphu_smooth_costs(
     // wrap line (raw ≈ ±π while the box-mean ≈ 0) yet is ≈0 in smooth regions,
     // which is exactly the routing signal the convex cost needs. The earlier
     // implementation fed the *smoothed* gradient alone (`avgdpsi`), which the
-    // 7×7 box washes to ≈0 both in smooth areas AND across wrap lines — leaving
+    // 7x7 box washes to ≈0 both in smooth areas AND across wrap lines — leaving
     // |offset| ≲ 22 with no wrap-line information and the convex cost degenerate
     // to pure `w·k²` (paper/convex_cost_design.md Suspect 5; the doc's prose
     // mis-stated SNAPHU's offset as `avgdpsi` — the source uses the deviation).
