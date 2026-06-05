@@ -1,0 +1,67 @@
+name: Bump version
+
+# One-click release bump. The version lives in a single place, Cargo.toml
+# ([workspace.package].version); pyproject.toml reads it dynamically via maturin.
+# This workflow updates that version (and Cargo.lock), commits it to the default
+# branch, and pushes a v* tag, which triggers release.yml to build + publish the
+# wheels. So cutting a release is: run this workflow, pick patch/minor/major.
+#
+# If the default branch is protected against direct pushes, either allow the
+# GitHub Actions bot to bypass it, or bump locally instead (see RELEASING.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: "Semver bump level (ignored when 'version' is set)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Explicit version, e.g. 0.2.0 (overrides 'level')"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-edit
+
+      - name: bump version
+        id: bump
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            cargo set-version "${{ inputs.version }}"
+          else
+            cargo set-version --bump "${{ inputs.level }}"
+          fi
+          new=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "Bumped to v$new"
+
+      - name: commit, tag, and push
+        env:
+          NEW: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v$NEW"
+          git tag -a "v$NEW" -m "v$NEW"
+          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "v$NEW"

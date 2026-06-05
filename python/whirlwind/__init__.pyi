@@ -11,6 +11,8 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+__version__: str
+
 from ._native import (
     closure_correct as closure_correct,
     closure_refine_mcf as closure_refine_mcf,

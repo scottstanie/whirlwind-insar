@@ -6,17 +6,14 @@ crates.io; this doc covers PyPI and conda-forge.
 
 ## TL;DR
 
-```bash
-# 1. Bump versions in:
-#      Cargo.toml      (workspace.package.version)
-#      pyproject.toml  (project.version)
-#    Commit, open PR, merge to main.
+Run the **Bump version** workflow (Actions -> Bump version -> Run workflow) and
+pick `patch`, `minor`, or `major`. That is the whole release. It bumps the
+single version source (`Cargo.toml`), commits it, and pushes a `v*` tag, which
+triggers the `Release` workflow to build and publish the wheels.
 
-# 2. Tag the release commit on main and push the tag.
-git checkout main && git pull
-git tag -a v0.1.1 -m "v0.1.1"
-git push origin v0.1.1
-```
+The version lives in exactly one place, `Cargo.toml` `[workspace.package].version`.
+`pyproject.toml` declares `dynamic = ["version"]`, so maturin reads the version
+from `Cargo.toml` at build time; there is no second copy to keep in sync.
 
 The `Release` workflow (`.github/workflows/release.yml`) takes it from
 there: builds abi3 wheels for linux (manylinux + musllinux, x86_64 +
@@ -119,25 +116,32 @@ merge) and conda-forge ships the new build.
 
 ## Cutting a release
 
-1. Open a release-bump PR:
-   - Bump `version` in `Cargo.toml` (workspace.package).
-   - Bump `version` in `pyproject.toml` (project).
-   - Run `cargo update -p whirlwind-core -p whirlwind-cli -p whirlwind-py`
-     to refresh `Cargo.lock` with the new versions.
-   - Update the changelog if there is one.
-2. Merge to `main` after CI is green.
-3. Tag the release commit and push:
+The version is defined once, in `Cargo.toml` `[workspace.package].version`, and
+read by maturin into the wheel (pyproject uses `dynamic = ["version"]`). So a
+release is just a version bump plus a `v*` tag; the `Bump version` workflow does
+both.
 
-   ```bash
-   git checkout main && git pull
-   git tag -a v$(VERSION) -m "v$(VERSION)"
-   git push origin v$(VERSION)
-   ```
+### Default path (CI)
 
-4. Watch the `Release` workflow. On success, the artifacts are visible
-   under the workflow run and on PyPI.
-5. Within a few hours, `regro-cf-autotick-bot` opens a PR against
+1. Actions -> **Bump version** -> *Run workflow*. Pick `patch`, `minor`, or
+   `major` (or type an explicit version). It runs `cargo set-version`, commits
+   the bumped `Cargo.toml` and `Cargo.lock` to `main`, and pushes a `v*` tag.
+2. The tag triggers the `Release` workflow. Watch it; on success the artifacts
+   are on the run page and on PyPI.
+3. Within a few hours, `regro-cf-autotick-bot` opens a PR against
    `conda-forge/whirlwind-insar-feedstock`. Review and merge.
+
+### Local path (or if `main` is protected against direct pushes)
+
+```bash
+cargo install cargo-edit          # one-time; provides `cargo set-version`
+git checkout main && git pull
+cargo set-version --bump patch    # bumps Cargo.toml + Cargo.lock together
+git commit -am "Release v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+# push to main (directly, or open a PR and merge), then tag the merged commit:
+v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+git tag -a "v$v" -m "v$v" && git push origin main "v$v"
+```
 
 ## Re-running a failed release
 

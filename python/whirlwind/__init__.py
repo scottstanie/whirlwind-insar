@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import os
+from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+# Single source of truth is Cargo.toml ([workspace.package].version); maturin
+# stamps it into the installed distribution metadata, which we read back here.
+__version__ = version("whirlwind-insar")
 
 from ._native import (
     closure_correct,

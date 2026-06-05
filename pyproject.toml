@@ -4,7 +4,9 @@ build-backend = "maturin"
 
 [project]
 name = "whirlwind-insar"
-version = "0.1.0"
+# Version is the single source of truth in Cargo.toml ([workspace.package].version);
+# maturin reads it from there because `version` is declared dynamic here.
+dynamic = ["version"]
 description = "Rust-backed 2D phase unwrapper for InSAR (`import whirlwind`)"
 requires-python = ">=3.11"
 authors = [{ name = "Scott Staniewicz", email = "scott.stanie@utexas.edu" }]
