@@ -3,8 +3,12 @@ single_tile_reoptimize=True) on ONE GUNW frame, timed, printing the SAME per-com
 line as run_native_one.py so the 4-way sweep scores it identically. snaphu-py
 writes temp files (no in-memory GDAL dataset), avoiding the tophu MEM/GA_Update bug.
 
-Usage: python scripts/snaphu_one.py <h5path>   (base miniforge3 env: has snaphu 0.4.1)
-Wrap in `/usr/bin/time -l` for peak RSS.
+Usage: python scripts/snaphu_one.py <h5path> [ntiles=1] [nproc]
+  ntiles=N -> NxN tiles (+reoptimize); nproc = max concurrent tile workers
+  (default: cpu_count for tiled, 1 for single-tile). NPROC is the dominant peak-
+  memory lever: fewer concurrent tiles -> lower peak. (base miniforge3: snaphu 0.4.1)
+Wrap in `scripts/peak_rss_tree.py` (tree-aware) for peak RSS; /usr/bin/time -l
+undercounts the concurrent tile workers.
 """
 
 import sys
@@ -34,16 +38,21 @@ coh_in = np.where(mask, np.clip(np.nan_to_num(coh), 0, 1), 0.0).astype(np.float3
 # single_tile_reoptimize is a no-op at ntiles=(1,1) (snaphu/_unwrap.py gates it on
 # `not single_tile`), so the 1-tile run is a clean single pass; at 9x9 it is
 # SNAPHU's production path (tiled solve + a whole-image reoptimize pass).
-overlap = 0 if ntiles == 1 else 200
-# Single-tile is inherently one graph (1 core). The tiled PRODUCTION path
-# parallelizes tiles, so give it the cores it would actually use (whirlwind itself
-# runs 12 threads) - handicapping SNAPHU's production config would be unfair.
-nproc = 1 if ntiles == 1 else (os.cpu_count() or 8)
+overlap = 0 if ntiles == 1 else 400
+# Single-tile is inherently one graph (1 core). The tiled path parallelizes
+# tiles; default to all cores (whirlwind itself runs 12 threads). Optional 3rd
+# arg overrides NPROC - the dominant peak-memory lever, since each concurrent
+# tile worker holds its own (tile + overlap) buffers simultaneously.
+nproc = (
+    int(sys.argv[3])
+    if len(sys.argv) > 3
+    else (1 if ntiles == 1 else (os.cpu_count() or 8))
+)
 t0 = time.perf_counter()
 unw, cc = snaphu.unwrap(
     ig,
     coh_in,
-    nlooks=16.0,
+    nlooks=36.0,
     cost="smooth",
     init="mcf",
     mask=mask,
@@ -60,6 +69,6 @@ pc = percomp_match(unw, prod, wrapped, pcc, valid)
 tag = "snaphu" if ntiles == 1 else f"snaphu{ntiles}x{ntiles}"
 print(
     f"{frame}: {tag:10s} {dt:6.1f}s  per-comp-match-vs-prod={pc * 100:5.1f}%  "
-    f"ncc={ncc}  shape={ig.shape}",
+    f"ncc={ncc}  nproc={nproc}  shape={ig.shape}",
     flush=True,
 )

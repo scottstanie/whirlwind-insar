@@ -97,6 +97,9 @@ impl Network {
     ) -> Self {
         let mut net = Self::new_with_mask_and_ground(g, residues, costs, mask, None);
         net.reuse_mode = true;
+        // flow_count is only used in reuse/convex mode (see arc_flow/push_unit),
+        // so the shared constructor leaves it empty; allocate it here.
+        net.flow_count = vec![0_i32; net.num_forward()];
         net
     }
 
@@ -139,6 +142,9 @@ impl Network {
         let placeholder_costs = vec![0_i32; g.num_forward];
         let mut net = Self::new_with_mask_and_ground(g, residues, &placeholder_costs, mask, None);
         net.convex_mode = true;
+        // flow_count is only used in reuse/convex mode; the shared constructor
+        // leaves it empty, so allocate it here for the convex solve.
+        net.flow_count = vec![0_i32; net.num_forward()];
         net.offsets = offsets.to_vec();
         net.weights = weights.to_vec();
         // Unit-capacity MCF starts reverse arcs as `is_saturated = true` so
@@ -225,7 +231,9 @@ impl Network {
             potential: vec![0_i64; num_nodes],
             cost_fwd: costs,
             is_saturated: sat,
-            flow_count: vec![0_i32; nf],
+            // Empty in linear MCF mode (never read; see arc_flow/push_unit). The
+            // reuse/convex constructors allocate it after flipping their flag.
+            flow_count: Vec::new(),
             reuse_mode: false,
             convex_mode: false,
             offsets: Vec::new(),
@@ -375,7 +383,9 @@ impl Network {
             potential: vec![0_i64; n_nodes_total],
             cost_fwd,
             is_saturated: sat,
-            flow_count: vec![0_i32; nf_total],
+            // Empty in linear MCF mode (never read; see arc_flow/push_unit). The
+            // reuse/convex constructors allocate it after flipping their flag.
+            flow_count: Vec::new(),
             reuse_mode: false,
             convex_mode: false,
             offsets: Vec::new(),

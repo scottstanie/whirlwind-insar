@@ -24,6 +24,7 @@ site/
 scripts/out/
 *.npy
 *.npz
+mprofile_*.dat
 
 # Research scratch kept off the public repo
 paper/
