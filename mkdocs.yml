@@ -4,10 +4,9 @@
 # Serve:    uv run mkdocs serve           # http://127.0.0.1:8000/
 #
 # The mkdocs site is self-contained under docs/ (no symlinks). The repo's
-# canonical README and ATBDs live at the repo root for GitHub rendering; this
+# canonical README and ATBD live at the repo root for GitHub rendering; this
 # site links out to them from docs/index.md. The reference pages
-# (PERFORMANCE.md, TILING_DESIGN.md, ENV_VARS.md) and figures/ are real files
-# in docs/.
+# (PERFORMANCE.md, ENV_VARS.md) and figures/ are real files in docs/.
 
 site_name: whirlwind-rs
 site_description: >-
@@ -33,7 +32,6 @@ nav:
   - NISAR comparison: NISAR_SUMMARY.md
   - Performance: PERFORMANCE.md
   - Environment variables: ENV_VARS.md
-  - Tiling design: TILING_DESIGN.md
 
 theme:
   name: material

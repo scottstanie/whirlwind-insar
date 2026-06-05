@@ -638,7 +638,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
 ### 9.5 Limitations and Assumptions
 
 1. **2D only**: this ATBD covers the 2D unwrap; the 3D/time-series pipeline is in
-   `ATBD-3d.md`.
+   `experiments/ATBD-3d.md`.
 2. **Statistical model**: assumes the Carballo/Lee cost model fits the data, and
    an accurate effective number of looks.
 3. **Filter size**: 7x7 smoothing (Carballo's original used 5x5).

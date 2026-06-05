@@ -13,5 +13,4 @@ Start with the [project README](https://github.com/scottstanie/whirlwind-insar/b
 
 ## Deeper references
 
-- [Tiling design](TILING_DESIGN.md): historical design notes for the experimental tiled path. The shipped default is not the tiled path.
 - [Full ATBD](https://github.com/scottstanie/whirlwind-insar/blob/main/ATBD-whirlwind.md): long-form derivation and implementation details.
