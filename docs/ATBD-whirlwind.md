@@ -4,7 +4,7 @@
 
 Whirlwind is a 2D minimum-cost-flow phase unwrapper for interferometric synthetic aperture radar (InSAR) data. It computes residues from wrapped phase, assigns statistical edge costs from coherence and local phase-gradient information, solves a network-flow problem, and integrates the corrected gradients back into an unwrapped phase image.
 
-This document is the long-form technical reference. For the short public reading path, start with [docs/ALGORITHM.md](docs/ALGORITHM.md), [docs/NISAR_SUMMARY.md](docs/NISAR_SUMMARY.md), and [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+This document is the long-form technical reference. For the short public reading path, start with [ALGORITHM.md](ALGORITHM.md), [NISAR_SUMMARY.md](NISAR_SUMMARY.md), and [PERFORMANCE.md](PERFORMANCE.md).
 
 The public Python call is `whirlwind.unwrap(igram, corr, nlooks, mask=mask)`. It uses the 2D coherence-cost path and returns both unwrapped phase and connected-component labels. Other solver variants appear in this document where they matter for implementation context, but they are not the first-use API.
 
