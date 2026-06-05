@@ -6,7 +6,7 @@ Whirlwind is a 2D minimum-cost-flow phase unwrapper for InSAR interferograms. Th
 unw, conncomp = whirlwind.unwrap(igram, corr, nlooks, mask=mask)
 ```
 
-The input interferogram is complex. Whirlwind unwraps `angle(igram)` and uses `corr`, `nlooks`, and the optional valid-pixel mask to decide where integer 2pi cycle corrections are most likely.
+The input interferogram is complex. Whirlwind unwraps `angle(igram)` and uses `corr`, `nlooks`, and the optional valid-pixel mask to choose integer 2pi cycle corrections.
 
 ## Pipeline
 
@@ -16,7 +16,7 @@ The input interferogram is complex. Whirlwind unwraps `angle(igram)` and uses `c
 4. Solve a minimum-cost-flow problem that pairs positive and negative residues through low-cost paths.
 5. Integrate the corrected gradients through the valid mask.
 6. Grow SNAPHU-style connected-component labels from the same cost model.
-7. If the valid mask has disconnected regions, apply a bridge post-pass to set relative 2pi offsets when the coarse-scale evidence is clear.
+7. If the valid mask has disconnected regions, apply a bridge post-pass to set relative 2pi offsets when a coarse unwrap connects the regions.
 
 ## Why minimum-cost flow
 
@@ -46,10 +46,10 @@ The unwrapped phase is congruent with the wrapped input modulo 2pi. Connected co
 
 ## Bridge post-pass
 
-If a valid mask splits the scene into disconnected regions, the relative 2pi offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region and then uses a coarse connected view of the scene to choose the relative integer offset when the evidence is clear. This fixes narrow disconnected-region cases such as the A_025 river example in the NISAR comparison.
+If a valid mask splits the scene into disconnected regions, the relative 2pi offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region and then uses a coarse connected unwrap to choose the relative integer offset when the coarse grid connects the regions. This fixes narrow disconnected-region cases such as the A_025 river example in the NISAR comparison.
 
 ## Notes for developers
 
 The core implementation lives in `crates/whirlwind-core`. The Python extension lives in `crates/whirlwind-py`, and the top-level Python wrapper is in `python/whirlwind`.
 
-For the long-form derivation and implementation details, see the technical ATBD: [ATBD-whirlwind.md](../ATBD-whirlwind.md).
+For the long-form derivation and implementation details, see the technical ATBD: [ATBD-whirlwind.md](ATBD-whirlwind.md).

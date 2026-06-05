@@ -32,6 +32,8 @@ nav:
   - NISAR comparison: NISAR_SUMMARY.md
   - Performance: PERFORMANCE.md
   - Environment variables: ENV_VARS.md
+  - Deeper references:
+      - Full ATBD: ATBD-whirlwind.md
 
 theme:
   name: material

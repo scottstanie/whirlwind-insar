@@ -19,9 +19,9 @@ All numbers on this page were measured with release builds on an Apple M-series 
 
 ## Why it is faster than SNAPHU
 
-Whirlwind and SNAPHU solve the same kind of problem: residues, statistical edge costs, a minimum-cost flow, then integration. The speed difference is in how the flow problem is built and solved, not in solving an easier problem, and there is no measured quality cost on the NISAR frames.
+Whirlwind and SNAPHU follow the same broad structure: residues, statistical edge costs, minimum-cost flow, then integration. The speed difference comes from how the flow problem is represented and solved.
 
-The main reason is the cost model. SNAPHU uses nonlinear, flow-dependent statistical costs, which make a heavier network to solve. Whirlwind uses a fixed linear Carballo (Lee 1994) cost with a capacity-1 flow, which is a lighter network with the same residue-pairing structure. On top of that, the shortest-path inner loop uses a tuned Dial-bucket Dijkstra. The speedup is mostly serial work: switching from 1 thread to 12 is only about 1.2 to 1.3 times faster, and a single thread is still around 13 times faster than single-tile SNAPHU.
+The main reason is the cost model. SNAPHU uses nonlinear, flow-dependent statistical costs, which make a heavier network to solve. Whirlwind uses a fixed linear Carballo (Lee 1994) cost with a capacity-1 flow, so the network is lighter while keeping the same residue-pairing structure. The shortest-path inner loop also uses a tuned Dial-bucket Dijkstra. The speedup is mostly serial work: switching from 1 thread to 12 is only about 1.2 to 1.3 times faster, and a single thread is still around 13 times faster than single-tile SNAPHU.
 
 PHASS is faster than whirlwind (roughly 2 to 4 times) because it is a different class of algorithm: it grows regions with quality-guided cuts instead of solving a global residue-balanced flow. That is cheaper but lower quality, which is why PHASS agrees less with the production SNAPHU unwrap on several frames in the [NISAR comparison](NISAR_SUMMARY.md).
 

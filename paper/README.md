@@ -15,8 +15,8 @@ TeX Live / MacTeX installs.
 
 ## Source of truth for content
 
-The repo-root [`ATBD-3d.md`](../ATBD-3d.md) is the working long-form
-document; this letter is a compressed view focused on the publishable
+The experimental [`ATBD-3d.md`](../experiments/ATBD-3d.md) note is the working long-form
+document for this draft; this letter is a compressed view focused on the publishable
 claims:
 
 1. CRLB-weighted arc cost replacing Lee coherence (§II-A here, §4 of the ATBD).
@@ -29,7 +29,7 @@ Keep the two in sync when claims change.
 ## Figures
 
 Copies of the three figures live in `paper/figures/`, mirrored from
-`docs/figures/` so the LaTeX build is self-contained. Regenerate the
+the generated figure outputs so the LaTeX build is self-contained. Regenerate the
 sources with:
 
 - `scripts/reproduce.sh --full` - `fig_palos_verdes_full_wrapped_vs_unwrapped.png`

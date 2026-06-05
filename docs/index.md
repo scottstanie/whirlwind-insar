@@ -13,4 +13,4 @@ Start with the [project README](https://github.com/scottstanie/whirlwind-insar/b
 
 ## Deeper references
 
-- [Full ATBD](https://github.com/scottstanie/whirlwind-insar/blob/main/ATBD-whirlwind.md): long-form derivation and implementation details.
+- [Full ATBD](ATBD-whirlwind.md): long-form derivation and implementation details.

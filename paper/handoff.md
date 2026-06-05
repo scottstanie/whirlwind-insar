@@ -26,7 +26,7 @@ of each line of investigation.
 ## 2026-06-03 update: single-tile Carballo parity + the SSP-runtime saga
 
 Canonical, code-verified status + benchmark table now lives in
-**`ATBD-whirlwind.md` §9.6**. This section is the *don't-repeat* log for the
+**`docs/ATBD-whirlwind.md` §9.6**. This section is the *don't-repeat* log for the
 several circles we burned getting there.
 
 **What now works (verified).** Single-tile `unwrap_linear` matches Python

@@ -2,7 +2,7 @@
 
 Fast Rust-backed 2D InSAR phase unwrapping with Python bindings.
 
-A minimum-cost-flow unwrapper that reaches SNAPHU-comparable quality several times faster, returning the unwrapped phase and connected-component labels from a single solve. See the [NISAR comparison](docs/NISAR_SUMMARY.md) for benchmarks.
+Whirlwind unwraps a complex interferogram and returns both unwrapped phase and connected-component labels. The [NISAR comparison](docs/NISAR_SUMMARY.md) shows agreement with production SNAPHU on 2pi ambiguities, with lower runtime in the tested scenes.
 
 ## Quickstart
 
