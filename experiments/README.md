@@ -17,6 +17,10 @@ and the documentation under [`docs/`](../docs).
   [NISAR comparison](../docs/NISAR_SUMMARY.md).
 - [ATBD-3d.md](ATBD-3d.md): the 3D / time-series (CRLB) algorithm basis. The 3D
   path is experimental and not shipped.
+- [proto_tile_linear.py](proto_tile_linear.py): a prototype of memory-bounded
+  tiling that stitches independent single-tile solves with the bridge
+  integer-gauge idea over tile overlaps. This is the approach a future tiling
+  effort would likely start from. It is a prototype, not part of the package.
 
 The deeper, dated research write-ups (cost-model experiments, pyramid aliasing,
 the why-whole-image-runs-away analysis, and the like) live under
