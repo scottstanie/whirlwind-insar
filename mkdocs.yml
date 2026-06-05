@@ -3,10 +3,11 @@
 # Build:    uv run mkdocs build           # writes ./site/
 # Serve:    uv run mkdocs serve           # http://127.0.0.1:8000/
 #
-# The mkdocs site is self-contained under docs/ (no symlinks). The repo's
-# canonical README and ATBD live at the repo root for GitHub rendering; this
-# site links out to them from docs/index.md. The reference pages
-# (PERFORMANCE.md, ENV_VARS.md) and figures/ are real files in docs/.
+# The mkdocs site is self-contained under docs/ (no symlinks). The README lives
+# at the repo root for GitHub rendering; the site links out to it from
+# docs/index.md. The reference pages (ALGORITHM.md, NISAR_SUMMARY.md,
+# PERFORMANCE.md, ENV_VARS.md, ATBD-whirlwind.md) and figures/ are real files
+# in docs/.
 
 site_name: whirlwind-rs
 site_description: >-
@@ -33,7 +34,7 @@ nav:
   - Performance: PERFORMANCE.md
   - Environment variables: ENV_VARS.md
   - Deeper references:
-      - Full ATBD: https://github.com/scottstanie/whirlwind-insar/blob/main/ATBD-whirlwind.md
+      - Full ATBD: ATBD-whirlwind.md
 
 theme:
   name: material
