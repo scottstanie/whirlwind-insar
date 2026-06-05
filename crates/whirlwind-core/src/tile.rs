@@ -384,7 +384,8 @@ pub fn unwrap_tiled(
     // whirlwind's linear cost mis-routes through noisy phase; coherently
     // down-looking x`multilook` suppresses that noise, after which the SAME
     // tiled+anchor+cascade pipeline reaches SNAPHU quality. We tile the coarse
-    // (a whole-image coarse solve still has residual runaway), then upsample.
+    // (a whole-image coarse solve still has residual runaway), then transfer
+    // the coarse integer-cycle field onto the full-resolution wrapped phase.
     if multilook > 1 {
         let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, multilook);
         let (cm, cn) = cig.dim();
@@ -401,7 +402,27 @@ pub fn unwrap_tiled(
             cov,
             1,
         )?;
-        return Ok(upsample_blockrep(&coarse, multilook, m, n));
+        // Transfer ambiguities (cf. dolphin `transfer_ambiguities`): the coarse
+        // solve only fixes which 2π cycle each block sits on; every fine pixel
+        // keeps its own wrapped value via `K = round((coarse - wrapped)/2π)`,
+        // `unw = wrapped + 2π·K`. This recovers full-resolution detail wherever
+        // the coarse cycle is right, instead of the old block-constant output.
+        // (Fringes finer than the block still alias under the downlook.) Masked
+        // / coarse-NaN pixels stay NaN, matching `integrate_with_mask`.
+        let coarse_up = upsample_blockrep(&coarse, multilook, m, n);
+        let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
+        for i in 0..m {
+            for j in 0..n {
+                let est = coarse_up[(i, j)];
+                let valid = mask.map(|mk| mk[(i, j)]).unwrap_or(true) && igram[(i, j)].norm() > 0.0;
+                if est.is_finite() && valid {
+                    let w = igram[(i, j)].arg();
+                    let k = ((est - w) / TAU).round();
+                    out[(i, j)] = w + TAU * k;
+                }
+            }
+        }
+        return Ok(out);
     }
     if tile_size >= m && tile_size >= n {
         // Single whole-image solve. Honor WHIRLWIND_TILE_SOLVER like the tiled

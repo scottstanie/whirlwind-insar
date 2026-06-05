@@ -192,18 +192,20 @@ def unwrap(
         no regression elsewhere. Disable with ``bridge=False`` or
         ``WHIRLWIND_NO_BRIDGE=1``.
     multilook : int, default 1
-        Resolution-reduction factor for a coarse-but-robust solve. When ``> 1``,
-        the scene is NOT solved per-pixel: the complex interferogram is
-        coherently averaged into ``multilook x multilook`` blocks (suppressing
-        the noise the linear cost otherwise mis-routes through), that smaller
-        coarse frame is unwrapped, and its result is block-replicated back to
-        full size. The output is therefore piecewise-constant within each
-        ``multilook x multilook`` block - fringes finer than the block scale are
-        smoothed away and are *not* recovered. It trades fine detail for speed
-        (an ``multilook²``-times-smaller solve) and noise robustness, so it
-        helps on noisy / moderate-coherence scenes (e.g. Sentinel-1) where a
-        full-resolution solve mis-routes, but leave it at ``1`` for clean scenes
-        or when fine fringes matter. (Routes through the opt-in tiled path.)
+        Coarse-solve-then-transfer factor for noisy scenes. When ``> 1``, the
+        complex interferogram is coherently averaged into ``multilook x
+        multilook`` blocks (suppressing the noise the linear cost otherwise
+        mis-routes through) and that smaller, smoother frame is unwrapped to
+        decide which 2π cycle each block sits on. The coarse integer-cycle field
+        is then transferred back onto the full-resolution wrapped phase via
+        ``k = round((coarse_up - wrapped) / 2π)``; ``unw = wrapped + 2π·k``, so
+        the output keeps every per-pixel wrapped value and is not
+        block-constant; only the integer cycle is borrowed from the coarse
+        solve. Detail finer than the block scale that genuinely aliases under
+        the downlook is the one thing lost. Use it for noisy / moderate-
+        coherence scenes (e.g. Sentinel-1) where a full-resolution solve
+        mis-routes; leave it at ``1`` for clean scenes. (Routes through the
+        opt-in tiled path.)
     goldstein_alpha : float, default 0.0
         Goldstein adaptive-filter strength in ``[0, 1]``. ``0`` (default)
         disables filtering; a typical "on" value is ``0.7``.
@@ -245,7 +247,7 @@ def unwrap(
         Maximum number of connected components to keep (largest first).
     tile_size : int, default 0
         ``0`` uses the verified single-tile solver (whole image). A value ``≥ 4``
-        (with ``tile_overlap ≥ 2``) opts into the **experimental, unvalidated**
+        (with ``tile_overlap ≥ 2``) opts into the experimental, unvalidated
         tiled pipeline at that tile size - it can produce seam artifacts on
         fragmented scenes and is not part of the validated results.
     tile_overlap : int, default 0
