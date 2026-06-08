@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
@@ -33,6 +32,12 @@ from ._native import (
     wrap_phase,
 )
 from ._native import _unwrap_native, _unwrap_with_costs, label_components
+from ._bridge import _bridge_components
+
+# `interpolate` is re-exported above as the public native binding. Alias it so
+# the `interpolate=` keyword argument inside unwrap() (which shadows the name in
+# that scope) can still reach the function.
+_interpolate = interpolate
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -147,6 +152,12 @@ def unwrap(
     *,
     bridge: bool = True,
     downsample: int = 1,
+    interpolate: bool = False,
+    interp_cutoff: float = 0.5,
+    interp_num_neighbors: int = 20,
+    interp_max_radius: int = 51,
+    interp_min_radius: int = 0,
+    interp_alpha: float = 0.75,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -206,6 +217,28 @@ def unwrap(
         1 for clean scenes. Note this coherently averages an existing
         interferogram, which is not the same as forming a multilooked
         interferogram from the SLCs.
+    interpolate : bool, default False
+        Spiral persistent-scatterer interpolation pre-pass (the Rust port of
+        dolphin's ``interpolation.interpolate``, exposed standalone as
+        :func:`interpolate`). When True, every valid pixel whose coherence is
+        below ``interp_cutoff`` has its phase replaced by a Gaussian
+        distance-weighted average of the nearest high-coherence pixels' unit
+        phasors before the solve. Like ``goldstein_alpha``, the fill only INFORMS
+        the MCF: the integer cycle field it produces is applied back to the
+        original wrapped phase, so every per-pixel value the caller passed in is
+        preserved. Useful for scenes with isolated low-coherence speckle that
+        seeds spurious residues.
+    interp_cutoff : float, default 0.5
+        Coherence below which a valid pixel is interpolated (only used when
+        ``interpolate`` is True). ``corr`` is used as the weight map.
+    interp_num_neighbors : int, default 20
+        Number of nearest high-coherence pixels averaged per interpolated pixel.
+    interp_max_radius : int, default 51
+        Maximum search radius in pixels for the concentric-circle neighbor search.
+    interp_min_radius : int, default 0
+        Minimum search radius in pixels; closer neighbors are skipped.
+    interp_alpha : float, default 0.75
+        Gaussian distance-weighting falloff for the neighbor average.
     goldstein_alpha : float, default 0.0
         Goldstein adaptive-filter strength in ``[0, 1]``. 0 (default) disables
         filtering; a typical "on" value is 0.7. When enabled, the filter only
@@ -275,45 +308,62 @@ def unwrap(
     if conncomp_cycle_prob is not None:
         cost_threshold = cost_threshold_from_cycle_prob(conncomp_cycle_prob)
 
-    if goldstein_alpha <= 0:
-        unw, cc = _unwrap_native(
-            igram,
-            corr,
-            nlooks,
-            mask=mask,
-            tile_size=0,
-            tile_overlap=0,
-            multilook=downsample,
-            cost_threshold=cost_threshold,
-            min_size_px=min_size_px,
-            max_ncomps=max_ncomps,
+    # Build the phase fed to the MCF. Interpolation and Goldstein filtering both
+    # only INFORM the solver; the integer 2π·k field they produce is transferred
+    # back onto the ORIGINAL wrapped phase below, so every per-pixel value the
+    # caller passed in is preserved.
+    ig_solve = igram
+    if interpolate:
+        # Spiral PS interpolator: fill each valid pixel whose coherence is below
+        # interp_cutoff from a Gaussian distance-weighted average of nearby
+        # high-coherence phasors. `corr` is the weight map.
+        weights = np.clip(np.nan_to_num(corr), 0.0, 1.0).astype(np.float32)
+        ig_solve = np.ascontiguousarray(
+            _interpolate(
+                ig_solve,
+                weights,
+                interp_cutoff,
+                interp_num_neighbors,
+                interp_max_radius,
+                interp_min_radius,
+                interp_alpha,
+            ),
+            dtype=np.complex64,
         )
-    else:
-        ig_filt = goldstein(igram, alpha=goldstein_alpha, psize=goldstein_psize)
+    if goldstein_alpha > 0:
+        ig_solve = goldstein(ig_solve, alpha=goldstein_alpha, psize=goldstein_psize)
+    if ig_solve is not igram:
+        # Pre-pass produced a fresh array; zero masked pixels so the solver sees
+        # the same nodata convention as the original phase.
+        ig_solve = np.array(ig_solve, dtype=np.complex64, copy=True)
         if mask is not None:
-            ig_filt = ig_filt.copy()
-            ig_filt[~mask] = 0
-        unw_filt, cc = _unwrap_native(
-            ig_filt,
-            corr,
-            nlooks,
-            mask=mask,
-            tile_size=0,
-            tile_overlap=0,
-            multilook=downsample,
-            cost_threshold=cost_threshold,
-            min_size_px=min_size_px,
-            max_ncomps=max_ncomps,
-        )
-        # Transfer the integer 2π·k field from the filtered unwrap onto the
-        # *original* wrapped phase, rounding against the original (not the
-        # filtered) phase to avoid the dolphin-#364 artefact:
-        # any pixel where Goldstein moved phase across the ±π discontinuity
-        # would otherwise pick up a spurious ±2π cycle, producing visible
-        # outlines along fringe boundaries.
+            ig_solve[~mask] = 0
+
+    unw_solve, cc = _unwrap_native(
+        ig_solve,
+        corr,
+        nlooks,
+        mask=mask,
+        tile_size=0,
+        tile_overlap=0,
+        multilook=downsample,
+        cost_threshold=cost_threshold,
+        min_size_px=min_size_px,
+        max_ncomps=max_ncomps,
+    )
+
+    if ig_solve is igram:
+        unw = np.asarray(unw_solve, dtype=np.float32)
+    else:
+        # Transfer the integer 2π·k field from the interpolated/filtered unwrap
+        # onto the *original* wrapped phase, rounding against the original (not
+        # the modified) phase to avoid the dolphin-#364 artefact: any pixel where
+        # the pre-pass moved phase across the ±π discontinuity would otherwise
+        # pick up a spurious ±2π cycle, producing visible outlines along fringe
+        # boundaries.
         tau = np.float32(2 * np.pi)
         phase_orig = np.angle(igram).astype(np.float32)
-        k = np.round((unw_filt - phase_orig) / tau).astype(np.float32)
+        k = np.round((np.asarray(unw_solve) - phase_orig) / tau).astype(np.float32)
         unw = (phase_orig + tau * k).astype(np.float32)
         if mask is not None:
             unw[~mask] = 0.0
@@ -327,94 +377,6 @@ def unwrap(
         cc = np.asarray(cc).copy()
         cc[np.clip(np.nan_to_num(corr), 0.0, 1.0) < conncomp_coh_floor] = 0
     return unw, cc
-
-
-def _bridge_components(
-    unw: "NDArray[np.float32]",
-    igram: "NDArray[np.complex64]",
-    corr: "NDArray[np.float32]",
-    nlooks: float,
-    mask: "NDArray[np.bool_] | None",
-    *,
-    multilook_factor: int = 8,
-    gate_frac: float = 0.5,
-    amb_band: float = 0.25,
-    min_px: int = 500,
-) -> "NDArray[np.float32]":
-    """Integration-component gauge bridging post-pass (see ``unwrap(bridge=)``).
-
-    The free 2π gauge is between INTEGRATION components - the connected
-    components of the valid mask, which is the partition the MCF integrator seeds
-    independently - NOT the (finer) connected-component labels. Each region is
-    re-levelled to a coherent xL coarse anchor, with shifts taken *relative to
-    the largest region*, gated to regions the coarse scale connects, and vetoed
-    unless the offset is cleanly integer. A single-region (or coherently
-    connected) frame yields no shifts and is byte-identical.
-    """
-    tau = 2.0 * np.pi
-    L = multilook_factor
-    m, n = unw.shape
-    if mask is None:
-        mask = igram != 0  # masked convention = 0+0j (or angle 0)
-    mask = np.ascontiguousarray(mask, dtype=bool)
-
-    # Integration components = 4-connected components of the valid mask (native
-    # BFS labeller, matching integrate_with_mask's partition; no scipy needed).
-    region, n_region = label_components(mask)
-    if n_region <= 1:
-        return unw  # single integration component -> structural no-op
-
-    def block_mean(a):
-        mm, nn = a.shape[0] // L, a.shape[1] // L
-        return a[: mm * L, : nn * L].reshape(mm, L, nn, L).mean(axis=(1, 3))
-
-    def upsample(a):
-        up = np.kron(a, np.ones((L, L), a.dtype))
-        return np.pad(
-            up,
-            ((0, max(0, m - up.shape[0])), (0, max(0, n - up.shape[1]))),
-            mode="edge",
-        )[:m, :n]
-
-    # Coherent xL coarse anchor: unit-magnitude complex (angle 0 in masked
-    # pixels under either masking convention), block-averaged, unwrapped whole so
-    # its single integration BFS gives one consistent gauge across the banks.
-    wrapped = np.angle(igram).astype(np.float32)
-    cig = block_mean(np.exp(1j * wrapped).astype(np.complex64)).astype(np.complex64)
-    ccoh = block_mean(np.clip(np.nan_to_num(corr), 0, 1).astype(np.float32)).astype(
-        np.float32
-    )
-    cmask = np.ascontiguousarray(block_mean(mask.astype(np.float32)) > 0.4)
-    cunw, _ = unwrap(cig, ccoh, float(nlooks) * L * L, cmask, bridge=False)
-    anchor = upsample(np.asarray(cunw, np.float32))
-    coarse_region = upsample(label_components(cmask)[0].astype(np.int64))
-
-    sizes = np.bincount(region.ravel())
-    ref = int(np.argmax(sizes[1:]) + 1)  # largest integration component = reference
-    ref_coarse = np.bincount(coarse_region[region == ref]).argmax()
-    both = mask & np.isfinite(anchor) & np.isfinite(unw)
-    ref_reg = (region == ref) & both
-    ref_off = np.median((anchor[ref_reg] - unw[ref_reg]) / tau)
-
-    out = unw.copy()
-    for lab in range(1, n_region + 1):
-        if lab == ref or sizes[lab] < min_px:
-            continue
-        reg = (region == lab) & both
-        if reg.sum() < min_px:
-            continue
-        # data-support gate: region must share the reference's coarse component.
-        if np.mean(coarse_region[reg] == ref_coarse) < gate_frac:
-            continue
-        rel = (
-            np.median((anchor[reg] - unw[reg]) / tau) - ref_off
-        )  # relative to reference
-        s = int(np.rint(rel))
-        if abs(rel - s) > amb_band:  # ambiguity-band veto -> decline (convention)
-            continue
-        if s != 0:
-            out[region == lab] += tau * s
-    return out
 
 
 # goldstein() is the Rust-backed native binding re-exported from ``._native``.

@@ -57,24 +57,10 @@ runtime). The single-process engines (Whirlwind, PHASS, ICU, single-tile SNAPHU)
 are one process, so their `nisar_4way_results.csv` figures are unaffected by this
 distinction.
 
-## A_025 river case
-
-A low-coherence river splits A_025 into disconnected land regions. The MCF solve can unwrap each region internally but does not observe the relative 2pi offset between disconnected valid regions. Whirlwind applies a bridge post-pass that uses a coarse connected view of the scene to set those relative offsets when the integer shift is clear. On A_025 that changes the agreement from 58 percent to 99.99 percent without changing the other 12 frames in this sweep.
-
-![A_025 bridge before/after](figures/A_025_bridge.png)
-
-## Algorithm in brief
-
-1. Compute residues from the wrapped phase.
-2. Build Carballo/Lee coherence-based edge costs.
-3. Solve a minimum-cost-flow problem to pair residues through low-cost paths.
-4. Integrate the corrected gradients through the valid mask.
-5. Return the unwrapped phase and SNAPHU-style connected-component labels.
-
-See [Algorithm notes](ALGORITHM.md) for the main algorithm description and [Performance notes](PERFORMANCE.md) for synthetic timing and memory details.
-
 ## Reproduce
 
 - 4-way sweep: `scripts/sweep_all_unwrappers.sh`
-- Bridge before/after sweep: `scripts/bench_bridge_all.py`
-- A_025 bridge diagnostics: `scripts/proto_bridge_a025.py`, `scripts/diag_bridge_partition.py`
+- Per-frame 6-panel comparisons: `scripts/plot_nisar_per_frame.py`
+- Headline figure: `scripts/plot_nisar_summary.py`
+
+See [Algorithm notes](ALGORITHM.md) for how the unwrapper works and [Performance notes](PERFORMANCE.md) for synthetic timing and memory details.

@@ -25,6 +25,16 @@ OUT = (
     if len(sys.argv) > 2
     else "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_final/nisar_summary.png"
 )
+# The 3x3-tiled SNAPHU runtime+memory come from a SEPARATE tree-sampled sweep
+# (scripts/sweep_snaphu_tiled_mem.sh): /usr/bin/time in the main sweep undercounts
+# SNAPHU's forked tile workers, so results.csv's `snaphu9x9` peak RSS (~3 GB) is a
+# per-process undercount. The tree-summed numbers (~6-13 GB, the figures the doc
+# quotes) live in this CSV under engine `snaphu_par`.
+TILED_CSV = (
+    sys.argv[3]
+    if len(sys.argv) > 3
+    else "/Users/staniewi/Documents/Learning/snaphu_3x3_recheck/snaphu_tiled.csv"
+)
 
 pc = defaultdict(dict)  # frame -> engine -> percomp
 rt = defaultdict(dict)  # frame -> engine -> runtime
@@ -37,6 +47,30 @@ with open(CSV) as f:
             mem[row["frame"]][row["engine"]] = float(row["peak_rss_bytes"]) / 1e9
         except (ValueError, KeyError):
             continue
+
+# Inject the tree-summed 3x3-tiled SNAPHU as engine `snaphu3x3`: runtime + peak
+# memory from the tree-sampled recheck, per-comp carried over from the in-sweep
+# tiled run (`snaphu9x9`, falling back to single-tile `snaphu`) since the tiled
+# result self-matches the production SNAPHU unwrap regardless of how it's measured.
+try:
+    tiled_file = open(TILED_CSV)
+except FileNotFoundError:
+    print(f"WARNING: tiled recheck CSV not found ({TILED_CSV}); "
+          "3x3 tiled SNAPHU will be absent from the figure.", flush=True)
+else:
+    with tiled_file as f:
+        for row in csv.DictReader(f):
+            if row.get("engine") != "snaphu_par":
+                continue
+            fr = row["frame"]
+            try:
+                rt[fr]["snaphu3x3"] = float(row["runtime_s"])
+                mem[fr]["snaphu3x3"] = float(row["tree_peak_bytes"]) / 1e9
+            except (ValueError, KeyError):
+                continue
+            src = pc[fr].get("snaphu9x9", pc[fr].get("snaphu"))
+            if src is not None:
+                pc[fr]["snaphu3x3"] = src
 
 frames = sorted(pc)
 # Recognizable / published engines on the headline figure. ww-orig stays in
@@ -88,15 +122,6 @@ ax0.legend(loc="lower left", ncol=len(engines), fontsize=9)
 ax0.set_title(
     "Whirlwind 2D unwrapping - NISAR GUNW 13-frame comparison (quality / runtime / peak memory)"
 )
-if "A_025" in frames:
-    ax0.annotate(
-        "A_025 river:\nbridge fixes 58→100%",
-        xy=(frames.index("A_025"), 100),
-        xytext=(frames.index("A_025"), 38),
-        ha="center",
-        fontsize=9,
-        arrowprops=dict(arrowstyle="->", color="#1f77b4"),
-    )
 
 # Panel 1 - runtime (log).
 for k, (eng, color) in enumerate(engines):
