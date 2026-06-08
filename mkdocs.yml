@@ -31,6 +31,7 @@ nav:
   - Home: index.md
   - Algorithm: ALGORITHM.md
   - NISAR comparison: NISAR_SUMMARY.md
+  - Tuning connected components: CONNCOMP_TUNING.md
   - Performance: PERFORMANCE.md
   - Environment variables: ENV_VARS.md
   - Deeper references:

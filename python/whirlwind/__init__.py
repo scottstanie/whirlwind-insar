@@ -161,7 +161,6 @@ def unwrap(
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
-    conncomp_coh_floor: "float | None" = None,
     min_size_px: int = 100,
     max_ncomps: int = 1024,
     goldstein_alpha: float = 0.0,
@@ -266,11 +265,6 @@ def unwrap(
         lower ``cycle_prob`` is stricter and makes more boundaries; about 2.4e-4
         matches the default. Takes precedence over ``cost_threshold``, but
         ``conncomp_sigma`` wins if both are given.
-    conncomp_coh_floor : float or None, optional
-        After labelling, drop any pixel whose coherence is below this floor to
-        background (label ``0``). Unlike ``cost_threshold``, a coherence floor
-        cuts regardless of the local gradient, so it cleanly removes noisy
-        low-coherence speckle that the cost threshold alone leaves behind.
     min_size_px : int, default 100
         Discard connected components smaller than this many pixels.
     max_ncomps : int, default 1024
@@ -370,12 +364,6 @@ def unwrap(
 
     if bridge:
         unw = _bridge_components(unw, igram, corr, nlooks, mask)
-    if conncomp_coh_floor:
-        # Drop low-coherence pixels from their components (a quality floor):
-        # noisy percolation goes to background predictably, since a coherence
-        # floor - unlike cost_threshold - cuts regardless of the local gradient.
-        cc = np.asarray(cc).copy()
-        cc[np.clip(np.nan_to_num(corr), 0.0, 1.0) < conncomp_coh_floor] = 0
     return unw, cc
 
 
