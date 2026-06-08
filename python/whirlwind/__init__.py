@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
@@ -148,7 +147,6 @@ def unwrap(
     *,
     bridge: bool = True,
     downsample: int = 1,
-    multilook: "int | None" = None,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -196,8 +194,7 @@ def unwrap(
         snaps each region to a coarse 8x-downlooked anchor (shifts taken
         relative to the largest region), only where the coarse scale connects
         the regions and only when the offset rounds cleanly to an integer. A
-        single-region or coherently-connected frame is left unchanged. Disable
-        with ``bridge=False`` or ``WHIRLWIND_NO_BRIDGE=1``.
+        single-region or coherently-connected frame is left unchanged.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
         interferogram is coherently averaged into ``downsample x downsample``
@@ -209,9 +206,6 @@ def unwrap(
         1 for clean scenes. Note this coherently averages an existing
         interferogram, which is not the same as forming a multilooked
         interferogram from the SLCs.
-    multilook : int, optional
-        Deprecated alias for ``downsample``; will be removed in a future
-        release.
     goldstein_alpha : float, default 0.0
         Goldstein adaptive-filter strength in ``[0, 1]``. 0 (default) disables
         filtering; a typical "on" value is 0.7. When enabled, the filter only
@@ -220,9 +214,6 @@ def unwrap(
         preserved.
     goldstein_psize : int, default 64
         Goldstein FFT patch size (only used when ``goldstein_alpha > 0``).
-
-    Other Parameters
-    ----------------
     cost_threshold : int, default 50
         Connected-component boundary threshold in raw cost units. An edge becomes
         a component boundary when its statistical cost is ``<= cost_threshold``.
@@ -259,16 +250,6 @@ def unwrap(
     conncomp : ndarray of uint32, shape ``(m, n)``
         Connected-component labels; ``0`` = background / dropped.
     """
-    if multilook is not None:
-        warnings.warn(
-            "`multilook` is deprecated; use `downsample`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if downsample != 1:
-            raise ValueError("pass only one of `downsample` or `multilook`")
-        downsample = multilook
-
     # NaN inputs are treated as nodata: zero them (so the default mask drops
     # them) and warn, rather than letting a NaN propagate through the solve.
     igram = np.ascontiguousarray(igram, dtype=np.complex64)
@@ -337,11 +318,7 @@ def unwrap(
         if mask is not None:
             unw[~mask] = 0.0
 
-    if bridge and os.environ.get("WHIRLWIND_NO_BRIDGE", "") not in (
-        "1",
-        "true",
-        "True",
-    ):
+    if bridge:
         unw = _bridge_components(unw, igram, corr, nlooks, mask)
     if conncomp_coh_floor:
         # Drop low-coherence pixels from their components (a quality floor):
