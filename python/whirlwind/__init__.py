@@ -201,9 +201,10 @@ def unwrap(
         disconnected pieces (for example two land slabs separated by a
         low-coherence river). The MCF seeds each piece at an arbitrary 2π level,
         so the relative offset between pieces is under-determined. This pass
-        snaps each region to a coarse 8x-downlooked anchor (shifts taken
-        relative to the largest region), only where the coarse scale connects
-        the regions and only when the offset rounds cleanly to an integer. A
+        estimates each region's level from the unwrapped phase at the region
+        boundaries and snaps it to an integer number of cycles, propagated along
+        a minimum spanning tree rooted at the largest region (a pure-numpy port
+        of isce3's NISAR GUNW bridging; see :func:`bridge_components`). A
         single-region or coherently-connected frame is left unchanged.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex

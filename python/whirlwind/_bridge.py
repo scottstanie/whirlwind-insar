@@ -17,11 +17,11 @@ GUNW workflow uses (``isce3.unwrap.bridge_phase.bridge_unwrapped_phase``):
      its descendants - the parent is already corrected when its child is
      processed).
 
-An earlier version compared whole-region medians against a coarse 8x-downlooked
-anchor; that left the two largest regions of A_016 three cycles off (it scored
-the same as no bridging at all). The local-endpoint + MST formulation matches
-isce3 and fixes them. A single-region (or coherently connected) frame yields no
-bridges and is byte-identical.
+Reading the level locally at the boundary (rather than a whole-region median,
+which a residual within-region ramp would bias) and chaining through nearest
+neighbours along the MST are what keep the integer rounding correct. A
+single-region (or coherently connected) frame yields no bridges and is
+byte-identical.
 """
 
 from __future__ import annotations

@@ -122,7 +122,7 @@ The public 2D coherence-cost path has seven stages:
 [4] Min-cost flow:      flow = primal_dual(network(r, c))
 [5] Integration:        unw = integrate(phi, flow, mask)
 [6] Components:         conncomp = components_only(igram, corr, nlooks, mask)
-[7] Bridge post-pass:   set relative 2pi offsets between disconnected valid regions when supported by coarse-scale evidence
+[7] Bridge post-pass:   set relative 2pi offsets between disconnected valid regions from the unwrapped phase at their boundaries
 ```
 
 The required inputs are a complex interferogram `igram`, coherence or correlation `corr`, effective looks `nlooks`, and optionally a boolean valid-pixel `mask`.
@@ -145,7 +145,7 @@ Integration converts integer cycle corrections into an unwrapped phase image. Th
 
 ### 3.5 Bridge post-pass
 
-When a mask splits valid pixels into disconnected regions, the wrapped phase alone does not determine the relative 2pi level between those regions. The bridge post-pass uses a coarse connected view of the scene to choose those offsets when the integer shift is clear. This is described in the implementation notes and benchmarked in the NISAR comparison.
+When a mask splits valid pixels into disconnected regions, the wrapped phase alone does not determine the relative 2pi level between those regions. The bridge post-pass labels the integration regions, builds a minimum spanning tree over the nearest boundary-pixel pairs (rooted at the largest region), and reads each relative offset from the unwrapped phase in a small box at the two bridge endpoints, rounding to an integer number of cycles. It is a pure-numpy port of isce3's NISAR GUNW bridging; see the [bridging notes](BRIDGING.md) and the NISAR comparison benchmark.
 
 ---
 
@@ -709,11 +709,12 @@ beats PHASS on quality on most frames (often by a wide margin, e.g. D_075 88.2 v
 A_025 is the one frame where the default differs structurally: a low-coherence
 river splits it into disconnected slabs whose *relative* $2\pi$ level the MCF
 integrator leaves under-determined. The default-on bridge post-pass (§3.5,
-`unwrap(bridge=True)`) re-levels each integration component to a coarse coherent
-anchor, lifting A_025 from 58 % to 99.99 % with zero regression on the other 12
-frames. The remaining open case is a fully-decorrelated gap too wide for the coarse
-scale to bridge, where the inter-region offset is a labelling convention rather than
-a measurement.
+`unwrap(bridge=True)`) re-levels each integration component from the unwrapped
+phase at the region boundaries (spanning tree rooted at the largest region),
+lifting A_025 from 58 % to 99.99 % with zero regression on the other 12 frames.
+The remaining open case is a fully-decorrelated gap so wide that no boundary pair
+gives a reliable offset, where the inter-region level is a labelling convention
+rather than a measurement.
 
 > **Tiling is not yet validated** on fragmented NISAR scenes (see §9.5 item 4).
 > The single-tile default is the trustworthy reference to measure tiling against.

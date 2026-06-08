@@ -16,7 +16,7 @@ The input interferogram is complex. Whirlwind unwraps `angle(igram)` and uses `c
 4. Solve a minimum-cost-flow problem that pairs positive and negative residues through low-cost paths.
 5. Integrate the corrected gradients through the valid mask.
 6. Grow SNAPHU-style connected-component labels from the same cost model.
-7. If the valid mask has disconnected regions, apply a bridge post-pass to set relative 2pi offsets when a coarse unwrap connects the regions.
+7. If the valid mask has disconnected regions, apply a bridge post-pass to set their relative 2pi offsets from the unwrapped phase at the region boundaries (a spanning tree rooted at the largest region).
 
 ## Why minimum-cost flow
 
@@ -46,7 +46,7 @@ The unwrapped phase is congruent with the wrapped input modulo 2pi. Connected co
 
 ## Bridge post-pass
 
-If a valid mask splits the scene into disconnected regions, the relative 2pi offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region and then uses a coarse connected unwrap to choose the relative integer offset when the coarse grid connects the regions. This fixes narrow disconnected-region cases such as the A_025 river example in the NISAR comparison.
+If a valid mask splits the scene into disconnected regions, the relative 2pi offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region, then builds a minimum spanning tree over the nearest boundary-pixel pairs (rooted at the largest region) and reads the relative level from the unwrapped phase in a small box at each bridge endpoint, rounding it to an integer number of cycles. This is a pure-numpy port of isce3's NISAR GUNW bridging, and fixes narrow disconnected-region cases such as the A_025 river example in the NISAR comparison.
 
 ## Notes for developers
 

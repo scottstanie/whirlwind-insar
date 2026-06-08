@@ -64,10 +64,9 @@ returned byte-identical.
 
 The key choices are using the phase **locally at the region boundaries** (where
 the true cross-void phase difference is sub-cycle) and propagating along a
-**spanning tree** (so far regions chain through near neighbours). An earlier
-whirlwind version compared whole-region medians against a coarse 8×-downlooked
-anchor; that was less robust — on A_016 it left the two largest regions three
-cycles off, scoring identically to no bridging.
+**spanning tree** (so far regions chain through near neighbours). Comparing
+whole-region medians instead is less robust: a residual within-region ramp
+biases the median and the offset rounds to the wrong integer.
 
 ## Results
 
