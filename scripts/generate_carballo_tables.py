@@ -45,11 +45,9 @@ To emit raw little-endian f32 blobs compatible with the current Rust
     python scripts/generate_carballo_tables.py \\
         --out-dir /tmp/carballo_tables --write-rust-bins
 
-Then test those blobs without rebuilding by setting:
-
-    WHIRLWIND_CARBALLO_LUT_DIR=/tmp/carballo_tables
-
-To replace the embedded Rust blobs intentionally:
+To regenerate the embedded Rust blobs (the only way they are consumed - the Rust
+reads the five `.bin` files baked into the binary at build time via
+``include_bytes!`` in ``cost/spline_lut.rs``; rebuild the wheel afterwards):
 
     python scripts/generate_carballo_tables.py \\
         --out-dir /tmp/carballo_tables \\

@@ -264,7 +264,6 @@ The default single-tile `unwrap_linear` uses `compute_carballo_costs_parity`, th
 - **Probabilities** come from embedded, pre-sampled tables read via **trilinear** interpolation (`cost/spline_lut.rs`) - there is no tri-cubic B-spline evaluator in Rust; the original tri-cubic splines were sampled onto a dense grid that the Rust reads directly. The grid is α: 31 uniform pts in $[-\pi,\pi]$; γ: 11 pts $[0,0.1,\dots,1.0]$; $L$: 11 log-spaced pts $[1,\dots,80]$ (clamped at lookup). Tables ship as five little-endian `f32` blobs embedded in the binary: `carballo_grid_phase.bin` (31), `carballo_grid_corr.bin` (11), `carballo_grid_nlooks.bin` (11), `carballo_p0.bin` and `carballo_p1.bin` (each 31·11·11 = 3751). Here $p_0 = P(\Delta k=0)$ and $p_1 = P(\Delta k=\pm1)$, and in general **$p_0 + p_1 \neq 1$**.
 - **Cost** = `round(100 · max(-ln(p_1/p_0), 0))`, with both probabilities floored at `1e-30`. The scale is `100`, *not* the analytical-CDF path's 6.
 - **Masking** zeros the cost only where **both** endpoint pixels are invalid (zero where `mask[a] && mask[b]`); a boundary arc with one valid pixel keeps a nonzero cost.
-- **Override:** setting `WHIRLWIND_CARBALLO_LUT_DIR` to a directory containing the same five `.bin` files replaces the embedded tables at first use (for experiments).
 
 Smoothing (biased 7x7 box), the min-of-endpoints edge coherence, and the four-direction sign convention are identical to the analytical-CDF path (§5.2–5.5).
 

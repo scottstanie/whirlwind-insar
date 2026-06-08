@@ -421,8 +421,7 @@ pub fn compute_carballo_costs(
 /// * Cost zeroed only where **both** endpoint pixels are invalid
 ///   (Python passes `mask=~valid_mask`; zeros where `mask[a] && mask[b]` =
 ///   both-invalid; boundary arcs with one valid pixel retain a nonzero cost)
-/// * p0/p1 probabilities loaded from the embedded ww-orig tables, or from
-///   `WHIRLWIND_CARBALLO_LUT_DIR` when explicitly overridden for experiments.
+/// * p0/p1 probabilities loaded from the embedded ww-orig tables.
 ///
 /// This is intentionally separate from `compute_carballo_costs`, which keeps
 /// the faster analytical LUT used by the tiled/reuse production path.
@@ -488,8 +487,7 @@ pub fn compute_carballo_costs_parity(
         out
     });
 
-    // Use the embedded ww-orig spline tables for p0/p1 by default; experiments
-    // may override them with WHIRLWIND_CARBALLO_LUT_DIR.
+    // Use the embedded ww-orig spline tables for p0/p1.
     let sp_lut = spline_lut::get_or_load();
 
     // DE-DEGENERATION KNOB (`WHIRLWIND_SEA_COST`, default 0 = ww-orig parity).
