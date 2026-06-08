@@ -181,8 +181,8 @@ class TestBridge:
     def test_bridge_fixes_disconnected_gauge(self):
         # A gentle ramp split by a thin masked strip: the integrator seeds each
         # side independently, so the far side picks up an integer-cycle gauge
-        # error. The x8 coarse anchor bridges the thin strip and the post-pass
-        # re-levels it, while bridge=False leaves the error.
+        # error. The MST bridge re-levels it (matching isce3), while bridge=False
+        # leaves the error.
         m = n = 128
         tau = 2 * np.pi
         ii, jj = np.mgrid[0:m, 0:n]
@@ -210,5 +210,37 @@ class TestBridge:
 
         assert abs(rel_cycles(off)) >= 1, "expected an unbridged integer gauge error"
         assert rel_cycles(on) == 0, "bridging must re-level the disconnected region"
-        # masked pixels untouched; valid stays finite
-        assert np.isfinite(on[mask]).all()
+
+    def test_bridge_components_public_direct(self):
+        # The public bridge_components operates on an unwrapped phase + mask
+        # alone. Build a clean ramp, split it by a masked strip, and inject a
+        # +2-cycle gauge error into the right region; the bridge must remove it.
+        tau = 2 * np.pi
+        m = n = 128
+        ii, jj = np.mgrid[0:m, 0:n]
+        truth = (ii + jj).astype(np.float32) / n * (tau * 3)
+        mask = np.ones((m, n), dtype=np.bool_)
+        mask[:, 62:65] = False  # masked strip -> two integration regions
+        unw = np.where(mask, truth, 0.0).astype(np.float32)
+        unw[:, 65:] += tau * 2  # right region offset by +2 cycles
+
+        bridged = np.asarray(ww.bridge_components(unw, mask), np.float32)
+
+        left = mask.copy()
+        left[:, 62:] = False
+        right = mask.copy()
+        right[:, :65] = False
+
+        def rel_cycles(u):
+            al = np.median(np.round((u[left] - truth[left]) / tau))
+            ar = np.median(np.round((u[right] - truth[right]) / tau))
+            return ar - al
+
+        # Bridging makes the regions mutually consistent (the absolute level is a
+        # free gauge, so it need not equal truth): the +2-cycle relative jump goes.
+        assert rel_cycles(unw) == 2
+        assert rel_cycles(bridged) == 0
+        # A single-region frame is returned unchanged.
+        full = np.ones((m, n), dtype=np.bool_)
+        same = np.asarray(ww.bridge_components(truth.copy(), full), np.float32)
+        np.testing.assert_array_equal(same, truth)

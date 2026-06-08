@@ -66,27 +66,46 @@ def _boundary_coords(
     return coords
 
 
-def _bridge_components(
+def bridge_components(
     unw: "NDArray[np.float32]",
-    igram: "NDArray[np.complex64]",
-    corr: "NDArray[np.float32]",
-    nlooks: float,
-    mask: "NDArray[np.bool_] | None",
+    mask: "NDArray[np.bool_] | None" = None,
     *,
     radius: int = 500,
     min_px: int = 500,
     max_boundary: int = 2000,
 ) -> "NDArray[np.float32]":
-    """MST gauge bridging post-pass (see ``unwrap(bridge=)`` and module docstring).
+    """Re-level the disconnected regions of an unwrapped phase image.
 
-    ``corr`` / ``nlooks`` are accepted for call compatibility but unused: the
-    offset is read straight from the unwrapped phase at the region boundaries,
-    matching isce3. A single integration component is a structural no-op.
+    See the module docstring for the algorithm. The offset is read straight from
+    the unwrapped phase at the region boundaries, so this needs only the
+    unwrapped phase and a valid mask - no coherence or interferogram.
+
+    Parameters
+    ----------
+    unw : ndarray of float32
+        Unwrapped phase, masked/nodata pixels left at 0 (or NaN).
+    mask : ndarray of bool, optional
+        Valid-pixel mask defining the integration regions. Defaults to the
+        finite, nonzero pixels of ``unw``.
+    radius : int, default 500
+        Half-width of the box around each bridge endpoint over which the
+        region's local phase level is taken (clamped to a scene-relative size).
+    min_px : int, default 500
+        Ignore integration regions smaller than this many pixels.
+    max_boundary : int, default 2000
+        Cap on boundary pixels sampled per region for the nearest-pair search.
+
+    Returns
+    -------
+    ndarray of float32
+        ``unw`` with each region shifted by an integer number of cycles to
+        agree with the reference (largest) region. A single-region frame is
+        returned unchanged.
     """
     tau = 2.0 * np.pi
     m, n = unw.shape
     if mask is None:
-        mask = igram != 0  # masked convention = 0+0j (or angle 0)
+        mask = np.isfinite(unw) & (unw != 0)  # masked/nodata left at 0 or NaN
     mask = np.ascontiguousarray(mask, dtype=bool)
 
     # Integration components = 4-connected components of the valid mask (native

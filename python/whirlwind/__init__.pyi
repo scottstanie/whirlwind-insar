@@ -58,5 +58,19 @@ def unwrap(
     plus a default-on ``bridge`` post-pass that re-levels mask-disconnected
     regions. See the full docstring in ``whirlwind/__init__.py`` for the
     connected-component knobs (``cost_threshold`` / ``conncomp_sigma`` /
-    ``conncomp_cycle_prob`` / ``conncomp_coh_floor``) and other parameters.
+    ``conncomp_cycle_prob``) and other parameters.
+    """
+
+def bridge_components(
+    unw: NDArray[np.float32],
+    mask: NDArray[np.bool_] | None = ...,
+    *,
+    radius: int = ...,
+    min_px: int = ...,
+    max_boundary: int = ...,
+) -> NDArray[np.float32]:
+    """Re-level the disconnected regions of an unwrapped phase image.
+
+    The MST gauge-bridging post-pass `unwrap(bridge=True)` applies by default,
+    exposed standalone. See ``whirlwind/_bridge.py`` for the algorithm.
     """

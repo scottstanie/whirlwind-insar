@@ -32,7 +32,7 @@ from ._native import (
     wrap_phase,
 )
 from ._native import _unwrap_native, _unwrap_with_costs, label_components
-from ._bridge import _bridge_components
+from ._bridge import bridge_components
 
 # `interpolate` is re-exported above as the public native binding. Alias it so
 # the `interpolate=` keyword argument inside unwrap() (which shadows the name in
@@ -363,7 +363,7 @@ def unwrap(
             unw[~mask] = 0.0
 
     if bridge:
-        unw = _bridge_components(unw, igram, corr, nlooks, mask)
+        unw = bridge_components(unw, mask)
     return unw, cc
 
 
@@ -380,6 +380,7 @@ def unwrap(
 # importable for internal use and parity tests but are kept off the public API
 # until validated.
 __all__ = [
+    "bridge_components",
     "closure_correct",
     "closure_refine_mcf",
     "compute_residues",

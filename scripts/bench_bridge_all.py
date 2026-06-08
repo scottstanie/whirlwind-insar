@@ -39,7 +39,7 @@ for h5path in h5s:
     unw_off = np.asarray(unw_off, np.float32)
 
     t1 = time.perf_counter()
-    unw_on = ww._bridge_components(unw_off, ig, coh_in, 16.0, mask)
+    unw_on = ww.bridge_components(unw_off, mask)
     t_br = time.perf_counter() - t1
     unw_on = np.asarray(unw_on, np.float32)
 

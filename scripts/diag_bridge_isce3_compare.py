@@ -11,7 +11,7 @@ relative level.
 
 Runs ONE whirlwind solve (bridge=False) and then applies, in Python:
   - raw            : no bridging
-  - ww-bridge      : whirlwind's _bridge_components (coarse 8x anchor)
+  - ww-bridge      : whirlwind's bridge_components (isce3-style MST)
   - isce3-bridge   : isce3.unwrap.bridge_unwrapped_phase (MST, local endpoints),
                      with the NISAR GUNW default knobs.
 
@@ -28,7 +28,7 @@ sys.path.insert(0, "scripts")
 from tophu_compare import gunw_layers, water_only_mask, wrap_phase, percomp_match
 
 import whirlwind as ww
-from whirlwind._bridge import _bridge_components
+from whirlwind import bridge_components
 from isce3.unwrap.bridge_phase import bridge_unwrapped_phase
 
 TWOPI = 2.0 * np.pi
@@ -90,7 +90,7 @@ def run_frame(frame):
     raw = np.asarray(raw, np.float32)
 
     # whirlwind's coarse-anchor bridge.
-    ww_b = np.asarray(_bridge_components(raw.copy(), ig, coh_in, 16.0, mask), np.float32)
+    ww_b = np.asarray(bridge_components(raw.copy(), mask), np.float32)
 
     # isce3's MST bridge on the same raw output (zero outside mask = its cluster mask).
     raw_z = np.where(mask, raw, 0.0).astype(np.float32)
