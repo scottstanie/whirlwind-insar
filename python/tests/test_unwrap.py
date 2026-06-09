@@ -40,31 +40,25 @@ class TestUnwrap:
         aligned = _align_to_truth(unw, phase)
         np.testing.assert_allclose(aligned, phase, atol=1e-2)
 
-    @pytest.mark.xfail(
-        reason="Known masked-plane tear on the default (single-tile linear) "
-        "solver: a residue-free diagonal plane masked to a band is torn by a "
-        "spurious 2pi step at the mask boundary (the capacity-1 boundary-stacking "
-        "weakness). The reuse solver unwraps it exactly, and the un-masked plane "
-        "is fine on both. Synthetic edge case only; real NISAR frames unaffected.",
-        strict=False,
-    )
     def test_nan_inputs_masked(self):
-        """NaN-pixels are masked; the rest must unwrap correctly."""
+        """NaN pixels (a nodata hole) are masked; the rest must unwrap correctly."""
         y, x = np.ogrid[-3:3:256j, -3:3:256j]
         phase = (np.pi * (x + y)).astype(np.float32)
         igram = np.exp(1j * phase).astype(np.complex64)
         corr = np.ones(igram.shape, dtype=np.float32) * 0.999
 
-        # Mark a horizontal band as invalid.
-        mask = np.zeros(igram.shape, dtype=np.bool_)
-        mask[64:-64] = True
+        # Punch a circular nodata hole in the middle (e.g. a lake): the valid
+        # area stays one connected region around it.
+        ii, jj = np.ogrid[:256, :256]
+        hole = (ii - 128) ** 2 + (jj - 128) ** 2 < 40**2
+        mask = ~hole
         igram[~mask] = np.nan + 1j * np.nan
         corr[~mask] = 0.0
 
-        # unwrap() now sanitizes NaN inputs to nodata (0) with a warning, so the
-        # NaN band can be passed straight through.
+        # unwrap() sanitizes NaN inputs to nodata (0) with a warning, so the
+        # NaN hole can be passed straight through.
         unw, _cc = ww.unwrap(igram, corr, nlooks=1.0, mask=mask, goldstein_alpha=0)
-        # Only check the valid band.
+        # Only check the valid pixels.
         aligned = _align_to_truth(unw[mask], phase[mask])
         np.testing.assert_allclose(aligned, phase[mask], atol=5e-2)
 
