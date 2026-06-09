@@ -35,8 +35,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
     // Seed every excess node at distance 0.
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
-        sp.source[s] = s as i32;
-        // sources have no predecessor - pred_arc stays -1, pred_node stays -1
+        // sources have no predecessor - pred_arc stays -1
         heap.push(Reverse((0, s)));
     }
     if sinks_left == 0 {
@@ -58,9 +57,6 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
                 return;
             }
         }
-        // sp.source[u] is already coherent with pred_node[u]: either u was a
-        // seed (set above), or it was set at relaxation time below.
-
         let pot_u = net.potential[u];
         buf.clear();
         if u < g.num_nodes() {
@@ -87,9 +83,6 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
             if nd < sp.dist[v] {
                 sp.dist[v] = nd;
                 sp.pred_arc[v] = arc as i32;
-                sp.pred_node[v] = u as i32;
-                // Coherent source attribution: v inherits u's source.
-                sp.source[v] = sp.source[u];
                 heap.push(Reverse((nd, v)));
             }
         }

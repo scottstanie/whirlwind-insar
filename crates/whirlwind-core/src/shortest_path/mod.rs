@@ -43,9 +43,14 @@ pub fn backend() -> DijkstraBackend {
 /// `excess_node` simultaneously, using reduced costs as arc lengths.
 pub struct ShortestPaths {
     pub dist: Vec<i64>,
-    pub pred_arc: Vec<i32>,  // arc id of the predecessor arc, -1 if none
-    pub pred_node: Vec<i32>, // tail of that arc
-    pub source: Vec<i32>,    // which excess source reached this node, -1 if not reached
+    /// Arc id of the predecessor arc, -1 if none. The predecessor *node* is
+    /// not stored - it is the tail of this arc, recoverable in O(1) via
+    /// `net.arc_endpoints(g, arc).0`. (A stored `pred_node` and a per-relax
+    /// `source` attribution used to live here; both were dead weight - 8
+    /// bytes/node of RAM and two stores per relaxation in the hottest loop.
+    /// The augment phase never trusted `source` anyway: it walks the pred
+    /// chain to find the true seed, see `primal_dual::run_impl`.)
+    pub pred_arc: Vec<i32>,
     /// True iff the node has been popped (i.e. `dist[node]` is finalized).
     /// With early-exit Dijkstra a node may have a finite `dist` after
     /// relaxation but not be finalized; callers must consult `popped`
@@ -58,8 +63,6 @@ impl ShortestPaths {
         Self {
             dist: vec![i64::MAX; n_nodes],
             pred_arc: vec![-1; n_nodes],
-            pred_node: vec![-1; n_nodes],
-            source: vec![-1; n_nodes],
             popped: vec![false; n_nodes],
         }
     }
@@ -73,8 +76,6 @@ impl ShortestPaths {
         }
         self.dist.fill(i64::MAX);
         self.pred_arc.fill(-1);
-        self.pred_node.fill(-1);
-        self.source.fill(-1);
         self.popped.fill(false);
     }
 

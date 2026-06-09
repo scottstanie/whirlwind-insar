@@ -164,9 +164,7 @@ fn analytic_mem_bytes(m: usize, n: usize) -> u64 {
     let net_saturated = num_arcs / 8 + 8; // bitvec, +slack
     // Dijkstra state, allocated each iteration:
     let sp_dist = res_grid * 8; // i64
-    let sp_pred_arc = res_grid * 4; // i32
-    let sp_pred_node = res_grid * 4;
-    let sp_source = res_grid * 4;
+    let sp_pred_arc = res_grid * 4; // i32 (pred node derived from arc tail)
     let sp_visited = res_grid; // Vec<bool>
     let heap_capacity = res_grid * 16; // pessimistic upper bound
 
@@ -182,8 +180,6 @@ fn analytic_mem_bytes(m: usize, n: usize) -> u64 {
         + net_saturated
         + sp_dist
         + sp_pred_arc
-        + sp_pred_node
-        + sp_source
         + sp_visited
         + heap_capacity
 }

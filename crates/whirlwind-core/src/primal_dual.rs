@@ -89,13 +89,24 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
             .map(|&e| e as i64)
             .sum()
     };
-    if excess_now(net) > 0 {
+    let deficit_now = |net: &Network| -> i64 {
+        net.excess
+            .iter()
+            .filter(|&&e| e < 0)
+            .map(|&e| -e as i64)
+            .sum()
+    };
+    // Gate on BOTH sides: a one-sided network (excess left, every deficit
+    // drained - e.g. an imbalanced residue grid) has provably no augmenting
+    // path left, so resuming PD / SSP would only burn whole-graph Dijkstra
+    // floods discovering that. Report and return instead.
+    if excess_now(net) > 0 && deficit_now(net) > 0 {
         let cap: usize = std::env::var("WHIRLWIND_LINEAR_PD_CAP")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(512);
         let mut total = max_iter;
-        while excess_now(net) > 0 && total < cap {
+        while excess_now(net) > 0 && deficit_now(net) > 0 && total < cap {
             let before = excess_now(net);
             let chunk = 16usize.min(cap - total);
             run_no_ssp(g, net, chunk);
@@ -196,10 +207,11 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         }
 
         // Augment: each deficit node gets +1 from the *actual* source at the
-        // end of its predecessor chain. We don't trust sp.source[] for the
-        // dedup key because Dijkstra relaxations can leave it stale relative
-        // to pred_node[] (downstream nodes keep an old source attribution
-        // after their upstream parent gets re-relaxed by a different source).
+        // end of its predecessor chain. The chain is walked via pred_arc only:
+        // the predecessor node is the arc's tail (`net.arc_endpoints(..).0`).
+        // (A per-relax `source` attribution used to exist but could go stale
+        // relative to the pred chain when an upstream parent was re-relaxed
+        // by a different source - the walk is the only trustworthy seed ID.)
         let t_aug = std::time::Instant::now();
         deficits.clear();
         deficits.extend(net.deficit_nodes());
@@ -231,7 +243,8 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
                     break; // cur is a seed source
                 }
                 arcs.push(parc as usize);
-                cur = sp.pred_node[cur] as usize;
+                // Predecessor node = tail of the predecessor arc.
+                cur = net.arc_endpoints(g, parc as usize).0;
                 if visited_epoch[cur] == epoch {
                     if dbg && arcs.len() < 30 {
                         eprintln!(
@@ -429,7 +442,8 @@ pub fn run_no_ssp<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
                     break;
                 }
                 arcs.push(parc as usize);
-                cur = sp.pred_node[cur] as usize;
+                // Predecessor node = tail of the predecessor arc.
+                cur = net.arc_endpoints(g, parc as usize).0;
                 if visited_epoch[cur] == epoch {
                     arcs.clear();
                     break;

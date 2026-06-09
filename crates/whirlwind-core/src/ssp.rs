@@ -50,7 +50,8 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
             .min_by_key(|&d| sp.dist[d]);
         let Some(sink) = nearest_deficit else { return };
 
-        // Walk pred_node back to find the actual source seed (where pred_arc<0).
+        // Walk the pred chain back to find the actual source seed (where
+        // pred_arc<0). Predecessor node = tail of the predecessor arc.
         let mut arcs = Vec::new();
         let mut cur = sink;
         loop {
@@ -59,7 +60,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
                 break;
             }
             arcs.push(parc as usize);
-            cur = sp.pred_node[cur] as usize;
+            cur = net.arc_endpoints(g, parc as usize).0;
             if arcs.len() > net.num_nodes() {
                 arcs.clear();
                 break;
@@ -126,7 +127,6 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     let n_nodes = net.num_nodes();
     let mut dist = vec![i64::MAX; n_nodes];
     let mut pred_arc: Vec<i32> = vec![-1; n_nodes];
-    let mut pred_node: Vec<i32> = vec![-1; n_nodes];
     let mut popped = vec![false; n_nodes];
     let mut touched: Vec<usize> = Vec::new();
     let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
@@ -140,6 +140,20 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
 
     let sources: Vec<usize> = net.excess_nodes().collect();
     let total = sources.len();
+    // Total deficit UNITS remaining, maintained across augmentations. Without
+    // this guard a one-sided network (excess left but every deficit already
+    // drained - e.g. an imbalanced residue grid) sends EVERY remaining source
+    // on a full-graph Dial flood that provably finds nothing: S sources x O(E)
+    // of pure waste on the zero-cost masked sea. Bail up front and again the
+    // moment the last deficit unit is paired. (The `stranded` diagnostic below
+    // stays meaningful: it now only counts true unreachability while deficits
+    // still exist.)
+    let mut deficit_units: i64 = net
+        .excess
+        .iter()
+        .filter(|&&e| e < 0)
+        .map(|&e| -e as i64)
+        .sum();
     if dbg {
         let ex: i64 = net
             .excess
@@ -147,16 +161,13 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             .filter(|&&e| e > 0)
             .map(|&e| e as i64)
             .sum();
-        let df: i64 = net
-            .excess
-            .iter()
-            .filter(|&&e| e < 0)
-            .map(|&e| -e as i64)
-            .sum();
         eprintln!(
-            "[ssp1] single-source SSP (Dial): {total} sources; excess={ex} deficit={df} balanced={}",
-            ex == df
+            "[ssp1] single-source SSP (Dial): {total} sources; excess={ex} deficit={deficit_units} balanced={}",
+            ex == deficit_units
         );
+    }
+    if deficit_units == 0 {
+        return;
     }
     // Count of sources that exhausted their Dijkstra WITHOUT reaching any
     // deficit. In a BALANCED, connected residual graph every remaining excess
@@ -176,6 +187,9 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     };
 
     for (idx, src) in sources.into_iter().enumerate() {
+        if deficit_units == 0 {
+            break; // every deficit paired - no remaining source can be served
+        }
         if net.excess[src] <= 0 {
             continue; // already drained by a prior augmentation
         }
@@ -275,7 +289,6 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                         }
                         dist[v] = nd;
                         pred_arc[v] = arc as i32;
-                        pred_node[v] = u as i32;
                         buckets[(nd as usize) % k].push_back((v, nd));
                         pending += 1;
                     }
@@ -290,7 +303,6 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                 for &v in &touched {
                     dist[v] = i64::MAX;
                     pred_arc[v] = -1;
-                    pred_node[v] = -1;
                     popped[v] = false;
                 }
                 touched.clear();
@@ -315,6 +327,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             // Augment one unit src → … → sink.
             net.increase_excess(sink, 1);
             net.decrease_excess(src, 1);
+            deficit_units -= 1;
             let mut cur = sink;
             loop {
                 let pa = pred_arc[cur];
@@ -322,7 +335,8 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                     break;
                 }
                 net.push_unit(g, pa as usize);
-                cur = pred_node[cur] as usize;
+                // Predecessor node = tail of the predecessor arc.
+                cur = net.arc_endpoints(g, pa as usize).0;
             }
             // Potential update (see CORRECTNESS above): popped nodes get exact;
             // non-popped keep a zero shift = capped at d_sink.
@@ -359,7 +373,6 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         for &v in &touched {
             dist[v] = i64::MAX;
             pred_arc[v] = -1;
-            pred_node[v] = -1;
             popped[v] = false;
         }
         touched.clear();

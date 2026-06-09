@@ -94,7 +94,6 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
     // Seed every excess node at distance 0.
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
-        sp.source[s] = s as i32;
         buckets[0].push((s, 0));
         pending += 1;
     }
@@ -140,10 +139,8 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
             }
         }
 
-        // Tail of every outgoing arc is u; pre-load π[u] and source[u] once.
+        // Tail of every outgoing arc is u; pre-load π[u] once.
         let pot_u = net.potential[u];
-        let src_u = sp.source[u];
-        let u_i32 = u as i32;
         let mut relax = |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
             if net.is_arc_saturated(arc) {
                 return;
@@ -164,8 +161,6 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
             if nd < sp.dist[v] {
                 sp.dist[v] = nd;
                 sp.pred_arc[v] = arc as i32;
-                sp.pred_node[v] = u_i32;
-                sp.source[v] = src_u;
                 let b = (nd as usize) % k;
                 buckets[b].push((v, nd));
                 *pending += 1;
@@ -230,7 +225,6 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
 
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
-        sp.source[s] = s as i32;
         buckets[0].push_back((s, 0));
         pending += 1;
     }
@@ -278,8 +272,6 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
         // No early-exit - keep going until all reachable nodes are finalized.
 
         let pot_u = net.potential[u];
-        let src_u = sp.source[u];
-        let u_i32 = u as i32;
         let mut relax = |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
             if net.is_arc_saturated(arc) {
                 return;
@@ -296,8 +288,6 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
             if nd < sp.dist[v] {
                 sp.dist[v] = nd;
                 sp.pred_arc[v] = arc as i32;
-                sp.pred_node[v] = u_i32;
-                sp.source[v] = src_u;
                 let b = (nd as usize) % k;
                 buckets[b].push_back((v, nd)); // FIFO (see decl)
                 *pending += 1;
@@ -326,10 +316,10 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
 /// than it saves. (Set empirically; rayon overhead is ~10 µs/spawn on M-series.)
 const PAR_THRESHOLD: usize = 256;
 
-/// Proposal emitted by a phase-1 thread: `(v, nd, arc, source_of_u, u)`.
-/// All four fields fit in 24 bytes packed; we collect into per-thread Vecs and
-/// reduce, so the constant matters less than amortized.
-type Proposal = (usize, i64, u32, i32, u32);
+/// Proposal emitted by a phase-1 thread: `(v, nd, arc)`.
+/// We collect into per-thread Vecs and reduce, so the constant matters less
+/// than amortized.
+type Proposal = (usize, i64, u32);
 
 /// Parallel Dial's multi-source Dijkstra. Functionally equivalent to [`run`],
 /// but each large-enough bucket is relaxed via rayon. See module docs for the
@@ -352,7 +342,6 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
 
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
-        sp.source[s] = s as i32;
         buckets[0].push((s, 0));
         pending += 1;
     }
@@ -402,7 +391,6 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                     sinks_popped_this_bucket += 1;
                 }
                 let pot_u = net.potential[u];
-                let src_u = sp.source[u];
                 let mut relax =
                     |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
                         if net.is_arc_saturated(arc) {
@@ -419,8 +407,6 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                         if nd < sp.dist[v] {
                             sp.dist[v] = nd;
                             sp.pred_arc[v] = arc as i32;
-                            sp.pred_node[v] = u as i32;
-                            sp.source[v] = src_u;
                             let b = (nd as usize) % k;
                             buckets[b].push((v, nd));
                             *pending += 1;
@@ -444,7 +430,6 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             // sp.dist in this phase.
             let visited_ref = &visited;
             let sp_dist_snap: &[i64] = &sp.dist;
-            let sp_source_snap: &[i32] = &sp.source;
 
             // Per-thread fold returns (proposals, popped_nodes, sinks_popped).
             // Popped nodes are accumulated in fold-local Vecs and applied to
@@ -483,7 +468,6 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                         if is_sink[u] {
                             nsinks += 1;
                         }
-                        let src = sp_source_snap[u];
                         let pot_u = net.potential[u];
                         let consider = |arc: usize, v: usize, props: &mut Vec<Proposal>| {
                             if net.is_arc_saturated(arc) {
@@ -498,7 +482,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                             };
                             let nd = cur_dist + rc;
                             if nd < sp_dist_snap[v] {
-                                props.push((v, nd, arc as u32, src, u as u32));
+                                props.push((v, nd, arc as u32));
                             }
                         };
                         out_buf.clear();
@@ -531,12 +515,10 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             // Phase 2 (serial): re-check `nd < sp.dist[v]` because (a)
             // multiple threads may have proposed for the same v, (b) sp.dist
             // is now mutated as we apply.
-            for (v, nd, arc, src, u) in proposals {
+            for (v, nd, arc) in proposals {
                 if nd < sp.dist[v] {
                     sp.dist[v] = nd;
                     sp.pred_arc[v] = arc as i32;
-                    sp.pred_node[v] = u as i32;
-                    sp.source[v] = src;
                     let b = (nd as usize) % k;
                     buckets[b].push((v, nd));
                     pending += 1;
