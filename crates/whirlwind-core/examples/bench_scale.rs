@@ -160,7 +160,7 @@ fn analytic_mem_bytes(m: usize, n: usize) -> u64 {
     // Network (persistent through primal-dual):
     let net_excess = res_grid * 4; // i32
     let net_potential = res_grid * 8; // i64
-    let net_cost_fwd = num_forward * 4; // i32
+    let net_cost_fwd = num_forward * 2; // u16
     let net_saturated = num_arcs / 8 + 8; // bitvec, +slack
     // Dijkstra state, allocated each iteration:
     let sp_dist = res_grid * 8; // i64

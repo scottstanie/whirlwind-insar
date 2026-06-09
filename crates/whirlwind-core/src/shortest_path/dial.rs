@@ -85,16 +85,21 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
     let (is_sink, total_sinks) = collect_sinks(net);
     let mut sinks_left = total_sinks;
 
-    // Buckets store (node, queued_dist). queued_dist disambiguates stale
-    // entries - when we pop a node whose sp.dist[u] no longer matches the
-    // entry we pushed, we skip it.
-    let mut buckets: Vec<Vec<(usize, i64)>> = vec![Vec::new(); k];
+    // Buckets store bare node ids (u32 - 4 bytes/entry instead of the old
+    // (node, queued_dist) 16). The queued distance is recoverable: every
+    // entry in bucket b popped at scan distance `cur_dist` was queued with
+    // exactly `qd == cur_dist` - relaxations push `nd = cur_dist + rc` with
+    // `rc < k`, and a bucket is fully drained before the scan advances past
+    // it, so no entry can survive a full modular wrap. Staleness therefore
+    // reduces to `dist[u] != cur_dist` (re-relaxed entries pop at their
+    // smaller distance first and set `popped`).
+    let mut buckets: Vec<Vec<u32>> = vec![Vec::new(); k];
     let mut pending: usize = 0;
 
     // Seed every excess node at distance 0.
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
-        buckets[0].push((s, 0));
+        buckets[0].push(s as u32);
         pending += 1;
     }
     if pending == 0 || total_sinks == 0 {
@@ -119,14 +124,10 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
         }
         bucket_advances = 0;
 
-        let (u, qd) = buckets[cur_bucket].pop().unwrap();
+        let u = buckets[cur_bucket].pop().unwrap() as usize;
         pending -= 1;
-        if sp.popped[u] {
-            continue;
-        }
-        // Stale: this entry was queued at qd but the node has since been
-        // re-relaxed to a smaller dist.
-        if sp.dist[u] != qd || qd != cur_dist {
+        // Stale: popped already, or re-relaxed since queuing (see bucket decl).
+        if sp.popped[u] || sp.dist[u] != cur_dist {
             continue;
         }
         sp.popped[u] = true;
@@ -162,7 +163,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
                 sp.dist[v] = nd;
                 sp.pred_arc[v] = arc as i32;
                 let b = (nd as usize) % k;
-                buckets[b].push((v, nd));
+                buckets[b].push(v as u32);
                 *pending += 1;
             }
         };
@@ -220,12 +221,16 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
     // `ext/libwhirlwind/.../graph/dial.hpp`. NOTE: only this full-completion
     // (parity) Dijkstra is FIFO; the early-exit `run_into` (production reuse /
     // tiled) is intentionally left as-is.
-    let mut buckets: Vec<VecDeque<(usize, i64)>> = vec![VecDeque::new(); k];
+    //
+    // Entries are bare node ids (u32): every entry in a bucket pops at exactly
+    // the distance it was queued with (rc < k + buckets drain before the scan
+    // wraps), so staleness reduces to `dist[u] != cur_dist` - see `run_into`.
+    let mut buckets: Vec<VecDeque<u32>> = vec![VecDeque::new(); k];
     let mut pending: usize = 0;
 
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
-        buckets[0].push_back((s, 0));
+        buckets[0].push_back(s as u32);
         pending += 1;
     }
     if pending == 0 {
@@ -257,13 +262,9 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
         }
         bucket_advances = 0;
 
-        let (u, qd) = buckets[cur_bucket].pop_front().unwrap(); // FIFO (see decl)
+        let u = buckets[cur_bucket].pop_front().unwrap() as usize; // FIFO (see decl)
         pending -= 1;
-        if sp.popped[u] {
-            stale_pops += 1;
-            continue;
-        }
-        if sp.dist[u] != qd || qd != cur_dist {
+        if sp.popped[u] || sp.dist[u] != cur_dist {
             stale_pops += 1;
             continue;
         }
@@ -289,7 +290,7 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
                 sp.dist[v] = nd;
                 sp.pred_arc[v] = arc as i32;
                 let b = (nd as usize) % k;
-                buckets[b].push_back((v, nd)); // FIFO (see decl)
+                buckets[b].push_back(v as u32); // FIFO (see decl)
                 *pending += 1;
             }
         };
@@ -334,7 +335,8 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
     let (is_sink, total_sinks) = collect_sinks(net);
     let mut sinks_left = total_sinks;
 
-    let mut buckets: Vec<Vec<(usize, i64)>> = vec![Vec::new(); k];
+    // Bare node ids per entry - same staleness argument as `run_into`.
+    let mut buckets: Vec<Vec<u32>> = vec![Vec::new(); k];
     // AtomicBool per node - used to claim `u` in phase 1; one CAS per node
     // across the whole Dijkstra call.
     let visited: Vec<AtomicBool> = (0..n_nodes).map(|_| AtomicBool::new(false)).collect();
@@ -342,7 +344,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
 
     for s in net.excess_nodes() {
         sp.dist[s] = 0;
-        buckets[0].push((s, 0));
+        buckets[0].push(s as u32);
         pending += 1;
     }
     if pending == 0 || total_sinks == 0 {
@@ -373,11 +375,12 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
         if current.len() < PAR_THRESHOLD {
             // Serial fast path - same logic as `run`.
             let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
-            for (u, qd) in current {
+            for u in current {
+                let u = u as usize;
                 if visited[u].load(Ordering::Relaxed) {
                     continue;
                 }
-                if sp.dist[u] != qd || qd != cur_dist {
+                if sp.dist[u] != cur_dist {
                     continue;
                 }
                 if visited[u]
@@ -408,7 +411,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                             sp.dist[v] = nd;
                             sp.pred_arc[v] = arc as i32;
                             let b = (nd as usize) % k;
-                            buckets[b].push((v, nd));
+                            buckets[b].push(v as u32);
                             *pending += 1;
                         }
                     };
@@ -451,11 +454,12 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                         usize,
                         Vec<(usize, usize)>,
                     ),
-                     &(u, qd)| {
+                     &u| {
+                        let u = u as usize;
                         if visited_ref[u].load(Ordering::Relaxed) {
                             return (props, pops, nsinks, out_buf);
                         }
-                        if sp_dist_snap[u] != qd || qd != cur_dist {
+                        if sp_dist_snap[u] != cur_dist {
                             return (props, pops, nsinks, out_buf);
                         }
                         if visited_ref[u]
@@ -520,7 +524,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                     sp.dist[v] = nd;
                     sp.pred_arc[v] = arc as i32;
                     let b = (nd as usize) % k;
-                    buckets[b].push((v, nd));
+                    buckets[b].push(v as u32);
                     pending += 1;
                 }
             }

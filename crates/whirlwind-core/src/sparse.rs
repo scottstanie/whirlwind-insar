@@ -161,7 +161,11 @@ pub fn compute_edge_costs(g: &TriangulatedGraph, variance: &[f32]) -> (Vec<i32>,
         let va = per_pixel_var(va_raw);
         let vb = per_pixel_var(vb_raw);
         let w = 1.0 / (va + vb);
-        let c = (w * pi * COST_SCALE).round().max(0.0) as i32;
+        // Saturate at the u16 cost ceiling (see cost::MAX_ARC_COST): the
+        // inverse-variance weight is unbounded at ultra-low CRLB variance.
+        let c = (w * pi * COST_SCALE)
+            .round()
+            .clamp(0.0, crate::cost::MAX_ARC_COST) as i32;
         costs[i] = c;
         costs[i + e] = c;
     }

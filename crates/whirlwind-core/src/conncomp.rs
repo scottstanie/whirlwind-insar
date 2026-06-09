@@ -78,7 +78,7 @@ fn edge_is_cut(net: &Network, fwd1: usize, fwd2: usize, thresh: i32) -> bool {
     if forbidden1 || forbidden2 {
         return true;
     }
-    net.cost_fwd[fwd1].min(net.cost_fwd[fwd2]) <= thresh
+    (net.cost_fwd[fwd1].min(net.cost_fwd[fwd2]) as i32) <= thresh
 }
 
 /// Grow components on the pixel grid using a solved MCF network. Returns a

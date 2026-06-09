@@ -131,12 +131,14 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     let mut touched: Vec<usize> = Vec::new();
     let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
     // Dial buckets, reused across sources (grown to the largest k seen, cleared
-    // between sources). Buckets store (node, queued_dist) so stale entries are
-    // detected on pop. FIFO (`VecDeque`, pop FRONT) to match ww-orig's
-    // `std::queue` Dial buckets: equal-distance ties across the cost-0 masked
-    // sea must resolve BFS/fewest-hops first (short cuts), not LIFO/DFS (long
-    // cuts) - see `shortest_path::dial::run_full_into` decl comment.
-    let mut buckets: Vec<VecDeque<(usize, i64)>> = Vec::new();
+    // between sources). Entries are bare node ids (u32): every entry pops at
+    // exactly the distance it was queued with (rc < k + buckets drain before
+    // the scan wraps), so staleness reduces to `dist[u] != cur_dist` - see
+    // `shortest_path::dial::run_into` decl comment. FIFO (`VecDeque`, pop
+    // FRONT) to match ww-orig's `std::queue` Dial buckets: equal-distance ties
+    // across the cost-0 masked sea must resolve BFS/fewest-hops first (short
+    // cuts), not LIFO/DFS (long cuts) - see `dial::run_full_into` decl comment.
+    let mut buckets: Vec<VecDeque<u32>> = Vec::new();
 
     let sources: Vec<usize> = net.excess_nodes().collect();
     let total = sources.len();
@@ -222,7 +224,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
 
             dist[src] = 0;
             touched.push(src);
-            buckets[0].push_back((src, 0));
+            buckets[0].push_back(src as u32);
             let mut pending = 1_usize;
             let mut cur_bucket = 0_usize;
             let mut cur_dist = 0_i64;
@@ -242,13 +244,10 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                 if buckets[cur_bucket].is_empty() {
                     break;
                 }
-                let (u, qd) = buckets[cur_bucket].pop_front().unwrap(); // FIFO (see decl)
+                let u = buckets[cur_bucket].pop_front().unwrap() as usize; // FIFO (see decl)
                 pending -= 1;
-                if popped[u] {
-                    continue;
-                }
-                // Stale: re-relaxed to a smaller dist since this entry was queued.
-                if dist[u] != qd || qd != cur_dist {
+                // Stale: popped already, or re-relaxed since queuing (see decl).
+                if popped[u] || dist[u] != cur_dist {
                     continue;
                 }
                 popped[u] = true;
@@ -289,7 +288,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                         }
                         dist[v] = nd;
                         pred_arc[v] = arc as i32;
-                        buckets[(nd as usize) % k].push_back((v, nd));
+                        buckets[(nd as usize) % k].push_back(v as u32);
                         pending += 1;
                     }
                 }

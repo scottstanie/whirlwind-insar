@@ -23,7 +23,15 @@ use ndarray::ArrayView2;
 pub struct Network {
     pub excess: Vec<i32>,
     pub potential: Vec<i64>,
-    pub cost_fwd: Vec<i32>, // length = nf_total (grid + ground forward costs)
+    /// Forward arc costs, length `nf_total` (grid + ground). Stored as `u16`
+    /// (halves the biggest per-frame allocation; SNAPHU likewise stores costs
+    /// as `short`): every cost builder emits values in `[0, 65535]` - the
+    /// parity spline cost caps at `100·ln(1e30) ≈ 6,908`, the analytical
+    /// Carballo LUT at 300, and the CRLB / sparse builders saturate at
+    /// `u16::MAX` (an arc that expensive is already "never cut here").
+    /// Construction asserts the range (`pack_cost`). Reverse-arc costs are
+    /// the negation, applied at read time in [`Network::arc_cost`].
+    pub cost_fwd: Vec<u16>,
     pub is_saturated: BitVec, // length = 2 * nf_total
 
     /// Signed flow on each forward arc; only meaningful in `reuse_mode` or
@@ -79,6 +87,17 @@ pub struct Network {
 //                            pixel is invalid) - both directions saturated,
 //                            never carry flow
 //   (fwd=false, rev=false) : unreachable
+
+/// Range-checked i32 → u16 cost conversion. Fails fast on out-of-range input
+/// rather than silently wrapping: cost builders own the clamping policy.
+#[inline]
+fn pack_cost(c: i32) -> u16 {
+    assert!(
+        (0..=u16::MAX as i32).contains(&c),
+        "arc cost {c} outside the u16 range [0, 65535] - the cost builder must clamp"
+    );
+    c as u16
+}
 
 impl Network {
     /// Build a network from a residue grid and per-arc grid costs. No ground.
@@ -229,7 +248,7 @@ impl Network {
         Self {
             excess,
             potential: vec![0_i64; num_nodes],
-            cost_fwd: costs,
+            cost_fwd: costs.iter().map(|&c| pack_cost(c)).collect(),
             is_saturated: sat,
             // Empty in linear MCF mode (never read; see arc_flow/push_unit). The
             // reuse/convex constructors allocate it after flipping their flag.
@@ -357,9 +376,9 @@ impl Network {
 
         // Costs: grid forwards then ground forwards.
         let mut cost_fwd = Vec::with_capacity(nf_total);
-        cost_fwd.extend_from_slice(costs);
+        cost_fwd.extend(costs.iter().map(|&c| pack_cost(c)));
         if let Some(c) = ground_cost {
-            cost_fwd.extend(std::iter::repeat_n(c, num_ground));
+            cost_fwd.extend(std::iter::repeat_n(pack_cost(c), num_ground));
         }
 
         // Saturation: 2*nf_total bits. Initial: forward unsaturated, reverse
@@ -604,9 +623,9 @@ impl Network {
     pub fn arc_cost<G: ResidualGraph>(&self, _g: &G, arc: usize) -> i32 {
         let nf = self.num_forward();
         if arc < nf {
-            self.cost_fwd[arc]
+            self.cost_fwd[arc] as i32
         } else {
-            -self.cost_fwd[arc - nf]
+            -(self.cost_fwd[arc - nf] as i32)
         }
     }
 

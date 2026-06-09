@@ -32,6 +32,15 @@ pub const COST_SCALE: f32 = 100.0;
 /// earlier simplified formula while using the correct Lee 1994 shape.
 pub const CARBALLO_COST_SCALE: f32 = 6.0;
 
+/// Saturation ceiling for integer arc costs: `Network` stores forward costs
+/// as `u16` (SNAPHU likewise uses `short` costs). Builders whose formula is
+/// unbounded (CRLB / sparse inverse-variance weights at ultra-low variance)
+/// clamp here - an arc this expensive (LLR ≈ 655 at `COST_SCALE = 100`) is
+/// already "never cut here", so saturating the top end changes nothing
+/// semantically. The bounded builders (parity spline ≤ 6,908, analytical
+/// LUT ≤ 300) sit far below it.
+pub const MAX_ARC_COST: f32 = 65_535.0;
+
 /// Compute 7x7 box-filtered phase gradients (vertical & horizontal).
 /// Mode = nearest (edge values replicate).
 pub fn smooth_phase_gradients(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2<f32>) {
@@ -709,8 +718,8 @@ pub fn compute_crlb_costs(
                 } else {
                     (cost_dir(-alpha, w), cost_dir(alpha, w))
                 };
-                right_row[j] = (c_rt * COST_SCALE).round() as i32;
-                left_row[j] = (c_lt * COST_SCALE).round() as i32;
+                right_row[j] = (c_rt * COST_SCALE).round().min(MAX_ARC_COST) as i32;
+                left_row[j] = (c_lt * COST_SCALE).round().min(MAX_ARC_COST) as i32;
             }
         });
 
@@ -730,8 +739,8 @@ pub fn compute_crlb_costs(
                     (cost_dir(alpha, w), cost_dir(-alpha, w))
                 };
                 let col = j + 1;
-                down_row[col] = (c_dn * COST_SCALE).round() as i32;
-                up_row[col] = (c_up * COST_SCALE).round() as i32;
+                down_row[col] = (c_dn * COST_SCALE).round().min(MAX_ARC_COST) as i32;
+                up_row[col] = (c_up * COST_SCALE).round().min(MAX_ARC_COST) as i32;
             }
         });
 
