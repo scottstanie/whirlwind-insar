@@ -21,7 +21,3 @@ and the documentation under [`docs/`](../docs).
   tiling that stitches independent single-tile solves with the bridge
   integer-gauge idea over tile overlaps. This is the approach a future tiling
   effort would likely start from. It is a prototype, not part of the package.
-
-The deeper, dated research write-ups (cost-model experiments, pyramid aliasing,
-the why-whole-image-runs-away analysis, and the like) live under
-[`paper/`](../paper).

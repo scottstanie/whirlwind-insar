@@ -1249,7 +1249,7 @@ mod tests {
         crlb[(2, 0, 0)] = 0.5;
         crlb[(3, 0, 0)] = 0.05;
 
-        // Tree priority based on summed variance (matches what unwrap_stack.py does).
+        // Tree priority based on summed variance.
         let mut prio = Vec::with_capacity(6);
         for e in &graph.edges {
             prio.push(crlb[(e.from as usize, 0, 0)] + crlb[(e.to as usize, 0, 0)]);

@@ -8,7 +8,7 @@
 //!   Used by the early-exit primal-dual path (`primal_dual::run`).
 //! * [`run_single_source`] - SINGLE-source: one source at a time, early-exiting
 //!   at the first popped deficit, using **Dial's bucket queue** (not a binary
-//!   heap). ~10x faster on whole-image graphs (single-tile D_077 ≈1472 s →
+//!   heap). ~10x faster on whole-image graphs (a large single-tile frame,≈1472 s →
 //!   ≈158 s) AND robust to the zero-cost masked "sea" on heavily-masked frames,
 //!   which makes a binary heap balloon (millions of equal-distance entries) but
 //!   which Dial processes in O(nodes) per bucket. Used by the full-completion
@@ -100,8 +100,9 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
 /// One source at a time: a single-source Dial shortest-path that early-exits when
 /// the first deficit (sink) is popped, augment one unit along that path, update
 /// potentials, repeat over a fixed source list. On a small masked region this
-/// early-exits in a tiny neighbourhood (D_077 ≈158 s vs ≈1472 s for the
-/// multi-source [`run`]); on a heavily-masked frame the **zero-cost masked sea**
+/// early-exits in a tiny neighbourhood (~158 s vs ~1472 s for the
+/// multi-source [`run`] on a large frame); on a heavily-masked frame the
+/// **zero-cost masked sea**
 /// (masked arcs have cost 0, never forbidden) is traversed in O(nodes) via the
 /// distance-0 bucket - a binary heap instead balloons to millions of equal-
 /// distance entries and blows up memory.
@@ -164,8 +165,8 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     // expected control flow - surfaced here instead of being silently skipped.
     let mut stranded = 0_usize;
     let mut scan_ns: u128 = 0; // time in max_reduced_cost_par (now only on k-overflow)
-    // Maintained ACROSS sources (was rescanned every source - ~half of D_077's
-    // runtime). A valid upper bound on every arc's reduced cost; grows lazily (a
+    // Maintained ACROSS sources (was rescanned every source - up to half the
+    // runtime on large frames). A valid upper bound on every arc's reduced cost; grows lazily (a
     // source that hits rc >= k recomputes it tight + retries). One tight scan here.
     let mut max_rc = {
         let _scan_t = std::time::Instant::now();

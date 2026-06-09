@@ -35,13 +35,13 @@ def _unwrap_native(
     Phase: ``tile_size=0`` (default) is single-tile linear MCF on the WHOLE frame
     - the verified ww-orig-parity path (Carballo Lee-1994 cost, capacity-1
     min-cost-flow, adaptive PD→SSP fallback for masked frames); matches ww-orig
-    on all 13 validated NISAR GUNW frames. The TILED pipeline is OPT-IN and NOT
-    VALIDATED (fails on most scenes, ~65-89% vs single-tile ~99-100%): select it
-    only with explicit ``tile_size>=4`` (``2<=tile_overlap<tile_size``),
-    ``multilook>1``, or ``WHIRLWIND_UNWRAP_SOLVER=tiled``. ``WHIRLWIND_UNWRAP_SOLVER``
-    = ``linear|tiled|reuse|convex`` (default ``linear``); reuse/convex are
-    experimental/research, not production. ``multilook=L`` (L>1) coherently
-    down-looks xL first and routes through the opt-in tiled path.
+    on all 13 validated NISAR GUNW frames. The TILED pipeline is opt-in and
+    experimental (not validated on most scenes): select it only with explicit
+    ``tile_size>=4`` (``2<=tile_overlap<tile_size``), ``multilook>1``, or
+    ``WHIRLWIND_UNWRAP_SOLVER=tiled``. ``WHIRLWIND_UNWRAP_SOLVER`` =
+    ``linear|tiled|reuse`` (default ``linear``); tiled/reuse are experimental,
+    not production. ``multilook=L`` (L>1) coherently down-looks xL first and
+    routes through the opt-in tiled path.
 
     Components: grown GLOBALLY from the Carballo cost grid, independent of the
     (tiled) phase solve - a pixel edge is a cut when an underlying arc is
@@ -62,8 +62,7 @@ def unwrap_reuse(
     ``WHIRLWIND_UNWRAP_SOLVER=reuse``).
 
     Same Carballo coherence cost as :func:`whirlwind.unwrap`, but arcs carry
-    multiple units of flow at zero marginal cost after the first push (the
-    corner-safe behaviour that replaced the removed capacity-1 solver).
+    multiple units of flow at zero marginal cost after the first push.
     """
 
 def unwrap_crlb(
@@ -79,13 +78,12 @@ def unwrap_crlb(
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """CRLB-weighted unwrap (phase-linked IGs) → ``(phase, conn_components)``.
 
-    The phase-linked twin of :func:`whirlwind.unwrap`. **EXPERIMENTAL / WIP - not
-    validated.** This CRLB path rides the same TILED pipeline that was never
-    brought to useful results (neither the coherence nor the CRLB tiling was
-    validated): ``tile_size=0`` tiles frames > 512 px + a gated multi-shift
-    winding fix on a variance-derived pseudo-coherence; components are grown
-    globally from the CRLB cost grid. A verified single-tile CRLB path (reusing
-    the coherence default kernel) is future work (issue #35).
+    The phase-linked twin of :func:`whirlwind.unwrap`. **Experimental / not
+    validated.** This CRLB path rides the same experimental tiled pipeline:
+    ``tile_size=0`` tiles frames > 512 px + a gated multi-shift winding fix on a
+    variance-derived pseudo-coherence; components are grown globally from the
+    CRLB cost grid. A verified single-tile CRLB path (reusing the coherence
+    default kernel) is future work.
     """
 
 def unwrap_crlb_grounded(

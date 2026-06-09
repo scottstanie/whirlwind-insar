@@ -46,12 +46,9 @@ The same benchmark reports per-stage timings. In smooth scenes, cost constructio
 
 ## Large noisy scenes
 
-For larger stress tests, use `scripts/heavy_scene.py` and `scripts/bench_heavy.py`.
-
-```bash
-python scripts/heavy_scene.py --size 4096 --flavor noisy --low 0.30 --out /tmp/heavy_4k_noisy.npz --summary
-python scripts/bench_heavy.py --scene /tmp/heavy_4k_noisy.npz --no-snaphu
-```
+Larger residue-dense stress tests, generated as uniform- and patchy-coherence
+interferograms at 4096x4096 and 8192x8192 and timed through the same `unwrap`
+call:
 
 | Scene | Runtime | Notes |
 |---|---:|---|
@@ -102,8 +99,6 @@ Measured examples:
 
 ```bash
 cargo run --release --example bench_scale -- --huge
-python scripts/heavy_scene.py --size 4096 --flavor noisy --low 0.30 --out /tmp/heavy_4k_noisy.npz --summary
-python scripts/bench_heavy.py --scene /tmp/heavy_4k_noisy.npz --no-snaphu
 ```
 
 Use release builds for timing. Debug builds are much slower.

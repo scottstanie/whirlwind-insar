@@ -92,11 +92,11 @@ and after acceptance the feedstock auto-updates on every PyPI release.
        - pip
 
    about:
-     home: https://github.com/scottstanie/whirlwind
+     home: https://github.com/scottstanie/whirlwind-insar
      license: MIT
-     license_file: LICENSE   # add a LICENSE file to the repo if missing
-     summary: Bayesian min-cost-flow phase unwrapper for InSAR
-     dev_url: https://github.com/scottstanie/whirlwind
+     license_file: LICENSE
+     summary: Fast Rust-backed 2D InSAR phase unwrapper
+     dev_url: https://github.com/scottstanie/whirlwind-insar
 
    extra:
      recipe-maintainers:

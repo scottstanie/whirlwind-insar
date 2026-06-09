@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["Scott Staniewicz <scott.stanie@utexas.edu>"]
-repository = "https://github.com/scottstanie/whirlwind"
+repository = "https://github.com/scottstanie/whirlwind-insar"
 description = "Rust-backed 2D phase unwrapper for InSAR"
 
 [workspace.dependencies]

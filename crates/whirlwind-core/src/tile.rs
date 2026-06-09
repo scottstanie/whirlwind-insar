@@ -339,9 +339,9 @@ pub fn unwrap_crlb_tiled(
     // 2-5) Shared assembly. Confidence map for the anchor/cascade region-vote +
     //      seam stitch: the caller's coherence (e.g. dolphin `.cor`) when given,
     //      else a variance-derived pseudo-coherence. The per-tile solve stays
-    //      CRLB-cost regardless. (#35 / #58: the pseudo-coherence is low-dynamic-
-    //      range and a weak region-vote signal; a real coherence raster pins
-    //      tile-block offsets far better.)
+    //      CRLB-cost regardless. (The pseudo-coherence is low-dynamic-range and
+    //      a weak region-vote signal; a real coherence raster pins tile-block
+    //      offsets far better.)
     let conf_owned: Array2<f32> = match confidence {
         Some(c) => c.to_owned(),
         None => pseudo_coh_from_variance(variance),
@@ -468,9 +468,9 @@ pub fn unwrap_tiled(
 /// Coherence above which a branch cut counts as "through coherent terrain".
 const COH_CUT_THR: f32 = 0.7;
 /// Coherent-cut rate (coherence-weighted cuts per valid pixel) above which the
-/// gated multi-shift re-solve fires. Empirically the fragmented GUNW A_016 sits
-/// at ≈6.7e-3 while every clean / noisy-but-fine scene (NISAR, Atlanta, the four
-/// clean GUNW frames) is ≤5.6e-4 - a >3x margin on each side.
+/// gated multi-shift re-solve fires. Empirically a fragmented decorrelation-split
+/// frame sits well above this floor while clean / noisy-but-fine scenes sit well
+/// below it, leaving a comfortable margin on each side.
 const COH_CUT_FLOOR: f64 = 1.5e-3;
 
 #[inline]
@@ -537,16 +537,16 @@ fn coherent_cut_rate(
 /// Runs the standard tile grid. A correct unwrap never tears coherent terrain, so
 /// if the result has a high `coherent_cut_rate` (> [`COH_CUT_FLOOR`]) - the
 /// signature of a tile-SEAM artifact or a wrong global WINDING on a fragmented
-/// scene (e.g. NISAR GUNW A_016, a decorrelation-split frame) - it re-runs on tile
+/// decorrelation-split scene - it re-runs on tile
 /// grids shifted by fractions of the tile step (a seam in one grid is interior in
 /// another) and returns the result with the FEWEST coherent cuts. The shift is
 /// realised by zero-padding the top-left by `s` (those pixels are masked out), so
 /// no change to the tile decomposition is needed.
 ///
 /// No-op (1x cost) on clean scenes (rate ≈ 0); ~4x on the rare fragmented frame
-/// that needs it (speed is not the constraint there). Validated: A_016 55% → 97%
-/// with the high-coherence seam-strip artifact removed, and the four clean GUNW
-/// frames + NISAR + Atlanta unchanged (gate does not fire).
+/// that needs it (speed is not the constraint there). On a validated
+/// decorrelation-split frame this removed a high-coherence seam-strip artifact
+/// while leaving clean scenes unchanged (the gate does not fire).
 pub fn unwrap_tiled_robust(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -650,7 +650,7 @@ fn pseudo_coh_from_variance(variance: ArrayView2<f32>) -> Array2<f32> {
 /// the caller's coherence (e.g. dolphin `.cor`) when provided, else a
 /// pseudo-coherence derived from the CRLB variance ([`pseudo_coh_from_variance`]).
 /// The pseudo-coherence is low-dynamic-range, so passing a real coherence raster
-/// markedly improves tile-block-offset pinning (#58). The per-tile solve is
+/// markedly improves tile-block-offset pinning. The per-tile solve is
 /// CRLB-cost regardless.
 pub fn unwrap_crlb_tiled_robust(
     igram: ArrayView2<Complex32>,
@@ -1267,21 +1267,17 @@ fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Arr
     out
 }
 
-/// Adaptive multilook factor for the global coarse anchor (issue #65).
+/// Adaptive multilook factor for the global coarse anchor.
 ///
 /// The anchor is a whole-image solve on the `lkx`-multilooked image. A whole-
 /// image MCF solve "runs away" once the domain exceeds ~256 px (the per-arc cost
-/// optimum drifts to a wrong large-scale winding; see
-/// `paper/why_whole_image_runs_away.md`). The historical hardcoded `lk = 8` left
-/// the coarse solve at e.g. 522 px on a 4176-px NISAR frame - so the *anchor
-/// itself ran away* (D_077 tiled: 48 → 63 % once the coarse image is pushed
-/// below ~256 px). We therefore size `lk` so the coarse image lands just under
-/// ~256 px: large enough that the coarse solve doesn't run away, but no
-/// coarser, since over-multilooking smooths away real winding and regresses
-/// gentler frames (A_030 held at lk≤16 / coarse≥266 px but lost 2.6 pts by lk=20
-/// / coarse 213 px in the 13-frame sweep). Floor at 8 (historical) for small
-/// frames where the whole-image solve is already well-posed.
-/// `WHIRLWIND_ANCHOR_LK` overrides for A/B testing.
+/// optimum drifts to a wrong large-scale winding). A fixed `lk = 8` leaves the
+/// coarse solve too large on a NISAR-sized frame - so the *anchor itself runs
+/// away*. We therefore size `lk` so the coarse image lands just under ~256 px:
+/// large enough that the coarse solve doesn't run away, but no coarser, since
+/// over-multilooking smooths away real winding and regresses gentler frames.
+/// Floor at 8 for small frames where the whole-image solve is already
+/// well-posed. `WHIRLWIND_ANCHOR_LK` overrides for testing.
 fn anchor_lk((m, n): (usize, usize)) -> usize {
     if let Ok(v) = std::env::var("WHIRLWIND_ANCHOR_LK")
         && let Ok(k) = v.parse::<usize>()
@@ -1291,10 +1287,9 @@ fn anchor_lk((m, n): (usize, usize)) -> usize {
     // Coarse image ~256-288 px: large enough the coarse solve doesn't run away,
     // not so coarse it over-smooths real winding. The sweet spot is narrow and
     // mildly content-dependent (gentler frames over-smooth sooner), so we clamp
-    // lk to [8, 16]: lk=16 was good for BOTH the runaway-prone D-frames (D_077
-    // +15 pts) AND the gentle A_030 (no regression) in the 13-frame sweep, while
-    // lk>=18 (coarse < ~256 px) regressed A_030. floor(maxdim/256) reaches the
-    // cap of 16 for all ~4200-4600 px NISAR GUNW frames.
+    // lk to [8, 16]: lk=16 helped the runaway-prone frames without regressing
+    // the gentler ones, while lk>=18 (coarse < ~256 px) started to over-smooth.
+    // floor(maxdim/256) reaches the cap of 16 for all ~4200-4600 px NISAR GUNW frames.
     const TARGET_COARSE_PX: usize = 256;
     let maxdim = m.max(n);
     (maxdim / TARGET_COARSE_PX).clamp(8, 16)
@@ -1313,8 +1308,7 @@ fn compute_coarse_anchor(
     }
     let (cig, ccorr, cmask) = multilook_complex(igram, corr, mask, lk);
     // One whole-image solve on the tiny coarse image; effective looks xlk².
-    // Corner-safe reuse (the coarse image is gentle, but #50 removed the plain
-    // capacity-1 solver entirely).
+    // Corner-safe reuse solver for the gentle coarse image.
     let cunw = crate::unwrap_reuse(
         cig.view(),
         ccorr.view(),
@@ -1735,9 +1729,9 @@ fn heal_thin_slivers(
 }
 
 /// Per-tile base solver. The linear Carballo cost has a corner / capacity-1
-/// boundary-stacking bug on smooth STEEP signals (paper/pyramid_aliasing.md:
-/// ~88% on a clean 0.7π bowl vs 100% for reuse/convex). `reuse` (PHASS
-/// flow-reuse) and `convex` (SNAPHU quadratic) are corner-safe.
+/// boundary-stacking weakness on smooth steep signals (e.g. a clean phase bowl),
+/// where `reuse` (PHASS flow-reuse) and `convex` (SNAPHU quadratic) are
+/// corner-safe.
 #[derive(Clone, Copy, PartialEq)]
 enum TileSolver {
     Reuse,
@@ -1747,12 +1741,10 @@ enum TileSolver {
 /// `WHIRLWIND_TILE_SOLVER=reuse|convex` (default reuse). Legacy
 /// `WHIRLWIND_TILE_CONVEX=1` also selects convex.
 ///
-/// The old `linear` unit-capacity solver was removed in #50: it had the
-/// capacity-1 boundary-stacking bug on steep clean ramps (12.6 rad error vs
-/// reuse's 0.0) AND ~6x more single-cycle errors than reuse on real scenes
-/// (NISAR 99.86% vs 99.97%), for only a speed win - not worth an ever-artifacty
-/// solver. Reuse (PHASS flow-reuse) is the corner-safe default; convex is
-/// research-only.
+/// The per-tile linear unit-capacity solver was dropped here: it had the
+/// capacity-1 boundary-stacking weakness on steep clean ramps and more
+/// single-cycle errors than reuse on real scenes, for only a speed win. Reuse
+/// (PHASS flow-reuse) is the corner-safe default; convex is research-only.
 fn tile_solver() -> TileSolver {
     use std::sync::OnceLock;
     static F: OnceLock<TileSolver> = OnceLock::new();

@@ -492,13 +492,13 @@ pub fn compute_carballo_costs_parity(
 
     // DE-DEGENERATION KNOB (`WHIRLWIND_SEA_COST`, default 0 = ww-orig parity).
     // Masked "sea" arcs are cost-0 in ww-orig, so routing residue-pairing flow
-    // across the masked sea is FREE - on heavily-masked frames (e.g. D_074 at
-    // 5.8% valid) the min-cost flow then prefers long sea branch cuts over short
+    // across the masked sea is FREE - on heavily-masked frames (only a few
+    // percent valid) the min-cost flow then prefers long sea branch cuts over short
     // cuts pairing nearby residues, which is an equally-cheap but WRONG unwrap
     // (the cost under-determines the answer; ww-orig only lands the right one by
     // FIFO ordering luck). A small positive sea cost penalizes long sea
     // traversal so short (correct) cuts win - a robust de-degeneration that does
-    // not depend on tie-break order. See paper/handoff.md (2026-06-03).
+    // not depend on tie-break order.
     let sea = sea_cost_parity();
 
     let mut cost = vec![0_i32; g.num_forward];
@@ -851,8 +851,7 @@ pub fn compute_snaphu_smooth_costs(
     // implementation fed the *smoothed* gradient alone (`avgdpsi`), which the
     // 7x7 box washes to ≈0 both in smooth areas AND across wrap lines - leaving
     // |offset| ≲ 22 with no wrap-line information and the convex cost degenerate
-    // to pure `w·k²` (paper/convex_cost_design.md Suspect 5; the doc's prose
-    // mis-stated SNAPHU's offset as `avgdpsi` - the source uses the deviation).
+    // to pure `w·k²`.
     //
     // The difference is NOT re-wrapped: SNAPHU leaves `dpsi − avgdpsi` free to
     // exceed ½ cycle so the parabola minimum can sit at k = ±1. The absolute

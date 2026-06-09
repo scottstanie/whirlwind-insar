@@ -68,22 +68,13 @@ enum Cmd {
         /// number of looks
         #[arg(long, default_value_t = 1.0)]
         nlooks: f32,
-        /// Goldstein adaptive-filter strength in [0, 1]. Default 0.7.
-        /// Set to 0 to skip the prefilter entirely. When > 0, the wrapped
-        /// phase is Goldstein-filtered before MCF (≈ 2x faster on noisy
-        /// scenes, fewer ±2π errors at wrap-line boundaries), then the
-        /// resulting integer cycle field is transferred back to the
-        /// *original* wrapped phase (dolphin PR #364 convention - avoids
-        /// spurious 2π jumps at fringe boundaries).
-        ///
-        /// On a 6811x6912 NISAR scene against SNAPHU `ntiles=(9,9)` as the
-        /// land-area reference (17 min wall): α=0.5 gave 93.5 % per-pixel
-        /// integer-cycle agreement on the cc=1 mainland; α=0.7 gives
-        /// 99.90 % - essentially pixel-perfect agreement - while still
-        /// running 27x faster than SNAPHU. α=0.75 is marginally worse
-        /// (99.87 %), so 0.7 is a good "on" value for typical InSAR scenes.
-        /// Default is 0 (off) while the Goldstein-on-vs-off trade-off is
-        /// under evaluation; pass `--goldstein-alpha 0.7` to enable.
+        /// Goldstein adaptive-filter strength in [0, 1]. Default 0 (off);
+        /// pass e.g. `--goldstein-alpha 0.7` to enable. When > 0, the wrapped
+        /// phase is Goldstein-filtered before MCF (faster on noisy scenes,
+        /// fewer ±2π errors at wrap-line boundaries), then the resulting
+        /// integer cycle field is transferred back to the *original* wrapped
+        /// phase (avoids spurious 2π jumps at fringe boundaries). α≈0.7 is a
+        /// good "on" value for typical InSAR scenes.
         #[arg(long, default_value_t = 0.0)]
         goldstein_alpha: f32,
         /// Goldstein FFT patch size (even, ≥ 4). Larger = stronger spatial

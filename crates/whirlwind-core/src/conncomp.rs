@@ -29,8 +29,9 @@ use crate::network::Network;
 use ndarray::{Array2, ArrayView2};
 use std::collections::VecDeque;
 
-/// Parameters for [`grow_components`]. Defaults mirror SNAPHU's `defparams`
-/// scaled to whirlwind's `COST_SCALE = 100` (Carballo cost ranges 0..~314).
+/// Parameters for [`grow_components`]. The `cost_threshold` is compared against
+/// the default Carballo coherence cost grid (`CARBALLO_COST_SCALE = 6`); the
+/// default of 50 corresponds to a per-edge one-cycle probability of ~2.4e-4.
 #[derive(Debug, Clone)]
 pub struct ConnCompParams {
     /// Cut a pixel edge when min raw forward cost across the two underlying

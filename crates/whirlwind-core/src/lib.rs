@@ -191,13 +191,10 @@ pub fn unwrap_coherence_with_components(
 /// in the ignored `diagonal_ramp_512` regression test: clean smooth ramps
 /// whose wrap-lines all exit at the same boundary segment.
 ///
-/// **Do not use on noisy real-world IGs.** Empirical sweep on a Capella
-/// Palos Verdes scene (`paper/phass_experiments.md`, 2026-05-28 follow-up):
-/// K-agreement vs SNAPHU drops from 90.7 % (baseline) to ~20 % at every
-/// `ground_cost ∈ {0, 50, 100, 200}` tested. Real data has dense interior
-/// residue pairs that *want* to pair internally; routing them to ground
-/// along non-physical paths corrupts the unwrap. Same direction on a NISAR
-/// scene (80 % → 42 %).
+/// **Do not use on noisy real-world IGs.** In empirical sweeps, K-agreement
+/// vs SNAPHU collapses at every `ground_cost` tested. Real data has dense
+/// interior residue pairs that *want* to pair internally; routing them to
+/// ground along non-physical paths corrupts the unwrap.
 ///
 /// Use [`unwrap_reuse`] for real data. This function is exported only for the
 /// boundary-stacking regression and for callers who have verified their
@@ -246,13 +243,12 @@ pub fn unwrap_grounded(
 /// queue Dijkstra reads the *marginal* cost (cost of pushing one more
 /// unit at current flow) via [`Network::marginal_cost`] in convex mode.
 ///
-/// Built to address the residual NISAR gap from the reuse prototype:
-/// path-dependence ruled out (`paper/phass_experiments.md` 2026-05-28
-/// follow-up), the 7 % residual error is the genuine cost-optimum of
-/// the linear coherence-cost model. Quadratic curvature should make
-/// large coherent multi-cycle deviations structurally expensive in a
-/// way linear cost cannot. See `paper/convex_cost_design.md`.
-/// Convex-solve backend selector (issue #65), read once from
+/// Built to address the residual gap from the reuse prototype: with
+/// path-dependence ruled out, the residual error is the genuine cost-optimum
+/// of the linear coherence-cost model. Quadratic curvature should make large
+/// coherent multi-cycle deviations structurally expensive in a way linear cost
+/// cannot.
+/// Convex-solve backend selector, read once from
 /// `WHIRLWIND_CONVEX_SOLVE` ∈ {`pd` (default), `ssp`, `cancel`}.
 fn convex_solve_mode() -> String {
     use std::sync::OnceLock;
@@ -285,7 +281,7 @@ pub fn unwrap_convex(
     // Network::preload_convex_min). Without this the solve silently corrupts in
     // release once any |offset| > 50 (which the deviation offset now produces).
     net.preload_convex_min(&graph);
-    // Solve dispatch (issue #65). Default `pd` = fast batched primal-dual augment,
+    // Solve dispatch. Default `pd` = fast batched primal-dual augment,
     // which is feasible but lands far from the convex optimum at NISAR scale
     // (the batched multi-path augment places ~all flow at one stale Dijkstra
     // snapshot's marginals; nothing re-optimizes it). `ssp` = pure single-path
@@ -545,13 +541,12 @@ pub fn crlb_components_only(
 /// CRLB-cost unwrap returning `(phase, conn_components)` - the engine behind the
 /// public `unwrap_crlb`.
 ///
-/// **EXPERIMENTAL / WIP - NOT validated.** Phase uses the tiled CRLB pipeline
+/// **Experimental / not validated.** Phase uses the tiled CRLB pipeline
 /// [`tile::unwrap_crlb_tiled_robust`] (`tile_size == 0` tiles frames larger than
 /// 512 px + a gated multi-shift winding fix); components are grown globally and
-/// solve-free ([`crlb_components_only`]). This tiling was mid-implementation and
-/// never brought to useful results - the SAME WIP status as the coherence tiled
-/// path; neither was validated. Porting the CRLB path to the verified single-tile
-/// kernel (the coherence default) is future work - see issue #35.
+/// solve-free ([`crlb_components_only`]). This rides the same experimental tiling
+/// as the coherence tiled path. Porting the CRLB path to the verified
+/// single-tile kernel (the coherence default) is future work.
 pub fn unwrap_crlb_robust_with_components(
     igram: ArrayView2<Complex32>,
     variance: ArrayView2<f32>,

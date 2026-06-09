@@ -1,5 +1,4 @@
-//! Negative-cycle canceling for the convex (SNAPHU-smooth) min-cost flow
-//! (issue #65).
+//! Negative-cycle canceling for the convex (SNAPHU-smooth) min-cost flow.
 //!
 //! The fast `primal_dual` batched augment produces a FEASIBLE flow but, at
 //! NISAR scale, lands far above the convex optimum: it places ~all flow in a

@@ -6,7 +6,7 @@ valid area into pieces, a minimum-cost-flow unwrapper cannot observe the relativ
 an arbitrary cycle, so each region is internally correct but may sit a whole
 number of cycles above or below its neighbours. **Bridging** estimates and
 removes those inter-region offsets. In whirlwind it is the default-on `bridge`
-post-pass of [`unwrap`](API.md), and is also available standalone as
+post-pass of [`unwrap`](ALGORITHM.md), and is also available standalone as
 `whirlwind.bridge_components`.
 
 ## Why it is easy to miss

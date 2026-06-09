@@ -13,7 +13,7 @@ plausible). Stricter settings draw more boundaries, giving more but smaller and
 
 ## The knobs
 
-All are keyword arguments to [`unwrap`](API.md):
+All are keyword arguments to [`unwrap`](ALGORITHM.md):
 
 | Knob | What it does | Direction |
 |---|---|---|

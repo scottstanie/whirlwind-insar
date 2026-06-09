@@ -33,7 +33,7 @@
 //!
 //! For every dual-graph arc we also expose the *primal* pixel-pair endpoints
 //! (`edge_pixel_pair`) - the two input pixel indices that this triangulation
-//! edge connects. That's what downstream code (e.g. spurt PR #97's B_perp
+//! edge connects. That's what downstream code (e.g. a spurt-style B_perp
 //! integer-ambiguity fit) needs to plug per-edge models in via
 //! `Network::warm_start`.
 

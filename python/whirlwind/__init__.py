@@ -376,8 +376,8 @@ def unwrap(
 # NOTE: the CRLB unwrappers (``unwrap_crlb``, ``unwrap_crlb_grounded``,
 # ``unwrap_crlb_stack``) and the whole-image ``unwrap_reuse`` solver are
 # intentionally NOT in ``__all__``. They are experimental / unvalidated: the
-# CRLB paths are still WIP, and ``unwrap_reuse`` is redundant with the validated
-# default (and reachable via ``WHIRLWIND_UNWRAP_SOLVER=reuse``). They remain
+# CRLB paths are still experimental, and ``unwrap_reuse`` is redundant with the
+# validated default (and reachable via ``WHIRLWIND_UNWRAP_SOLVER=reuse``). They remain
 # importable for internal use and parity tests but are kept off the public API
 # until validated.
 __all__ = [

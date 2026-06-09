@@ -46,7 +46,7 @@ The unwrapped phase is congruent with the wrapped input modulo 2pi. Connected co
 
 ## Bridge post-pass
 
-If a valid mask splits the scene into disconnected regions, the relative 2pi offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region, then builds a minimum spanning tree over the nearest boundary-pixel pairs (rooted at the largest region) and reads the relative level from the unwrapped phase in a small box at each bridge endpoint, rounding it to an integer number of cycles. This is a pure-numpy port of isce3's NISAR GUNW bridging, and fixes narrow disconnected-region cases such as the A_025 river example in the NISAR comparison.
+If a valid mask splits the scene into disconnected regions, the relative 2pi offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region, then builds a minimum spanning tree over the nearest boundary-pixel pairs (rooted at the largest region) and reads the relative level from the unwrapped phase in a small box at each bridge endpoint, rounding it to an integer number of cycles. This is a pure-numpy port of isce3's NISAR GUNW bridging, and fixes narrow disconnected-region cases such as a low-coherence river splitting a scene into two land slabs.
 
 ## Notes for developers
 

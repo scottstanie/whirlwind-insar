@@ -68,7 +68,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
 /// is popped and gets an exact finalized distance. The subsequent potential
 /// update `π[v] -= d[v]` for ALL nodes produces tight reduced costs, causing
 /// each PD iteration to route significantly more flow than early-exit Dijkstra.
-/// On D_077 full-frame this closes a ~5.5% quality gap (94% → ~99%).
+/// On large full-frame scenes this closes a several-percent quality gap.
 pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     run_impl(g, net, max_iter, true);
 
@@ -77,7 +77,7 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
     // residual graph on heavily-masked frames → excess nodes trapped in tiny
     // residual components with no deficit). When that leaves the network
     // unbalanced, resume the multi-source PD (which converges to ww-orig's flow
-    // on D_074/A_035 - it doesn't fragment the same way) in chunks, retrying SSP
+    // - it doesn't fragment the same way) in chunks, retrying SSP
     // each round, up to a cap. This is a robustness lever, NOT literal ww-orig
     // parity (ww-orig fixes it in one 8-PD + SSP pass; the remaining trajectory
     // mismatch is still open). The final imbalance is always reported.

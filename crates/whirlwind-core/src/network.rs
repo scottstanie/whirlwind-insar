@@ -188,7 +188,7 @@ impl Network {
     ///   wants to disallow flow on specific edges before the solve.
     ///
     /// For warm-starting from a precomputed arc-level integer estimate
-    /// (e.g. spurt PR #97's B_perp model), call [`Network::warm_start`] on
+    /// (e.g. a spurt-style B_perp model), call [`Network::warm_start`] on
     /// the returned network before invoking the solver.
     pub fn from_topology(
         num_nodes: usize,
@@ -248,7 +248,7 @@ impl Network {
     }
 
     /// **Experimental / not yet safe to call.** Toggles per-arc saturation
-    /// from an integer flow vector, intended as a hook for spurt-PR-#97-style
+    /// from an integer flow vector, intended as a hook for spurt-style
     /// B⊥ ambiguity warm-starts. Entries must be in `{-1, 0, +1}`.
     ///
     /// # Known issues - do not use in production
@@ -266,9 +266,6 @@ impl Network {
     ///    warm-start workflow needs an SPFA / Bellman-Ford pre-pass to
     ///    recompute valid potentials, plus Klein cycle-cancellation when
     ///    the warm-start flow contains negative residual cycles.
-    ///
-    /// See the "Stage 3 was harder than the 50-LOC estimate" section in
-    /// `paper/tiling.md` for the full analysis.
     ///
     /// Until that machinery lands, prefer the [`Network::from_topology`]
     /// `excess` parameter for "apply div(warm-start) without saturating

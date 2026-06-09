@@ -11,11 +11,6 @@
 > tile seams**, which has not been built. The text below is preserved as a record
 > of the approach only - do not treat any of it as current/shipped behavior.
 
-**The fuller historical account lives in
-[`paper/tiling.md`](https://github.com/scottstanie/whirlwind-insar/blob/main/paper/tiling.md)**
-- why naive tiling fails, the stitch crux, the secondary-MCF and coarse-anchor
-work, and the Stage-3 warm-start dead-ends.
-
 ## What was attempted (historical, not shipped)
 
 The opt-in tiled path unwrapped frames as follows:
@@ -36,7 +31,7 @@ moderate-coherence scenes (e.g. Sentinel-1) passed `multilook=L`.
 
 Within this historical attempt, the planned per-region secondary MCF
 ("Stage 2") and warm-started full-image reoptimize ("Stage 3") were set aside in
-favor of the coarse anchor + cascade - see `paper/tiling.md` for why, including
-the Stage-3 warm-start approaches that were prototyped and rejected. None of this
-is the current/shipped path; a future tiling effort would likely revisit exact
+favor of the coarse anchor + cascade; the Stage-3 warm-start approaches were
+prototyped and rejected. None of this is the current/shipped path; a future
+tiling effort would likely revisit exact
 overlap / connected-component reconciliation rather than this cascade.

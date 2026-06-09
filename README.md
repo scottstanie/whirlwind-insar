@@ -26,9 +26,9 @@ unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)
 
 `igram` is a complex wrapped interferogram, `corr` is coherence/correlation in `[0, 1]`, and `mask` is optional with `True` for valid pixels.
 
-For noisy scenes, coarsen the solve with `downsample` (it unwraps an 8x8
-coherently-averaged copy to pick each block's 2π cycle, then maps the cycles
-back onto the full-resolution phase). `nlooks` stays the effective looks of your
+For noisy scenes, coarsen the solve with `downsample` (it unwraps a
+coherently-averaged copy at the given factor to pick each block's 2π cycle, then
+maps the cycles back onto the full-resolution phase). `nlooks` stays the effective looks of your
 input `corr` — the down-look scaling is handled internally, so you do not raise
 it yourself:
 
