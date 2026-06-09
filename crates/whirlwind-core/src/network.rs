@@ -57,6 +57,20 @@ pub struct Network {
     /// Filled by `cost::compute_snaphu_smooth_costs`; zero in non-convex mode.
     pub weights: Vec<i32>,
 
+    /// EXPERIMENTAL gutter fix for the capacity-1 boundary-stacking tear
+    /// (see `scripts/diag_tear_capacity_hypothesis.py`). Forward arcs marked
+    /// here are MULTI-UNIT: `push_unit` never saturates them, so any number
+    /// of cuts can cross the image through them. Only the outermost "ring"
+    /// arcs qualify - vertical arcs in the first/last residue columns and
+    /// horizontal arcs in the first/last residue rows. Those arcs are never
+    /// read by `integrate` (their pixel edge lies outside the image), so
+    /// flow on them is pure gauge - and they carry cost 0 (the cost builders
+    /// never write them), so unlimited flow cannot change the optimum's cost,
+    /// only un-strand cuts that previously had nowhere free to cross.
+    /// Empty when disabled. Marked only where the cost is actually 0
+    /// (external-cost diagnostics keep capacity-1 on nonzero ring arcs).
+    multi_unit: BitVec,
+
     // Grid sub-layout (so we can transpose without holding a &Graph)
     num_grid_forward: usize,
     num_grid_nodes: usize,
@@ -257,6 +271,8 @@ impl Network {
             convex_mode: false,
             offsets: Vec::new(),
             weights: Vec::new(),
+            // No gutter ring on topology-agnostic graphs (no raster boundary).
+            multi_unit: BitVec::new(),
             num_grid_forward: nf,
             num_grid_nodes: num_nodes,
             num_ground: 0,
@@ -406,6 +422,7 @@ impl Network {
             convex_mode: false,
             offsets: Vec::new(),
             weights: Vec::new(),
+            multi_unit: BitVec::new(),
             num_grid_forward: nf_grid,
             num_grid_nodes,
             num_ground,
@@ -413,10 +430,40 @@ impl Network {
             boundary_nodes,
             node_to_ground_idx,
         };
+        net.mark_gutter_multi_unit(g);
         if let Some(mm) = mask {
             net.forbid_masked_arcs(g, mm);
         }
         net
+    }
+
+    /// Mark the outermost gutter-ring arcs multi-unit (see the `multi_unit`
+    /// field doc). Vertical (DOWN/UP) arcs in residue columns `0` and `n-1`,
+    /// horizontal (RIGHT/LEFT) arcs in residue rows `0` and `m-1` - exactly
+    /// the arcs whose crossing pixel-edge lies outside the image, so
+    /// `integrate` never reads their flow. Only zero-cost arcs are marked;
+    /// a nonzero externally-supplied ring cost keeps capacity-1 semantics.
+    fn mark_gutter_multi_unit(&mut self, g: &RectangularGridGraph) {
+        let mut multi = bitvec![0; self.num_forward()];
+        let (m, n) = (g.m, g.n);
+        let mut mark = |arc: usize, cost_fwd: &[u16]| {
+            if cost_fwd[arc] == 0 {
+                multi.set(arc, true);
+            }
+        };
+        for i in 0..m - 1 {
+            for &j in &[0, n - 1] {
+                mark(g.down_arc(i, j).unwrap(), &self.cost_fwd);
+                mark(g.up_arc(i + 1, j).unwrap(), &self.cost_fwd);
+            }
+        }
+        for j in 0..n - 1 {
+            for &i in &[0, m - 1] {
+                mark(g.right_arc(i, j).unwrap(), &self.cost_fwd);
+                mark(g.left_arc(i, j + 1).unwrap(), &self.cost_fwd);
+            }
+        }
+        self.multi_unit = multi;
     }
 
     // -- ground introspection ------------------------------------------------
@@ -794,8 +841,22 @@ impl Network {
             // Deliberately do NOT set is_saturated[arc] = true. Multi-unit
             // capacity is what makes both reuse and convex modes work.
         } else {
-            self.is_saturated.set(arc, true);
-            self.is_saturated.set(t, false);
+            // Gutter-ring arcs are multi-unit (zero-cost, integration-
+            // invisible gauge arcs - see the `multi_unit` field doc): never
+            // saturate them, so any number of cuts can cross the boundary
+            // ring. Flow on them is not tracked; `arc_flow` reports 0, which
+            // is correct for integration since the arcs are never read.
+            let fwd = if arc < self.num_forward() {
+                arc
+            } else {
+                arc - self.num_forward()
+            };
+            if !self.multi_unit.is_empty() && self.multi_unit[fwd] {
+                self.is_saturated.set(t, false);
+            } else {
+                self.is_saturated.set(arc, true);
+                self.is_saturated.set(t, false);
+            }
         }
     }
 

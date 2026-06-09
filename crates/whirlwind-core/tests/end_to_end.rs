@@ -161,6 +161,68 @@ fn single_source_ssp_keeps_nonnegative_reduced_costs() {
     );
 }
 
+/// Regression for the masked-plane TEAR (the capacity-1 gutter-stacking
+/// limitation; see `scripts/diag_tear_capacity_hypothesis.py`). A clean,
+/// well-sampled diagonal plane masked to a full-width horizontal band
+/// disconnects the top/bottom zero-fill seas, so each fringe's +/- boundary
+/// charge pair needs one unit of flow ACROSS the band. The only zero-cost,
+/// integration-invisible crossings are the two image-edge gutter columns -
+/// capacity 1 each before the multi-unit gutter ring, so a 3-fringe ramp
+/// forced one cut through the band interior (a 2pi tear over ~42% of the
+/// band). With the multi-unit gutter ring all crossings ride the gutter for
+/// free and the unwrap is EXACT.
+#[test]
+fn masked_band_plane_no_tear() {
+    let n = 256usize;
+    let cycles = 3.0_f32;
+    let truth = Array2::from_shape_fn((n, n), |(i, j)| {
+        let x = j as f32 / (n - 1) as f32 - 0.5;
+        let y = i as f32 / (n - 1) as f32 - 0.5;
+        2.0 * std::f32::consts::PI * cycles * (x + y)
+    });
+    let mask = Array2::from_shape_fn((n, n), |(i, _)| (64..n - 64).contains(&i));
+    // Production nodata convention: zero-fill the masked sea.
+    let igram = Array2::from_shape_fn((n, n), |(i, j)| {
+        if mask[(i, j)] {
+            Complex32::from_polar(1.0, truth[(i, j)])
+        } else {
+            Complex32::new(0.0, 0.0)
+        }
+    });
+    let corr = Array2::from_shape_fn((n, n), |(i, j)| if mask[(i, j)] { 0.999 } else { 0.0 });
+
+    let unw =
+        whirlwind_core::unwrap_linear(igram.view(), corr.view(), 1.0, Some(mask.view())).unwrap();
+
+    // Align on the band's mean offset, then require ZERO cycle error on every
+    // valid pixel - the pre-fix solver left ~42% of the band one cycle low.
+    let (vals, truths): (Vec<f32>, Vec<f32>) = unw
+        .iter()
+        .zip(truth.iter())
+        .zip(mask.iter())
+        .filter(|&(_, &keep)| keep)
+        .map(|((&v, &t), _)| (v, t))
+        .unzip();
+    let mean_diff: f64 = vals
+        .iter()
+        .zip(truths.iter())
+        .map(|(&a, &b)| (a - b) as f64)
+        .sum::<f64>()
+        / vals.len() as f64;
+    let tau = 2.0 * std::f64::consts::PI;
+    let offset = ((mean_diff / tau).round() * tau) as f32;
+    let n_torn = vals
+        .iter()
+        .zip(truths.iter())
+        .filter(|&(&v, &t)| ((v - offset - t) as f64 / tau).round() != 0.0)
+        .count();
+    assert_eq!(
+        n_torn, 0,
+        "masked band plane torn: {n_torn}/{} valid px off by >= 1 cycle",
+        vals.len()
+    );
+}
+
 /// Regression for the zero-cost masked-sea blowup. `unwrap_linear` does NOT
 /// forbid masked arcs (cost 0), so a heavily-masked frame is a vast zero-cost
 /// "sea"; the single-source SSP must cross it to pair residues. With a binary
