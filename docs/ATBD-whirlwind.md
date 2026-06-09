@@ -642,9 +642,7 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
    tiled path (`unwrap_tiled_robust`) - seam reconciliation, coarse anchor +
    multi-scale cascade, sliver healing, gated multi-shift re-solve - is
    empirically tuned against benchmark scenes, **not proven optimal**, and can
-   produce invalid (fast-but-wrong) results on fragmented NISAR scenes. It
-   carries environment
-   escape hatches (`WHIRLWIND_NO_ANCHOR`, `WHIRLWIND_NO_HEAL`). Only the
+   produce invalid (fast-but-wrong) results on fragmented NISAR scenes. Only the
    single-tile kernel (§3.1, §9.6) is verified.
 
 ### 9.6 Validated Paths and Benchmark

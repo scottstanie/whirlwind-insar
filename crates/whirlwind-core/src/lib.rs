@@ -248,15 +248,6 @@ pub fn unwrap_grounded(
 /// of the linear coherence-cost model. Quadratic curvature should make large
 /// coherent multi-cycle deviations structurally expensive in a way linear cost
 /// cannot.
-/// Convex-solve backend selector, read once from
-/// `WHIRLWIND_CONVEX_SOLVE` ∈ {`pd` (default), `ssp`, `cancel`}.
-fn convex_solve_mode() -> String {
-    use std::sync::OnceLock;
-    static M: OnceLock<String> = OnceLock::new();
-    M.get_or_init(|| std::env::var("WHIRLWIND_CONVEX_SOLVE").unwrap_or_else(|_| "pd".into()))
-        .clone()
-}
-
 pub fn unwrap_convex(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -281,24 +272,11 @@ pub fn unwrap_convex(
     // Network::preload_convex_min). Without this the solve silently corrupts in
     // release once any |offset| > 50 (which the deviation offset now produces).
     net.preload_convex_min(&graph);
-    // Solve dispatch. Default `pd` = fast batched primal-dual augment,
-    // which is feasible but lands far from the convex optimum at NISAR scale
-    // (the batched multi-path augment places ~all flow at one stale Dijkstra
-    // snapshot's marginals; nothing re-optimizes it). `ssp` = pure single-path
-    // successive-shortest-paths (sound but O(units) Dijkstras - only viable on
-    // crops). `cancel` = fast `pd` warm-start + negative-cycle canceling to drive
-    // the feasible flow to the convex optimum (scalable; the real fix).
-    match convex_solve_mode().as_str() {
-        "ssp" => ssp::run(&graph, &mut net),
-        "cancel" => {
-            primal_dual::run(&graph, &mut net, 50);
-            let n = cycle_cancel::cancel_negative_cycles(&graph, &mut net, usize::MAX);
-            if primal_dual::debug_enabled() {
-                eprintln!("[convex] cancelled {n} negative cycles");
-            }
-        }
-        _ => primal_dual::run(&graph, &mut net, 50),
-    }
+    // Batched primal-dual augment: feasible, but lands far from the convex
+    // optimum at NISAR scale. The convex path is experimental; see
+    // [`cycle_cancel`] for negative-cycle canceling that drives the feasible
+    // flow toward the optimum.
+    primal_dual::run(&graph, &mut net, 50);
     let unw = if mask.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mask)
     } else {
@@ -365,17 +343,8 @@ pub fn unwrap_linear(
     // distances, causing looser reduced costs and ~5.5% quality loss over
     // 8 PD iterations on masked NISAR scenes.
     //
-    // PD iteration count: default 8 (matches ww-orig `primal_dual(maxiter=8)`).
-    // DIAGNOSTIC knob `WHIRLWIND_LINEAR_PD_ITERS`: ww-orig's PD ALONE (maxiter=0)
-    // converges to the correct balanced flow, while Rust's single-source SSP
-    // strands a few residues after only 8 PD iters. Bumping this lets us test
-    // whether running PD to convergence (before the SSP fallback) reaches the
-    // balanced ww-orig flow - isolating PD-correctness from the SSP stranding.
-    let pd_iters: usize = std::env::var("WHIRLWIND_LINEAR_PD_ITERS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8);
-    primal_dual::run_full_dijkstra(&graph, &mut net, pd_iters);
+    // 8 PD iterations, matching ww-orig `primal_dual(maxiter=8)`.
+    primal_dual::run_full_dijkstra(&graph, &mut net, 8);
     let mut unw = integrate::integrate(wrapped_phase.view(), &graph, &net);
     if let Some(mm) = mask {
         unw.zip_mut_with(&mm, |u, &v| {

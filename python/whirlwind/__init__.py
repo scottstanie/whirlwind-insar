@@ -373,28 +373,26 @@ def unwrap(
 # unit-magnitude normalisation / Hann-window choices it makes.
 
 
-# NOTE: the CRLB unwrappers (``unwrap_crlb``, ``unwrap_crlb_grounded``,
-# ``unwrap_crlb_stack``) and the whole-image ``unwrap_reuse`` solver are
-# intentionally NOT in ``__all__``. They are experimental / unvalidated: the
-# CRLB paths are still experimental, and ``unwrap_reuse`` is redundant with the
-# validated default (and reachable via ``WHIRLWIND_UNWRAP_SOLVER=reuse``). They remain
-# importable for internal use and parity tests but are kept off the public API
-# until validated.
+# NOTE: several natives are imported above but intentionally NOT in ``__all__``.
+# They remain importable for internal use, benchmarks, and parity tests, but are
+# kept off the public API:
+#   - the CRLB unwrappers (``unwrap_crlb``, ``unwrap_crlb_grounded``) and the
+#     whole-image ``unwrap_reuse`` solver - experimental / unvalidated
+#     (``unwrap_reuse`` is reachable via ``WHIRLWIND_UNWRAP_SOLVER=reuse``);
+#   - the temporal-closure stack functions (``closure_correct``,
+#     ``closure_refine_mcf``) and quality maps (``quality_map``,
+#     ``quality_triangles``) - experimental 3D / diagnostic helpers;
+#   - the synthetic-scene generators (``diagonal_ramp``, ``simulate_ifg``) -
+#     test/benchmark utilities.
 __all__ = [
     "bridge_components",
-    "closure_correct",
-    "closure_refine_mcf",
     "compute_residues",
     "cost_threshold_from_cycle_prob",
-    "diagonal_ramp",
     "goldstein",
     "interpolate",
     "label_components",
     "num_threads",
-    "quality_map",
-    "quality_triangles",
     "set_num_threads",
-    "simulate_ifg",
     "unwrap",
     "unwrap_sparse",
     "wrap_phase",

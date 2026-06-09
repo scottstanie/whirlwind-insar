@@ -244,11 +244,8 @@ fn assemble_and_refine(
 
     // 4) Global coarse anchor + multi-scale cascade (f = 16, 8, 4) to pin each
     //    region's integer cycle level. `nlooks` is irrelevant to the anchor
-    //    (the Carballo cost ignores it), so pass 1.0. `WHIRLWIND_NO_ANCHOR`
-    //    reverts to the single-f=8 anchorless vote (before/after comparison).
-    if std::env::var("WHIRLWIND_NO_ANCHOR").is_ok() {
-        coarse_refine(&mut out, conf, mask, 8, None);
-    } else {
+    //    (the Carballo cost ignores it), so pass 1.0.
+    {
         let lk = anchor_lk(igram.dim());
         // Cross-validated dual anchor: lk_fine (current adaptive) + lk_coarse
         // (2x more multilook, ~128px coarse, well below the runaway threshold).
@@ -276,9 +273,7 @@ fn assemble_and_refine(
     }
 
     // 5) Heal residual thin MCF sliver artifacts (bounded, coherence-gated).
-    if std::env::var("WHIRLWIND_NO_HEAL").is_err() {
-        heal_thin_slivers(&mut out, conf, mask, 0.2, 4, 6);
-    }
+    heal_thin_slivers(&mut out, conf, mask, 0.2, 4, 6);
     if dbg {
         eprintln!(
             "[ww]     tiled: heal_slivers {:.2}s",
@@ -425,14 +420,8 @@ pub fn unwrap_tiled(
         return Ok(out);
     }
     if tile_size >= m && tile_size >= n {
-        // Single whole-image solve. Honor WHIRLWIND_TILE_SOLVER like the tiled
-        // path does (default reuse; convex enables the cost-model experiment -
-        // a SNAPHU-style convex cost should make the whole-image solve well-posed
-        // where the linear/reuse cost runs away).
-        return match tile_solver() {
-            TileSolver::Convex => crate::unwrap_convex(igram, corr, nlooks, mask),
-            TileSolver::Reuse => crate::unwrap_reuse(igram, corr, nlooks, mask),
-        };
+        // Single whole-image solve with the corner-safe reuse solver.
+        return crate::unwrap_reuse(igram, corr, nlooks, mask);
     }
     assert!(
         overlap >= 2,
@@ -1277,13 +1266,8 @@ fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Arr
 /// large enough that the coarse solve doesn't run away, but no coarser, since
 /// over-multilooking smooths away real winding and regresses gentler frames.
 /// Floor at 8 for small frames where the whole-image solve is already
-/// well-posed. `WHIRLWIND_ANCHOR_LK` overrides for testing.
+/// well-posed.
 fn anchor_lk((m, n): (usize, usize)) -> usize {
-    if let Ok(v) = std::env::var("WHIRLWIND_ANCHOR_LK")
-        && let Ok(k) = v.parse::<usize>()
-    {
-        return k.max(1);
-    }
     // Coarse image ~256-288 px: large enough the coarse solve doesn't run away,
     // not so coarse it over-smooths real winding. The sweet spot is narrow and
     // mildly content-dependent (gentler frames over-smooth sooner), so we clamp
@@ -1728,35 +1712,9 @@ fn heal_thin_slivers(
     }
 }
 
-/// Per-tile base solver. The linear Carballo cost has a corner / capacity-1
-/// boundary-stacking weakness on smooth steep signals (e.g. a clean phase bowl),
-/// where `reuse` (PHASS flow-reuse) and `convex` (SNAPHU quadratic) are
-/// corner-safe.
-#[derive(Clone, Copy, PartialEq)]
-enum TileSolver {
-    Reuse,
-    Convex,
-}
-
-/// `WHIRLWIND_TILE_SOLVER=reuse|convex` (default reuse). Legacy
-/// `WHIRLWIND_TILE_CONVEX=1` also selects convex.
-///
-/// The per-tile linear unit-capacity solver was dropped here: it had the
-/// capacity-1 boundary-stacking weakness on steep clean ramps and more
-/// single-cycle errors than reuse on real scenes, for only a speed win. Reuse
-/// (PHASS flow-reuse) is the corner-safe default; convex is research-only.
-fn tile_solver() -> TileSolver {
-    use std::sync::OnceLock;
-    static F: OnceLock<TileSolver> = OnceLock::new();
-    *F.get_or_init(|| match std::env::var("WHIRLWIND_TILE_SOLVER").as_deref() {
-        Ok("convex") => TileSolver::Convex,
-        _ if std::env::var("WHIRLWIND_TILE_CONVEX").is_ok() => TileSolver::Convex,
-        // DEFAULT: reuse (PHASS flow-reuse), corner-safe. `WHIRLWIND_TILE_SOLVER=reuse`
-        // (and any other/unknown value) lands here too.
-        _ => TileSolver::Reuse,
-    })
-}
-
+/// Unwrap a single tile with the corner-safe reuse solver. The linear Carballo
+/// cost has a capacity-1 boundary-stacking weakness on smooth steep signals
+/// (e.g. a clean phase bowl) that the PHASS flow-reuse solver avoids.
 fn unwrap_one_tile_coh(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -1773,21 +1731,10 @@ fn unwrap_one_tile_coh(
     let wrapped_phase = ig.mapv(|z| z.arg());
     let residues = residue::compute_with_mask(wrapped_phase.view(), mk);
     let graph = RectangularGridGraph::new(tm + 1, tn + 1);
-    // Per-tile base solver (WHIRLWIND_TILE_SOLVER). reuse/convex are corner-safe
-    // where the linear Carballo cost stacks flow at steep-signal boundaries.
-    let mut net = match tile_solver() {
-        TileSolver::Convex => {
-            let (offsets, weights) = cost::compute_snaphu_smooth_costs(ig, co, nlooks, mk);
-            let mut net =
-                Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mk);
-            net.preload_convex_min(&graph);
-            net
-        }
-        TileSolver::Reuse => {
-            let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
-            Network::new_reuse_with_mask(&graph, residues.view(), &costs, mk)
-        }
-    };
+    // Per-tile reuse solver, corner-safe where the linear Carballo cost stacks
+    // flow at steep-signal boundaries.
+    let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
+    let mut net = Network::new_reuse_with_mask(&graph, residues.view(), &costs, mk);
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mk.is_some() {
         integrate::integrate_with_mask(wrapped_phase.view(), &graph, &net, mk)

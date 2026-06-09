@@ -1,9 +1,10 @@
 """Type stubs for the `whirlwind` package.
 
 ``unwrap`` is the Python wrapper defined in ``__init__.py``; everything below is
-re-exported from the ``_native`` extension. The experimental CRLB unwrappers and
-the ``unwrap_reuse`` solver are importable but intentionally kept off the public
-API (not in ``__all__``) until validated.
+re-exported from the ``_native`` extension. The experimental CRLB / ``unwrap_reuse``
+solvers, the temporal-closure stack functions, the quality maps, and the synthetic
+scene generators are importable but intentionally kept off the public API (not in
+``__all__``).
 """
 
 from __future__ import annotations
@@ -14,18 +15,12 @@ from numpy.typing import NDArray
 __version__: str
 
 from ._native import (
-    closure_correct as closure_correct,
-    closure_refine_mcf as closure_refine_mcf,
     compute_residues as compute_residues,
-    diagonal_ramp as diagonal_ramp,
     goldstein as goldstein,
     interpolate as interpolate,
     label_components as label_components,
     num_threads as num_threads,
-    quality_map as quality_map,
-    quality_triangles as quality_triangles,
     set_num_threads as set_num_threads,
-    simulate_ifg as simulate_ifg,
     unwrap_sparse as unwrap_sparse,
     wrap_phase as wrap_phase,
 )

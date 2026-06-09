@@ -26,22 +26,6 @@ use rayon::prelude::*;
 /// quantization error ≤ 0.005 per arc.
 pub const COST_SCALE: f32 = 100.0;
 
-/// Per-arc cost assigned to masked "sea" arcs in the parity cost
-/// (`compute_carballo_costs_parity`). Default 0 = exact ww-orig parity (free
-/// sea). A small positive value penalizes long traversal across the masked sea,
-/// breaking the MCF degeneracy on heavily-masked frames in favor of short
-/// (correct) branch cuts. Read once from `WHIRLWIND_SEA_COST`.
-fn sea_cost_parity() -> i32 {
-    use std::sync::OnceLock;
-    static C: OnceLock<i32> = OnceLock::new();
-    *C.get_or_init(|| {
-        std::env::var("WHIRLWIND_SEA_COST")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0)
-    })
-}
-
 /// Scale for the analytical Carballo LLR cost specifically. The raw LLR
 /// is capped at `lut::MAX_CARBALLO_COST = 50.0`; multiplying by 6 gives
 /// max integer cost = 300, matching the Dial's bucket-queue speed of the
@@ -490,16 +474,8 @@ pub fn compute_carballo_costs_parity(
     // Use the embedded ww-orig spline tables for p0/p1.
     let sp_lut = spline_lut::get_or_load();
 
-    // DE-DEGENERATION KNOB (`WHIRLWIND_SEA_COST`, default 0 = ww-orig parity).
-    // Masked "sea" arcs are cost-0 in ww-orig, so routing residue-pairing flow
-    // across the masked sea is FREE - on heavily-masked frames (only a few
-    // percent valid) the min-cost flow then prefers long sea branch cuts over short
-    // cuts pairing nearby residues, which is an equally-cheap but WRONG unwrap
-    // (the cost under-determines the answer; ww-orig only lands the right one by
-    // FIFO ordering luck). A small positive sea cost penalizes long sea
-    // traversal so short (correct) cuts win - a robust de-degeneration that does
-    // not depend on tie-break order.
-    let sea = sea_cost_parity();
+    // Masked "sea" arcs are cost-0, matching ww-orig (free sea).
+    let sea = 0;
 
     let mut cost = vec![0_i32; g.num_forward];
     let (down_slab, rest) = cost.split_at_mut(g.n_v);
