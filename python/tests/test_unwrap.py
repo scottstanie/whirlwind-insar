@@ -41,10 +41,11 @@ class TestUnwrap:
         np.testing.assert_allclose(aligned, phase, atol=1e-2)
 
     @pytest.mark.xfail(
-        reason="Known masked-plane tear: a residue-free diagonal plane split by a "
-        "straight mask band is torn into a 2pi step by the integrator. Synthetic "
-        "edge case only; real NISAR frames (with residues) are unaffected. "
-        "Pre-existing on both the linear and reuse solvers.",
+        reason="Known masked-plane tear on the default (single-tile linear) "
+        "solver: a residue-free diagonal plane masked to a band is torn by a "
+        "spurious 2pi step at the mask boundary (the capacity-1 boundary-stacking "
+        "weakness). The reuse solver unwraps it exactly, and the un-masked plane "
+        "is fine on both. Synthetic edge case only; real NISAR frames unaffected.",
         strict=False,
     )
     def test_nan_inputs_masked(self):
