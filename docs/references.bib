@@ -1,0 +1,231 @@
+% Whirlwind references
+%
+% Bibliography for the algorithms implemented in this repository. Grouped by the
+% pipeline stage / component that uses each work. Citation keys follow a
+% Author-Year-ShortTitle convention; the persistent-scatterer interpolation keys
+% (Chen2015..., Wang2022...) match the ones used in dolphin's references.bib so
+% the shared interpolation port cites the same sources.
+%
+% Doc cross-references:
+%   docs/ALGORITHM.md         - public 2D unwrap overview
+%   docs/ATBD-whirlwind.md    - long-form 2D ATBD (Section 10 references)
+%   experiments/ATBD-3d.md    - 3D / time-series pipeline (Section 11 references)
+
+
+% ---------------------------------------------------------------------------
+% Statistical cost model (Carballo / Lee) - crates/whirlwind-core/src/cost/
+% ---------------------------------------------------------------------------
+
+@article{Carballo2002ProbabilisticCostFunctions,
+  title   = {Probabilistic Cost Functions for Network Flow Phase Unwrapping},
+  author  = {Carballo, Gustavo F. and Fieguth, Paul W.},
+  year    = {2002},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {40},
+  number  = {11},
+  pages   = {2192--2203},
+  doi     = {10.1109/TGRS.2002.805071},
+  note    = {Carballo cost model used for the coherence-weighted edge costs.}
+}
+
+@article{Lee1994IntensityPhaseStatistics,
+  title   = {Intensity and Phase Statistics of Multilook Polarimetric and
+             Interferometric {SAR} Imagery},
+  author  = {Lee, Jong-Sen and Hoppel, K. W. and Mango, S. A. and Miller, A. R.},
+  year    = {1994},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {32},
+  number  = {5},
+  pages   = {1017--1028},
+  doi     = {10.1109/36.312890},
+  note    = {Multilook interferometric phase-noise PDF underlying the cost LUT.}
+}
+
+@article{Touzi1999CoherenceEstimation,
+  title   = {Coherence Estimation for {SAR} Imagery},
+  author  = {Touzi, R. and Lopes, A. and Bruniquel, J. and Vachon, P. W.},
+  year    = {1999},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {37},
+  number  = {1},
+  pages   = {135--149},
+  doi     = {10.1109/36.739146},
+  note    = {Sample-coherence estimator behavior and bias vs. number of looks.}
+}
+
+
+% ---------------------------------------------------------------------------
+% Phase unwrapping background / SNAPHU lineage
+% ---------------------------------------------------------------------------
+
+@article{Chen2000NetworkApproaches,
+  title   = {Network Approaches to Two-Dimensional Phase Unwrapping:
+             Intractability and Two New Algorithms},
+  author  = {Chen, Curtis W. and Zebker, Howard A.},
+  year    = {2000},
+  journal = {Journal of the Optical Society of America A},
+  volume  = {17},
+  number  = {3},
+  pages   = {401--414},
+  doi     = {10.1364/JOSAA.17.000401},
+  note    = {Network-flow formulation of 2D phase unwrapping.}
+}
+
+@article{Chen2001TwoDimensionalPhaseUnwrapping,
+  title   = {Two-Dimensional Phase Unwrapping with Use of Statistical Models for
+             Cost Functions in Nonlinear Optimization},
+  author  = {Chen, Curtis W. and Zebker, Howard A.},
+  year    = {2001},
+  journal = {Journal of the Optical Society of America A},
+  volume  = {18},
+  number  = {2},
+  pages   = {338--351},
+  doi     = {10.1364/JOSAA.18.000338},
+  note    = {SNAPHU statistical cost model; connected-component growing
+             (GrowConnCompsMask) adapted in crates/whirlwind-core/src/conncomp.rs.}
+}
+
+@book{Ghiglia1998TwoDimensionalPhaseUnwrapping,
+  title     = {Two-Dimensional Phase Unwrapping: Theory, Algorithms, and Software},
+  author    = {Ghiglia, Dennis C. and Pritt, Mark D.},
+  year      = {1998},
+  publisher = {Wiley},
+  address   = {New York},
+  isbn      = {978-0-471-24935-1},
+  note      = {General reference for residues, branch cuts, and integration.}
+}
+
+
+% ---------------------------------------------------------------------------
+% Network-flow algorithms - crates/whirlwind-core/src/{network,primal_dual,ssp}.rs
+% ---------------------------------------------------------------------------
+
+@book{Ahuja1993NetworkFlows,
+  title     = {Network Flows: Theory, Algorithms, and Applications},
+  author    = {Ahuja, Ravindra K. and Magnanti, Thomas L. and Orlin, James B.},
+  year      = {1993},
+  publisher = {Prentice Hall},
+  address   = {Englewood Cliffs, NJ},
+  isbn      = {978-0-13-617549-0},
+  note      = {Reduced costs, potentials, primal-dual and successive-shortest-path
+               MCF; the potential-update validity argument in ATBD Section 7.5.}
+}
+
+@article{Goldberg1990FindingMinimumCostCirculations,
+  title   = {Finding Minimum-Cost Circulations by Successive Approximation},
+  author  = {Goldberg, Andrew V. and Tarjan, Robert E.},
+  year    = {1990},
+  journal = {Mathematics of Operations Research},
+  volume  = {15},
+  number  = {3},
+  pages   = {430--466},
+  doi     = {10.1287/moor.15.3.430},
+  note    = {Cost-scaling / successive-approximation min-cost-flow background.}
+}
+
+
+% ---------------------------------------------------------------------------
+% Adaptive phase filtering - crates/whirlwind-core/src/goldstein.rs
+% ---------------------------------------------------------------------------
+
+@article{Goldstein1998RadarInterferogramFiltering,
+  title   = {Radar Interferogram Filtering for Geophysical Applications},
+  author  = {Goldstein, Richard M. and Werner, Charles L.},
+  year    = {1998},
+  journal = {Geophysical Research Letters},
+  volume  = {25},
+  number  = {21},
+  pages   = {4035--4038},
+  doi     = {10.1029/1998GL900033},
+  note    = {Goldstein adaptive |F|^alpha interferogram filter.}
+}
+
+
+% ---------------------------------------------------------------------------
+% Persistent-scatterer interpolation - crates/whirlwind-core/src/interpolate.rs
+% (spiral PS interpolator; Rust port of dolphin's interpolation.interpolate)
+% ---------------------------------------------------------------------------
+
+@article{Chen2015PersistentScattererInterpolation,
+  title   = {A Persistent Scatterer Interpolation for Retrieving Accurate Ground
+             Deformation over {InSAR}-Decorrelated Agricultural Fields},
+  author  = {Chen, Jingyi and Zebker, Howard A. and Knight, Rosemary},
+  year    = {2015},
+  journal = {Geophysical Research Letters},
+  volume  = {42},
+  number  = {21},
+  pages   = {9294--9301},
+  doi     = {10.1002/2015GL065031},
+  note    = {Original PS interpolation (binary PS weights) that the spiral
+             interpolator generalizes to floating-point weights.}
+}
+
+@article{Wang2022AccuratePersistentScatterer,
+  title   = {Accurate Persistent Scatterer Identification Based on Phase
+             Similarity of Radar Pixels},
+  author  = {Wang, Ke and Chen, Jingyi},
+  year    = {2022},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {60},
+  pages   = {1--13},
+  doi     = {10.1109/TGRS.2022.3210868},
+  note    = {Phase-similarity PS interpolation extended by the spiral
+             interpolator's continuous-weight Gaussian averaging.}
+}
+
+
+% ---------------------------------------------------------------------------
+% Time-series / 3D pipeline - experiments/ATBD-3d.md, triangulated.rs
+% (phase linking + CRLB costs, EMCF, persistent scatterers)
+% ---------------------------------------------------------------------------
+
+@article{Ansari2018EfficientPhaseEstimation,
+  title   = {Efficient Phase Estimation for Interferogram Stacks},
+  author  = {Ansari, Homa and {De Zan}, Francesco and Bamler, Richard},
+  year    = {2018},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {56},
+  number  = {7},
+  pages   = {4109--4125},
+  doi     = {10.1109/TGRS.2018.2826045},
+  note    = {EMI phase-linking estimator; source of the per-acquisition CRLB
+             phase-variance rasters used as MCF cost weights in the 3D path.}
+}
+
+@article{Ansari2017SequentialEstimator,
+  title   = {Sequential Estimator: Toward Efficient {InSAR} Time Series Analysis},
+  author  = {Ansari, Homa and {De Zan}, Francesco and Bamler, Richard},
+  year    = {2017},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {55},
+  number  = {10},
+  pages   = {5637--5652},
+  doi     = {10.1109/TGRS.2017.2711037},
+  note    = {Sequential phase-linking estimator (phase-linking lineage).}
+}
+
+@article{Pepe2006ExtensionMinimumCostFlow,
+  title   = {On the Extension of the Minimum Cost Flow Algorithm for Phase
+             Unwrapping of Multitemporal Differential {SAR} Interferograms},
+  author  = {Pepe, Antonio and Lanari, Riccardo},
+  year    = {2006},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {44},
+  number  = {9},
+  pages   = {2374--2383},
+  doi     = {10.1109/TGRS.2006.873207},
+  note    = {Extended Minimum Cost Flow (EMCF); the separable
+               temporal-then-spatial MCF baseline the 3D ATBD contrasts against.}
+}
+
+@article{Ferretti2001PermanentScatterers,
+  title   = {Permanent Scatterers in {SAR} Interferometry},
+  author  = {Ferretti, Alessandro and Prati, Claudio and Rocca, Fabio},
+  year    = {2001},
+  journal = {IEEE Transactions on Geoscience and Remote Sensing},
+  volume  = {39},
+  number  = {1},
+  pages   = {8--20},
+  doi     = {10.1109/36.898661},
+  note    = {Persistent/permanent scatterer concept underlying the PS pipeline.}
+}
