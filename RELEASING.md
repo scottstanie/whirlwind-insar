@@ -29,9 +29,10 @@ Conda-forge then auto-updates from PyPI (see below).
 The release workflow authenticates to PyPI via OIDC - no API token in
 GitHub secrets. To set it up:
 
-1. Reserve the project name by uploading at least one release manually,
-   or by [registering a pending publisher][pending] before the first
-   release.
+1. Decide how to create the PyPI project. A manual first upload creates
+   the project and claims the name immediately. A [pending publisher][pending]
+   lets the first trusted-publishing upload create the project, but it does
+   **not** reserve the name until that upload succeeds.
 2. On PyPI → *Manage* → *Publishing* → *Add a new pending publisher*
    (or *Add a publisher* if the project already exists), enter:
    - **PyPI project name:** `whirlwind-insar`

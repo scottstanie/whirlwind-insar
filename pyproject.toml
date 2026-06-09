@@ -8,12 +8,32 @@ name = "whirlwind-insar"
 # maturin reads it from there because `version` is declared dynamic here.
 dynamic = ["version"]
 description = "Rust-backed 2D phase unwrapper for InSAR (`import whirlwind`)"
+readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Scott Staniewicz", email = "scott.stanie@utexas.edu" }]
 # Classic table form so both older (<1.8) and newer maturin accept it; the SPDX
 # string + `license-files` array (PEP 639) needs maturin >=1.8.
 license = { file = "LICENSE" }
 dependencies = ["numpy>=1.21"]
+keywords = ["insar", "phase-unwrapping", "sar", "remote-sensing", "rust"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/scottstanie/whirlwind-insar"
+Documentation = "https://github.com/scottstanie/whirlwind-insar/tree/main/docs"
+Repository = "https://github.com/scottstanie/whirlwind-insar"
+Issues = "https://github.com/scottstanie/whirlwind-insar/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
