@@ -8,8 +8,8 @@ The comparison uses 13 HH NISAR GUNW frames with `nlooks=16`. Runtimes and memor
 
 - Whirlwind agrees with the production SNAPHU unwrap on at least 98.8 percent of pixels on 12 of 13 frames (99 percent or better on 11 of them).
 - The remaining frame, D_075, is difficult for every method in this sweep; Whirlwind agrees with production SNAPHU on 88.2 percent of pixels there, while PHASS agrees on 48.4 percent.
-- Runtime is 11-31 seconds per frame for Whirlwind, compared with 465-1242 seconds for single-tile SNAPHU and about 100-200 seconds for SNAPHU 3x3 tiled (9 tiles in parallel) plus reoptimization.
-- Peak memory is about 3 GB per NISAR frame for Whirlwind (2.4-3.1 GB), compared with about 8 GB for single-tile SNAPHU and about 6-13 GB for 3x3 tiled SNAPHU. The tiled peak is not intrinsic: it is dominated by the parallel tile phase, so it scales with how many tiles unwrap at once (`nproc`) -- capping concurrency roughly halves it (see the note under the table).
+- Runtime is 10-27 seconds per frame for Whirlwind, compared with 465-1242 seconds for single-tile SNAPHU and about 100-200 seconds for SNAPHU 3x3 tiled (9 tiles in parallel) plus reoptimization.
+- Peak memory is about 2.5 GB per NISAR frame for Whirlwind (2.2-2.8 GB), compared with about 8 GB for single-tile SNAPHU and about 6-13 GB for 3x3 tiled SNAPHU. The tiled peak is not intrinsic: it is dominated by the parallel tile phase, so it scales with how many tiles unwrap at once (`nproc`) -- capping concurrency roughly halves it (see the note under the table).
 
 ## Metric
 
@@ -41,7 +41,7 @@ The full per-frame table with runtime and memory is in [nisar_4way_results.csv](
 
 | Engine | Runtime | Peak memory | Notes |
 |---|---:|---:|---|
-| Whirlwind | 11-31 s | ~3 GB | Rust-backed 2D MCF path |
+| Whirlwind | 10-27 s | ~2.5 GB | Rust-backed 2D MCF path |
 | SNAPHU, single tile | 465-1242 s | ~8 GB | quality reference, slowest configuration |
 | SNAPHU, 3x3 tiled + reoptimize | 97-201 s | 6-13 GB | 9 tiles; peak set by concurrency (`nproc`) |
 | PHASS | 5.5-23 s | 1.7-2.4 GB | faster, lower agreement on several frames |
