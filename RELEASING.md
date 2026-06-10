@@ -4,6 +4,11 @@ End-to-end release flow for the Python distribution. The Rust crates
 (`whirlwind-core`, `whirlwind-cli`) are not currently published to
 crates.io; this doc covers PyPI and conda-forge.
 
+In addition to the wheels, the `Release` workflow attaches prebuilt `whirlwind`
+CLI binaries (linux x86_64/aarch64, macOS x86_64/arm64, Windows x64) to the
+GitHub Release for each tag, so non-Python users can download a single
+executable. This is fully automatic - no extra setup beyond the `v*` tag.
+
 ## TL;DR
 
 Run the **Bump version** workflow (Actions -> Bump version -> Run workflow) and
@@ -18,7 +23,8 @@ from `Cargo.toml` at build time; there is no second copy to keep in sync.
 The `Release` workflow (`.github/workflows/release.yml`) takes it from
 there: builds abi3 wheels for linux (manylinux + musllinux, x86_64 +
 aarch64), macOS (x86_64 + arm64), and Windows (x64), builds an sdist,
-and publishes everything to PyPI via trusted publishing.
+publishes everything to PyPI via trusted publishing, and uploads the
+prebuilt CLI binaries to the GitHub Release.
 
 Conda-forge then auto-updates from PyPI (see below).
 

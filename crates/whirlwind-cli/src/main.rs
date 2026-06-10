@@ -68,6 +68,52 @@ enum Cmd {
         /// number of looks
         #[arg(long, default_value_t = 1.0)]
         nlooks: f32,
+        /// Coarse-solve factor for noisy scenes. When > 1, the complex
+        /// interferogram is coherently averaged into `downsample x downsample`
+        /// blocks and that smaller, smoother frame is unwrapped to decide which
+        /// 2π cycle each block sits on; only the integer cycle is borrowed back
+        /// onto the full-resolution wrapped phase. `--nlooks` stays the effective
+        /// looks of your input coherence (the down-look scaling is internal).
+        /// Use it for noisy/moderate-coherence scenes (e.g. Sentinel-1); leave
+        /// at 1 for clean scenes.
+        #[arg(long, default_value_t = 1)]
+        downsample: usize,
+        /// Disable the integration-component "bridge" post-pass. By default
+        /// (bridge ON, matching the Python API) the relative 2π level of regions
+        /// the valid mask splits apart (e.g. two land slabs separated by a
+        /// low-coherence river) is re-leveled along a minimum spanning tree
+        /// rooted at the largest region. A single coherently-connected frame is
+        /// unchanged either way.
+        #[arg(long = "no-bridge", action = clap::ArgAction::SetTrue)]
+        no_bridge: bool,
+        /// Spiral persistent-scatterer interpolation pre-pass. When set, every
+        /// valid pixel whose coherence is below `--interp-cutoff` has its phase
+        /// replaced by a Gaussian distance-weighted average of nearby
+        /// high-coherence pixels before the solve. Like `--goldstein-alpha`, the
+        /// fill only INFORMS the MCF: the integer cycle field is applied back to
+        /// the original wrapped phase, so every per-pixel value is preserved.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        interpolate: bool,
+        /// Coherence below which a valid pixel is interpolated (only with
+        /// `--interpolate`).
+        #[arg(long, default_value_t = 0.5)]
+        interp_cutoff: f32,
+        /// Number of nearest high-coherence pixels averaged per interpolated
+        /// pixel (only with `--interpolate`).
+        #[arg(long, default_value_t = 20)]
+        interp_num_neighbors: usize,
+        /// Maximum search radius in pixels for the neighbor search (only with
+        /// `--interpolate`).
+        #[arg(long, default_value_t = 51)]
+        interp_max_radius: usize,
+        /// Minimum search radius in pixels; closer neighbors are skipped (only
+        /// with `--interpolate`).
+        #[arg(long, default_value_t = 0)]
+        interp_min_radius: usize,
+        /// Gaussian distance-weighting falloff for the neighbor average (only
+        /// with `--interpolate`).
+        #[arg(long, default_value_t = 0.75)]
+        interp_alpha: f64,
         /// Goldstein adaptive-filter strength in [0, 1]. Default 0 (off);
         /// pass e.g. `--goldstein-alpha 0.7` to enable. When > 0, the wrapped
         /// phase is Goldstein-filtered before MCF (faster on noisy scenes,
@@ -94,11 +140,31 @@ enum Cmd {
         /// to keep isolated islands. Only matters when `--conncomp` is set.
         #[arg(long, default_value_t = 1e-4)]
         min_component_frac: f32,
+        /// Discard connected components smaller than this many pixels. Absolute
+        /// floor (matches the Python API default); `--min-component-frac` raises
+        /// it on very large frames. Only matters when `--conncomp` is set.
+        #[arg(long, default_value_t = 100)]
+        min_size_px: usize,
+        /// Maximum number of connected components to keep (largest first). Only
+        /// matters when `--conncomp` is set.
+        #[arg(long, default_value_t = 1024)]
+        max_ncomps: u32,
         /// Carballo cost threshold for the conncomp cut rule. Pixel edges
         /// whose min raw forward cost ≤ this are treated as cuts. Lower =
         /// more cuts = more (smaller) components. Default 50 (SNAPHU-equiv).
         #[arg(long, default_value_t = 50)]
         cost_threshold: i32,
+        /// Set `--cost-threshold` from a target per-edge one-cycle-correction
+        /// probability. Lower is stricter (more boundaries); ~2.4e-4 matches the
+        /// default. Takes precedence over `--cost-threshold`.
+        #[arg(long)]
+        conncomp_cycle_prob: Option<f64>,
+        /// Set `--cost-threshold` from a Gaussian-equivalent noise level: an edge
+        /// is cut when its one-cycle probability exceeds 0.5*erfc(sigma/sqrt2).
+        /// Higher is stricter; ~3.5 reproduces the default. Takes precedence over
+        /// both `--cost-threshold` and `--conncomp-cycle-prob`.
+        #[arg(long)]
+        conncomp_sigma: Option<f64>,
         /// output unwrapped phase TIFF
         #[arg(long)]
         out: PathBuf,
@@ -121,25 +187,76 @@ fn main() -> Result<()> {
             cor,
             mask,
             nlooks,
+            downsample,
+            no_bridge,
+            interpolate,
+            interp_cutoff,
+            interp_num_neighbors,
+            interp_max_radius,
+            interp_min_radius,
+            interp_alpha,
             goldstein_alpha,
             goldstein_psize,
             conncomp,
             min_component_frac,
+            min_size_px,
+            max_ncomps,
             cost_threshold,
+            conncomp_cycle_prob,
+            conncomp_sigma,
             out,
-        } => cmd_unwrap(
+        } => cmd_unwrap(UnwrapArgs {
             phase,
             cor,
             mask,
             nlooks,
+            downsample,
+            bridge: !no_bridge,
+            interpolate,
+            interp_cutoff,
+            interp_num_neighbors,
+            interp_max_radius,
+            interp_min_radius,
+            interp_alpha,
             goldstein_alpha,
             goldstein_psize,
             conncomp,
             min_component_frac,
+            min_size_px,
+            max_ncomps,
             cost_threshold,
+            conncomp_cycle_prob,
+            conncomp_sigma,
             out,
-        ),
+        }),
     }
+}
+
+/// Resolved arguments for the `unwrap` subcommand. Mirrors the Python
+/// `whirlwind.unwrap` keyword surface so the CLI is at feature parity.
+struct UnwrapArgs {
+    phase: PathBuf,
+    cor: PathBuf,
+    mask: Option<PathBuf>,
+    nlooks: f32,
+    downsample: usize,
+    bridge: bool,
+    interpolate: bool,
+    interp_cutoff: f32,
+    interp_num_neighbors: usize,
+    interp_max_radius: usize,
+    interp_min_radius: usize,
+    interp_alpha: f64,
+    goldstein_alpha: f32,
+    goldstein_psize: usize,
+    conncomp: Option<PathBuf>,
+    min_component_frac: f32,
+    min_size_px: usize,
+    max_ncomps: u32,
+    cost_threshold: i32,
+    conncomp_cycle_prob: Option<f64>,
+    conncomp_sigma: Option<f64>,
+    out: PathBuf,
 }
 
 fn parse_shape(s: &str) -> Result<(usize, usize)> {
@@ -176,19 +293,32 @@ fn cmd_simulate(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn cmd_unwrap(
-    phase: PathBuf,
-    cor: PathBuf,
-    mask: Option<PathBuf>,
-    nlooks: f32,
-    goldstein_alpha: f32,
-    goldstein_psize: usize,
-    conncomp: Option<PathBuf>,
-    min_component_frac: f32,
-    cost_threshold: i32,
-    out: PathBuf,
-) -> Result<()> {
+fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
+    let UnwrapArgs {
+        phase,
+        cor,
+        mask,
+        nlooks,
+        downsample,
+        bridge,
+        interpolate,
+        interp_cutoff,
+        interp_num_neighbors,
+        interp_max_radius,
+        interp_min_radius,
+        interp_alpha,
+        goldstein_alpha,
+        goldstein_psize,
+        conncomp,
+        min_component_frac,
+        min_size_px,
+        max_ncomps,
+        cost_threshold,
+        conncomp_cycle_prob,
+        conncomp_sigma,
+        out,
+    } = args;
+
     let ph = read_f32_tiff(&phase)?;
     let co = read_f32_tiff(&cor)?;
     if ph.dim() != co.dim() {
@@ -198,7 +328,21 @@ fn cmd_unwrap(
             co.dim()
         ));
     }
-    let mk = mask.as_ref().map(|p| read_bool_mask(p)).transpose()?;
+    // Resolve the valid mask. With `--mask` it is read from disk; without it we
+    // mirror the Python default `mask = (igram != 0) & (corr > 0)` - the igram is
+    // unit-magnitude here, so that reduces to `corr > 0`. We only materialize the
+    // default when some coherence is non-positive (or NaN); an all-valid frame
+    // stays `None` to keep the unmasked solver fast path and legacy output.
+    let mk: Option<Array2<bool>> = match mask.as_ref() {
+        Some(p) => Some(read_bool_mask(p)?),
+        None => {
+            if co.iter().any(|&c| c <= 0.0 || c.is_nan()) {
+                Some(co.mapv(|c| c > 0.0))
+            } else {
+                None
+            }
+        }
+    };
     if let Some(m) = &mk
         && m.dim() != ph.dim()
     {
@@ -211,86 +355,103 @@ fn cmd_unwrap(
     // Reject out-of-range / non-finite coherence at unmasked pixels.
     validate_coherence(co.view(), mk.as_ref().map(|m| m.view()))?;
 
+    // Resolve the connected-component cost threshold the same way Python does:
+    // `--conncomp-sigma` wins over `--conncomp-cycle-prob`, which wins over the
+    // explicit `--cost-threshold`.
+    let cost_threshold = if let Some(sigma) = conncomp_sigma {
+        whirlwind_core::cost_threshold_from_sigma(sigma)
+    } else if let Some(p) = conncomp_cycle_prob {
+        whirlwind_core::cost_threshold_from_cycle_prob(p)
+    } else {
+        cost_threshold
+    };
+
     // The unwrapper consumes complex; reconstruct as unit-magnitude exp(i·phase).
     let igram_orig = ph.mapv(|p| Complex32::from_polar(1.0, p));
 
-    // Optional Goldstein prefilter. The filter denoises the wrapped phase so
-    // MCF sees fewer spurious residues at low-coherence pixels; ~2x faster on
-    // noisy scenes and visibly cleaner at wrap-line boundaries.
-    let (igram_for_unwrap, used_goldstein) = if goldstein_alpha > 0.0 {
-        let ig_filt = whirlwind_core::goldstein::goldstein(
-            igram_orig.view(),
-            goldstein_alpha,
-            goldstein_psize,
+    // Build the phase fed to the MCF. Interpolation and Goldstein filtering both
+    // only INFORM the solver; the integer 2π·k field they produce is transferred
+    // back onto the ORIGINAL wrapped phase below, so every per-pixel value is
+    // preserved. Order matches Python: interpolate, then Goldstein.
+    let mut ig_solve = igram_orig.clone();
+    let mut used_prepass = false;
+    if interpolate {
+        // Spiral PS interpolator: weights are clamped coherence (NaN -> 0),
+        // matching `np.clip(np.nan_to_num(corr), 0, 1)`.
+        let weights = co.mapv(|c| if c.is_nan() { 0.0 } else { c.clamp(0.0, 1.0) });
+        ig_solve = whirlwind_core::interpolate::interpolate(
+            ig_solve.view(),
+            weights.view(),
+            interp_cutoff,
+            interp_num_neighbors,
+            interp_max_radius,
+            interp_min_radius,
+            interp_alpha,
         );
-        // Zero out masked pixels so the filter's spread of energy into them
-        // can't leak into the cost computation downstream.
-        let ig_filt = if let Some(m) = &mk {
-            let mut z = ig_filt;
-            for ((i, j), &valid) in m.indexed_iter() {
-                if !valid {
-                    z[(i, j)] = Complex32::new(0.0, 0.0);
-                }
+        used_prepass = true;
+    }
+    if goldstein_alpha > 0.0 {
+        ig_solve =
+            whirlwind_core::goldstein::goldstein(ig_solve.view(), goldstein_alpha, goldstein_psize);
+        used_prepass = true;
+    }
+    if used_prepass && let Some(m) = &mk {
+        // A pre-pass produced a fresh array; zero masked pixels so the solver
+        // sees the same nodata convention as the original phase.
+        for ((i, j), &valid) in m.indexed_iter() {
+            if !valid {
+                ig_solve[(i, j)] = Complex32::new(0.0, 0.0);
             }
-            z
-        } else {
-            ig_filt
-        };
-        (ig_filt, true)
-    } else {
-        (igram_orig.clone(), false)
-    };
+        }
+    }
 
     // Unwrap. With --conncomp set, use the variant that also grows components.
-    let (unw_filt, cc_raster) = if conncomp.is_some() {
+    // `downsample` routes through the coherent-downlook-first path (multilook).
+    let (unw_solve, cc_raster) = if conncomp.is_some() {
         let params = whirlwind_core::ConnCompParams {
             cost_threshold,
-            // Absolute floor (≈0.8 km at 80 m) is the real speckle control;
-            // `--min-component-frac` only raises it on very large frames.
-            min_size_px: 100,
+            min_size_px,
+            // `--min-component-frac` only raises the absolute px floor on very
+            // large frames.
             min_size_frac: min_component_frac,
-            // u16 raster supports up to 65535 components; cap below that to
-            // keep the conncomp routine from over-fragmenting.
-            max_ncomps: 1024,
+            max_ncomps,
         };
         // Single-tile linear MCF phase + global (solve-free) conncomp;
-        // tile_size=0 means whole-image single-tile (does NOT auto-tile),
-        // multilook=1. Tiling is opt-in and not the default.
+        // tile_size=0 means whole-image single-tile (does NOT auto-tile).
         let (u, c) = whirlwind_core::unwrap_coherence_with_components(
-            igram_for_unwrap.view(),
+            ig_solve.view(),
             co.view(),
             nlooks,
             mk.as_ref().map(|m| m.view()),
             0,
             0,
-            1,
+            downsample,
             params,
         )?;
         (u, Some(c))
     } else {
         let u = whirlwind_core::unwrap_coherence(
-            igram_for_unwrap.view(),
+            ig_solve.view(),
             co.view(),
             nlooks,
             mk.as_ref().map(|m| m.view()),
             0,
             0,
-            1,
+            downsample,
         )?;
         (u, None)
     };
 
     // K-transfer to original wrapped phase (dolphin PR #364 convention).
     // Rounding against `ph` (the original, *unfiltered* phase) avoids the
-    // spurious ±2π jumps at fringe boundaries that the earlier
-    // round-against-filtered-phase strategy produced. If Goldstein was
-    // skipped, this is a no-op (unw_filt is already congruent with ph).
+    // spurious ±2π jumps at fringe boundaries. If no pre-pass ran, this is a
+    // no-op (unw_solve is already congruent with ph).
     let tau = std::f32::consts::TAU;
-    let unw = if used_goldstein {
+    let mut unw = if used_prepass {
         let mut out_arr = Array2::<f32>::zeros(ph.dim());
         ndarray::Zip::from(&mut out_arr)
             .and(&ph)
-            .and(&unw_filt)
+            .and(&unw_solve)
             .for_each(|o, &p_orig, &u_filt| {
                 let k = ((u_filt - p_orig) / tau).round();
                 *o = p_orig + tau * k;
@@ -304,8 +465,20 @@ fn cmd_unwrap(
         }
         out_arr
     } else {
-        unw_filt
+        unw_solve
     };
+
+    // Bridge post-pass (ON by default, matching Python): re-level regions the
+    // valid mask splits into disconnected pieces.
+    if bridge {
+        unw = whirlwind_core::bridge_components(
+            unw.view(),
+            mk.as_ref().map(|m| m.view()),
+            whirlwind_core::bridge::DEFAULT_RADIUS,
+            whirlwind_core::bridge::DEFAULT_MIN_PX,
+            whirlwind_core::bridge::DEFAULT_MAX_BOUNDARY,
+        );
+    }
 
     write_f32_tiff(&out, unw.view())?;
     eprintln!("wrote {}", out.display());

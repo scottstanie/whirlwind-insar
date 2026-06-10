@@ -18,6 +18,7 @@
     clippy::neg_cmp_op_on_partial_ord
 )]
 
+pub mod bridge;
 pub mod closure;
 pub mod conncomp;
 pub mod cost;
@@ -37,9 +38,37 @@ pub mod ssp;
 pub mod tile;
 pub mod triangulated;
 
+pub use bridge::bridge_components;
 pub use conncomp::ConnCompParams;
 pub use residual_graph::ResidualGraph;
 pub use triangulated::TriangulatedGraph;
+
+/// Scale factor applied to the Carballo log-likelihood ratio when forming the
+/// integer connected-component cost. Mirrors `CONNCOMP_COST_SCALE` in the Python
+/// wrapper.
+pub const CONNCOMP_COST_SCALE: f64 = 6.0;
+
+/// Connected-component `cost_threshold` for a target per-edge one-cycle
+/// probability.
+///
+/// An edge is cut (a component boundary) when its cost is `<= cost_threshold`,
+/// which happens when its local one-cycle-correction probability is at least
+/// `cycle_prob`. A lower `cycle_prob` raises the threshold and cuts more edges
+/// (stricter). The default `cost_threshold = 50` corresponds to a `cycle_prob`
+/// of about 2.4e-4. Mirrors `whirlwind.cost_threshold_from_cycle_prob`.
+pub fn cost_threshold_from_cycle_prob(cycle_prob: f64) -> i32 {
+    let p = cycle_prob.clamp(1e-12, 1.0 - 1e-12);
+    libm::rint(CONNCOMP_COST_SCALE * ((1.0 - p) / p).ln()) as i32
+}
+
+/// Connected-component `cost_threshold` from a Gaussian-equivalent noise level:
+/// an edge is cut when its one-cycle-correction probability exceeds
+/// `0.5 * erfc(sigma / sqrt(2))`. A higher sigma is stricter. `sigma` of about
+/// 3.5 reproduces the default `cost_threshold = 50`.
+pub fn cost_threshold_from_sigma(sigma: f64) -> i32 {
+    let cycle_prob = 0.5 * libm::erfc(sigma / std::f64::consts::SQRT_2);
+    cost_threshold_from_cycle_prob(cycle_prob)
+}
 
 use ndarray::{Array2, ArrayView2};
 use num_complex::Complex32;
@@ -593,4 +622,21 @@ pub fn unwrap_crlb_grounded(
         integrate::integrate(wrapped_phase.view(), &graph, &net)
     };
     Ok(unw)
+}
+
+#[cfg(test)]
+mod threshold_tests {
+    use super::*;
+
+    /// Reference values captured from `whirlwind.cost_threshold_from_cycle_prob`
+    /// and the `0.5*erfc(sigma/sqrt2)` sigma mapping in the Python wrapper.
+    #[test]
+    fn cost_threshold_matches_python() {
+        assert_eq!(cost_threshold_from_cycle_prob(2.4e-4), 50);
+        assert_eq!(cost_threshold_from_cycle_prob(1e-3), 41);
+        assert_eq!(cost_threshold_from_cycle_prob(1e-5), 69);
+        assert_eq!(cost_threshold_from_sigma(3.5), 50);
+        assert_eq!(cost_threshold_from_sigma(3.0), 40);
+        assert_eq!(cost_threshold_from_sigma(4.0), 62);
+    }
 }

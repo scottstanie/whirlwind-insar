@@ -704,7 +704,7 @@ pub fn unwrap_crlb_tiled_robust(
 
 /// 4-connected component labels of a bool mask. Returns `(labels, sizes)` with
 /// label 0 = background and `sizes[label-1]` the pixel count of that component.
-fn label_components(m: &Array2<bool>) -> (Array2<i32>, Vec<usize>) {
+pub(crate) fn label_components(m: &Array2<bool>) -> (Array2<i32>, Vec<usize>) {
     let (h, w) = m.dim();
     let mut lab = Array2::<i32>::from_elem((h, w), 0);
     let mut sizes = Vec::new();

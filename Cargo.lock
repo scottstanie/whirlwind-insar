@@ -701,6 +701,7 @@ dependencies = [
  "bitvec",
  "delaunator",
  "libc",
+ "libm",
  "ndarray",
  "num-complex",
  "rand",
