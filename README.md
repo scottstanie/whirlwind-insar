@@ -38,13 +38,30 @@ unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask, downsample=8)
 
 ## CLI
 
-Install:
+The `whirlwind` CLI is at feature parity with the Python `unwrap`: every knob the
+Python API exposes (`downsample`, the `bridge` post-pass, persistent-scatterer
+`interpolate`, Goldstein filtering, and the connected-component cost controls) is
+available as a flag. Run `whirlwind unwrap --help` for the full list.
 
-```bash
-cargo install --path crates/whirlwind-cli --locked
-```
+### Install
 
-Run:
+Pick whichever is simplest for you - no Python required for any of these:
+
+1. **Prebuilt binary (simplest, no toolchain).** Download the archive for your
+   platform from the [latest release][releases], unpack it, and run the
+   `whirlwind` executable. A single self-contained binary - handy for MATLAB
+   users driving it via `system('whirlwind unwrap ...')`.
+2. **From source with Cargo** (needs the Rust toolchain):
+
+   ```bash
+   cargo install --path crates/whirlwind-cli --locked
+   ```
+
+3. **Docker** (see below).
+
+[releases]: https://github.com/scottstanie/whirlwind-insar/releases/latest
+
+### Run
 
 ```bash
 whirlwind unwrap \
@@ -56,7 +73,18 @@ whirlwind unwrap \
     --conncomp conncomp.tif
 ```
 
-`--phase` is a float32 TIFF of wrapped phase in radians. `--mask` is optional; nonzero means valid.
+`--phase` is a float32 TIFF of wrapped phase in radians. `--mask` is optional;
+nonzero means valid. When `--mask` is omitted the CLI uses `coherence > 0` as the
+default valid mask, matching the Python API.
+
+For noisy scenes, coarsen the solve with `--downsample` (as in the Python API);
+the integration-component `--no-bridge`-able re-leveling pass runs by default:
+
+```bash
+whirlwind unwrap --phase wrapped_phase.tif --cor coherence.tif \
+    --mask valid_mask.tif --nlooks 10 --downsample 8 \
+    --out unwrapped_phase.tif
+```
 
 The CLI is pure Rust (no GDAL), so it also runs from a container. Pull the
 prebuilt image (published to the GitHub Container Registry by CI), or build it
