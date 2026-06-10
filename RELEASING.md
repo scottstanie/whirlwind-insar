@@ -1,30 +1,16 @@
 # Releasing whirlwind
 
-End-to-end release flow for the Python distribution. The Rust crates
-(`whirlwind-core`, `whirlwind-cli`) are not currently published to
-crates.io; this doc covers PyPI and conda-forge.
+End-to-end release flow for the Python distribution. The Rust crates (`whirlwind-core`, `whirlwind-cli`) are not currently published to crates.io; this doc covers PyPI and conda-forge.
 
-In addition to the wheels, the `Release` workflow attaches prebuilt `whirlwind`
-CLI binaries (linux x86_64/aarch64, macOS x86_64/arm64, Windows x64) to the
-GitHub Release for each tag, so non-Python users can download a single
-executable. This is fully automatic - no extra setup beyond the `v*` tag.
+In addition to the wheels, the `Release` workflow attaches prebuilt `whirlwind` CLI binaries (linux x86_64/aarch64, macOS x86_64/arm64, Windows x64) to the GitHub Release for each tag, so non-Python users can download a single executable. This is fully automatic - no extra setup beyond the `v*` tag.
 
 ## TL;DR
 
-Run the **Bump version** workflow (Actions -> Bump version -> Run workflow) and
-pick `patch`, `minor`, or `major`. That is the whole release. It bumps the
-single version source (`Cargo.toml`), commits it, and pushes a `v*` tag, which
-triggers the `Release` workflow to build and publish the wheels.
+Run the **Bump version** workflow (Actions -> Bump version -> Run workflow) and pick `patch`, `minor`, or `major`. That is the whole release. It bumps the single version source (`Cargo.toml`), commits it, and pushes a `v*` tag, which triggers the `Release` workflow to build and publish the wheels.
 
-The version lives in exactly one place, `Cargo.toml` `[workspace.package].version`.
-`pyproject.toml` declares `dynamic = ["version"]`, so maturin reads the version
-from `Cargo.toml` at build time; there is no second copy to keep in sync.
+The version lives in exactly one place, `Cargo.toml` `[workspace.package].version`.  `pyproject.toml` declares `dynamic = ["version"]`, so maturin reads the version from `Cargo.toml` at build time; there is no second copy to keep in sync.
 
-The `Release` workflow (`.github/workflows/release.yml`) takes it from
-there: builds abi3 wheels for linux (manylinux + musllinux, x86_64 +
-aarch64), macOS (x86_64 + arm64), and Windows (x64), builds an sdist,
-publishes everything to PyPI via trusted publishing, and uploads the
-prebuilt CLI binaries to the GitHub Release.
+The `Release` workflow (`.github/workflows/release.yml`) takes it from there: builds abi3 wheels for linux (manylinux + musllinux, x86_64 + aarch64), macOS (x86_64 + arm64), and Windows (x64), builds an sdist, publishes everything to PyPI via trusted publishing, and uploads the prebuilt CLI binaries to the GitHub Release.
 
 Conda-forge then auto-updates from PyPI (see below).
 
@@ -52,89 +38,15 @@ GitHub secrets. To set it up:
 
 [pending]: https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
 
-### Conda-forge feedstock (first release only)
-
-conda-forge does not auto-create packages; you submit a recipe once,
-and after acceptance the feedstock auto-updates on every PyPI release.
-
-1. Wait for the first PyPI release to be live.
-2. Fork [`conda-forge/staged-recipes`][staged] and add a recipe under
-   `recipes/whirlwind-insar/meta.yaml`. Skeleton:
-
-   ```yaml
-   {% set name = "whirlwind-insar" %}
-   {% set version = "0.1.0" %}
-
-   package:
-     name: {{ name|lower }}
-     version: {{ version }}
-
-   source:
-     url: https://pypi.org/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
-     sha256: <fill in from the PyPI sdist>
-
-   build:
-     number: 0
-     script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
-     skip: true  # [py<311]
-
-   requirements:
-     build:
-       - {{ compiler('rust') }}
-       - {{ compiler('c') }}
-     host:
-       - python
-       - pip
-       - maturin >=1.5,<2
-     run:
-       - python
-       - numpy >=1.21
-
-   test:
-     imports:
-       - whirlwind
-     commands:
-       - pip check
-     requires:
-       - pip
-
-   about:
-     home: https://github.com/scottstanie/whirlwind-insar
-     license: MIT
-     license_file: LICENSE
-     summary: Fast Rust-backed 2D InSAR phase unwrapper
-     dev_url: https://github.com/scottstanie/whirlwind-insar
-
-   extra:
-     recipe-maintainers:
-       - scottstanie
-   ```
-
-3. Open a PR to `staged-recipes`. Reviewers will merge once linting
-   passes; conda-forge bot then creates `conda-forge/whirlwind-insar-feedstock`
-   and grants you maintainer rights.
-
-After the feedstock exists, **no further action is needed in this
-repo** - `regro-cf-autotick-bot` opens an automatic PR to the feedstock
-on every new PyPI release. Merge it (or wait for the maintainer team to
-merge) and conda-forge ships the new build.
-
-[staged]: https://github.com/conda-forge/staged-recipes
-
 ## Cutting a release
 
-The version is defined once, in `Cargo.toml` `[workspace.package].version`, and
-read by maturin into the wheel (pyproject uses `dynamic = ["version"]`). So a
-release is just a version bump plus a `v*` tag; the `Bump version` workflow does
-both.
+The version is defined once, in `Cargo.toml` `[workspace.package].version`, and read by maturin into the wheel (pyproject uses `dynamic = ["version"]`). So a release is just a version bump plus a `v*` tag; the `Bump version` workflow does both.
 
 ### Default path (CI)
 
 1. Actions -> **Bump version** -> *Run workflow*. Pick `patch`, `minor`, or
-   `major` (or type an explicit version). It runs `cargo set-version`, commits
-   the bumped `Cargo.toml` and `Cargo.lock` to `main`, and pushes a `v*` tag.
-2. The tag triggers the `Release` workflow. Watch it; on success the artifacts
-   are on the run page and on PyPI.
+   `major` (or type an explicit version). It runs `cargo set-version`, commits the bumped `Cargo.toml` and `Cargo.lock` to `main`, and pushes a `v*` tag.
+2. The tag triggers the `Release` workflow. Watch it; on success the artifacts are on the run page and on PyPI.
 3. Within a few hours, `regro-cf-autotick-bot` opens a PR against
    `conda-forge/whirlwind-insar-feedstock`. Review and merge.
 
