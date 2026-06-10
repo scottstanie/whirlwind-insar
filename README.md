@@ -136,4 +136,5 @@ cargo test --workspace
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Licensed under either the BSD 3-Clause License or the Apache License, Version
+2.0, at your option. See [LICENSE](LICENSE).

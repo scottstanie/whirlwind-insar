@@ -217,7 +217,8 @@ fn masked_band_plane_no_tear() {
         .filter(|&(&v, &t)| ((v - offset - t) as f64 / tau).round() != 0.0)
         .count();
     assert_eq!(
-        n_torn, 0,
+        n_torn,
+        0,
         "masked band plane torn: {n_torn}/{} valid px off by >= 1 cycle",
         vals.len()
     );
