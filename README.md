@@ -142,7 +142,7 @@ docker build -t ghcr.io/scottstanie/whirlwind-insar .  # build locally
 
 docker run --rm -v "$PWD:/data" ghcr.io/scottstanie/whirlwind-insar unwrap \
     --phase /data/wrapped.tif --cor /data/cor.tif --nlooks 10 \
-    --out /data/unw.tif --conncomp /data/conncomp.tif
+    --out /data/unw.tif
 ```
 
 ## Dolphin
