@@ -153,7 +153,7 @@ def unwrap(
     bridge: bool = True,
     downsample: int = 1,
     interpolate: bool = False,
-    interp_cutoff: float = 0.5,
+    interp_cutoff: float = 0.1,
     interp_num_neighbors: int = 20,
     interp_max_radius: int = 51,
     interp_min_radius: int = 0,
@@ -228,7 +228,7 @@ def unwrap(
         original wrapped phase, so every per-pixel value the caller passed in is
         preserved. Useful for scenes with isolated low-coherence speckle that
         seeds spurious residues.
-    interp_cutoff : float, default 0.5
+    interp_cutoff : float, default 0.1
         Coherence below which a valid pixel is interpolated (only used when
         ``interpolate`` is True). ``corr`` is used as the weight map.
     interp_num_neighbors : int, default 20
