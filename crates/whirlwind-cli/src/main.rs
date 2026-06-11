@@ -84,23 +84,45 @@ enum Cmd {
     },
     /// Unwrap an interferogram.
     ///
-    /// Takes either the complex interferogram (`--ifg`, flat binary
-    /// complex64: snaphu COMPLEX_DATA / ROI_PAC / isce2 `.int`, GAMMA
-    /// `.int`/`.diff`) or the wrapped phase (`--phase`, float32 TIFF or flat
-    /// binary, radians in `[-π, π]`).
+    /// Takes either the complex interferogram (--ifg, flat binary complex64:
+    /// snaphu COMPLEX_DATA / ROI_PAC / isce2 .int, GAMMA .int/.diff) or the
+    /// wrapped phase (--phase, float32 TIFF or flat binary, radians in
+    /// [-pi, pi]).
     ///
     /// Flat-binary (headerless) inputs need the number of columns: pass
-    /// `--cols` (snaphu's "line length" / ROI_PAC `WIDTH`), or let it be
-    /// read from a `<file>.rsc` / `<file>.xml` sidecar found next to the
-    /// data, or point `--meta` at a ROI_PAC `.rsc`, isce2 `.xml`, or GAMMA
-    /// `.par`/`.off` file. The number of rows always comes from the file
-    /// size. GAMMA rasters are big-endian: use `--big-endian` (implied when
-    /// `--meta` is a GAMMA par file).
+    /// --cols (snaphu's "line length" / ROI_PAC WIDTH), or let it be read
+    /// from a <file>.rsc / <file>.xml sidecar found next to the data, or
+    /// point --meta at a ROI_PAC .rsc, isce2 .xml, or GAMMA .par/.off file.
+    /// The number of rows always comes from the file size. GAMMA rasters
+    /// are big-endian: use --big-endian (implied when --meta is a GAMMA par
+    /// file).
+    ///
+    /// Examples:
+    ///
+    ///   GeoTIFF (float32 wrapped phase + coherence):
+    ///     whirlwind unwrap --phase wrapped.tif --cor coherence.tif \
+    ///         --nlooks 10 --out unwrapped.tif --conncomp conncomp.tif
+    ///
+    ///   snaphu / ROI_PAC flat binary (.int = complex64, .cc = amp+cor
+    ///   "rmg"; width from --cols, or from <file>.rsc when present):
+    ///     whirlwind unwrap --ifg 20150902_20150914.int \
+    ///         --cor 20150902_20150914.cc --cols 840 --nlooks 10 \
+    ///         --out 20150902_20150914.unw
+    ///
+    ///   isce2 stripmapStack / topsStack (geometry, dtype, and byte order
+    ///   all come from the <file>.xml sidecars; no extra flags):
+    ///     whirlwind unwrap --ifg filt_fine.int --cor filt_fine.cor \
+    ///         --nlooks 10 --out filt_fine.unw \
+    ///         --conncomp filt_fine.unw.conncomp
+    ///
+    ///   GAMMA (big-endian; width from the .off/.par via --meta; phase-only
+    ///   float32 .unw output like GAMMA's own):
+    ///     whirlwind unwrap --ifg pair.diff --cor pair.cc --meta pair.off \
+    ///         --nlooks 10 --out-format float --out pair.unw
     ///
     /// If you have a complex-valued GeoTIFF, extract the phase first via
-    ///
-    ///     gdal_translate DERIVED_SUBDATASET:PHASE:complex.int.tif wrapped.tif
-    ///
+    ///   gdal_translate DERIVED_SUBDATASET:PHASE:complex.int.tif wrapped.tif
+    #[command(verbatim_doc_comment)]
     Unwrap {
         /// complex interferogram, flat binary complex64 (interleaved float32
         /// real/imag pairs). Exactly one of --ifg / --phase is required.
