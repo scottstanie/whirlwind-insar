@@ -6,7 +6,11 @@ name: Release
 #
 # Triggers:
 #   - push a tag matching v*  (e.g. v0.1.0)                    -> build + publish
-#   - manual workflow_dispatch                                  -> build only (no publish)
+#   - workflow_dispatch on a v* tag ref                         -> build + publish
+#     (how bump-version.yml triggers this: its GITHUB_TOKEN tag push cannot
+#     fire the push trigger - GitHub suppresses workflows for events created
+#     by GITHUB_TOKEN, except workflow_dispatch/repository_dispatch)
+#   - manual workflow_dispatch on a branch                      -> build only (no publish)
 #
 # PyPI auth: trusted publishing (OIDC). Configure once at
 #   https://pypi.org/manage/account/publishing/
@@ -43,7 +47,7 @@ jobs:
     # v0.2.0: PyPI stayed at 0.1.0 while the run showed green). Cut releases
     # with the "Bump version" workflow instead - see RELEASING.md.
     name: tag matches Cargo.toml version
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -186,9 +190,9 @@ jobs:
     name: cli binary / ${{ matrix.target }}
     # Attach prebuilt `whirlwind` CLI executables to the GitHub Release so
     # non-Python users (e.g. MATLAB) can download a single binary - no Python,
-    # Rust, or Docker required. Tag pushes only; workflow_dispatch builds are
-    # validated by CI.yml on every PR/push.
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Rust, or Docker required. Tag refs only; branch workflow_dispatch builds
+    # are validated by CI.yml on every PR/push.
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [version-check]
     runs-on: ${{ matrix.os }}
     permissions:
@@ -226,7 +230,7 @@ jobs:
   publish:
     name: publish to PyPI
     needs: [version-check, linux, musllinux, macos, windows, sdist]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
       name: pypi

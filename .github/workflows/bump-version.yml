@@ -24,6 +24,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # dispatch the Release workflow onto the pushed tag
 
 concurrency:
   group: bump-version
@@ -65,3 +66,12 @@ jobs:
           git tag -a "v$NEW" -m "v$NEW"
           git push origin "HEAD:${{ github.ref_name }}"
           git push origin "v$NEW"
+
+      - name: trigger release workflow
+        # The tag push above used GITHUB_TOKEN, and GitHub suppresses workflow
+        # runs for events created by GITHUB_TOKEN (recursion prevention), so
+        # the Release workflow's push trigger never fires. workflow_dispatch is
+        # the documented exception - dispatch it onto the tag ref explicitly.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref "v${{ steps.bump.outputs.version }}" --repo "$GITHUB_REPOSITORY"
