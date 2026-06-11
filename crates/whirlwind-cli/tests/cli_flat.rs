@@ -68,6 +68,18 @@ fn altline(data: &[f32], fill: f32) -> Vec<f32> {
     out
 }
 
+/// Per-pixel interleaved amp/data pairs.
+fn altsample(data: &[f32], fill: f32) -> Vec<f32> {
+    data.iter().flat_map(|&v| [fill, v]).collect()
+}
+
+/// Band-sequential amp band followed by data band.
+fn bsq(data: &[f32], fill: f32) -> Vec<f32> {
+    let mut out = vec![fill; data.len()];
+    out.extend_from_slice(data);
+    out
+}
+
 fn run(args: &[&str]) {
     let out = Command::new(env!("CARGO_BIN_EXE_whirlwind"))
         .args(args)
@@ -128,8 +140,38 @@ fn flat_complex_and_cor_layouts_match_tiff() {
     // two-band line-interleaved with garbage amplitude (snaphu default / .cc)
     let cor_rmg = dir.join("c.cc");
     fs::write(&cor_rmg, le(&altline(&cor, 12345.0))).unwrap();
+    // isce/GDAL two-band BIP and BSQ variants. These have the same byte count
+    // as BIL, so the XML scheme must drive the layout.
+    let cor_bip = dir.join("c_bip.cor");
+    fs::write(&cor_bip, le(&altsample(&cor, 12345.0))).unwrap();
+    fs::write(
+        dir.join("c_bip.cor.xml"),
+        r#"<imageFile>
+  <property name="byte_order"><value>l</value></property>
+  <property name="data_type"><value>float</value></property>
+  <property name="length"><value>48</value></property>
+  <property name="number_bands"><value>2</value></property>
+  <property name="scheme"><value>BIP</value></property>
+  <property name="width"><value>40</value></property>
+</imageFile>"#,
+    )
+    .unwrap();
+    let cor_bsq = dir.join("c_bsq.cor");
+    fs::write(&cor_bsq, le(&bsq(&cor, 12345.0))).unwrap();
+    fs::write(
+        dir.join("c_bsq.cor.xml"),
+        r#"<imageFile>
+  <property name="byte_order"><value>l</value></property>
+  <property name="data_type"><value>float</value></property>
+  <property name="length"><value>48</value></property>
+  <property name="number_bands"><value>2</value></property>
+  <property name="scheme"><value>BSQ</value></property>
+  <property name="width"><value>40</value></property>
+</imageFile>"#,
+    )
+    .unwrap();
 
-    for cor_file in [&cor_flat, &cor_rmg] {
+    for cor_file in [&cor_flat, &cor_rmg, &cor_bip, &cor_bsq] {
         let out = dir.join("out.tif");
         run(&[
             "unwrap",
@@ -177,6 +219,32 @@ fn flat_phase_input_matches_tiff() {
         out.to_str().unwrap(),
     ]);
     assert_eq!(fs::read(&out).unwrap(), reference);
+    assert!(
+        dir.join("out.conncomp.tif").is_file(),
+        "TIFF output should get a default conncomp TIFF"
+    );
+
+    let out_no_cc = dir.join("out_no_cc.tif");
+    let no_cc_default = dir.join("out_no_cc.conncomp.tif");
+    let _ = fs::remove_file(&no_cc_default);
+    run(&[
+        "unwrap",
+        "--phase",
+        ph_flat.to_str().unwrap(),
+        "--cols",
+        "40",
+        "--cor",
+        cor_flat.to_str().unwrap(),
+        "--nlooks",
+        "10",
+        "--out",
+        out_no_cc.to_str().unwrap(),
+        "--no-conncomp",
+    ]);
+    assert!(
+        !no_cc_default.exists(),
+        "--no-conncomp should suppress the default conncomp output"
+    );
 }
 
 #[test]
@@ -208,7 +276,7 @@ fn big_endian_gamma_style() {
     ]);
     assert_eq!(fs::read(&out).unwrap(), reference);
 
-    // GAMMA .off sidecar via --meta: provides the width AND implies big-endian
+    // GAMMA .off sidecar via --ifg-meta: provides the width AND implies big-endian
     let par = dir.join("ifg.off");
     fs::write(
         &par,
@@ -220,7 +288,7 @@ fn big_endian_gamma_style() {
         "unwrap",
         "--ifg",
         int.to_str().unwrap(),
-        "--meta",
+        "--ifg-meta",
         par.to_str().unwrap(),
         "--cor",
         cc.to_str().unwrap(),
@@ -230,6 +298,40 @@ fn big_endian_gamma_style() {
         out2.to_str().unwrap(),
     ]);
     assert_eq!(fs::read(&out2).unwrap(), reference);
+}
+
+#[test]
+fn cor_meta_is_used_for_flat_correlation() {
+    let dir = tdir("cor-meta");
+    let (ph, cor) = scene();
+    let reference = baseline(&dir, &ph, &cor);
+
+    let ph_tif = dir.join("ph.tif");
+    write_tiff(&ph_tif, &ph);
+    let cor_flat = dir.join("gamma.cc");
+    fs::write(&cor_flat, be(&cor)).unwrap();
+    let par = dir.join("gamma.off");
+    fs::write(
+        &par,
+        "interferogram_width: 40\ninterferogram_azimuth_lines: 48\n",
+    )
+    .unwrap();
+
+    let out = dir.join("out.tif");
+    run(&[
+        "unwrap",
+        "--phase",
+        ph_tif.to_str().unwrap(),
+        "--cor",
+        cor_flat.to_str().unwrap(),
+        "--cor-meta",
+        par.to_str().unwrap(),
+        "--nlooks",
+        "10",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(fs::read(&out).unwrap(), reference);
 }
 
 #[test]
@@ -342,7 +444,7 @@ fn unw_altline_output_and_flat_conncomp() {
     fs::write(&cor_flat, le(&cor)).unwrap();
 
     let out = dir.join("out.unw");
-    let cc_out = dir.join("out.conncomp");
+    let cc_out = dir.join("out.unw.conncomp");
     run(&[
         "unwrap",
         "--ifg",
@@ -355,8 +457,6 @@ fn unw_altline_output_and_flat_conncomp() {
         "10",
         "--out",
         out.to_str().unwrap(),
-        "--conncomp",
-        cc_out.to_str().unwrap(),
     ]);
 
     // .unw = alt-line (rmg): per row a magnitude line (unit here) then phase

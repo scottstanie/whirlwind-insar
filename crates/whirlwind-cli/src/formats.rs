@@ -45,6 +45,8 @@ pub struct Sidecar {
     /// isce2 `data_type`, lowercased (e.g. "cfloat", "float").
     pub dtype: Option<String>,
     pub bands: Option<usize>,
+    /// isce2 band interleave scheme, lowercased (e.g. "bip", "bil", "bsq").
+    pub scheme: Option<String>,
     pub big_endian: Option<bool>,
 }
 
@@ -58,6 +60,7 @@ pub struct FlatMeta {
     pub endian: Endian,
     pub dtype: Option<String>,
     pub bands: Option<usize>,
+    pub scheme: Option<String>,
 }
 
 /// Band layout of a flat float32 raster.
@@ -77,6 +80,9 @@ pub enum FloatLayout {
     /// Two bands, alternating samples: the data is every odd sample
     /// (snaphu `ALT_SAMPLE_DATA`).
     AltSample,
+    /// Two bands, band sequential: the data is the second full band
+    /// (isce2/GDAL `scheme=BSQ`).
+    Bsq,
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +155,9 @@ pub fn parse_isce_xml(path: &Path) -> Result<Sidecar> {
             v.parse()
                 .with_context(|| format!("bad number_bands {v:?} in {}", path.display()))?,
         );
+    }
+    if let Some(v) = xml_property(&text, "scheme") {
+        sc.scheme = Some(v.to_ascii_lowercase());
     }
     if let Some(v) = xml_property(&text, "data_type") {
         sc.dtype = Some(v.to_ascii_lowercase());
@@ -230,7 +239,8 @@ pub fn parse_sidecar(path: &Path) -> Result<Sidecar> {
 
 /// Look for an auto-discoverable sidecar next to a data file: `<file>.rsc`
 /// (ROI_PAC) or `<file>.xml` (isce2), in that order. GAMMA `.par` files have
-/// no per-file naming convention, so they are only reachable via `--meta`.
+/// no per-file naming convention, so they are only reachable via an explicit
+/// metadata flag.
 pub fn find_sidecar(data_path: &Path) -> Option<PathBuf> {
     for ext in ["rsc", "xml"] {
         let mut name = data_path.as_os_str().to_owned();
@@ -246,9 +256,10 @@ pub fn find_sidecar(data_path: &Path) -> Option<PathBuf> {
 
 /// Resolve the metadata needed to read one flat-binary raster, combining the
 /// CLI flags with any sidecar. Priority: `--cols` flag > sidecar. The
-/// sidecar is `--meta` when given, else an auto-discovered `<file>.rsc` /
-/// `<file>.xml`. Byte order is big when `--big-endian` is passed OR the
-/// sidecar says so (isce2 `byte_order`, or any GAMMA `.par`).
+/// sidecar is the matching explicit metadata flag when given, else an
+/// auto-discovered `<file>.rsc` / `<file>.xml`. Byte order is big when
+/// `--big-endian` is passed OR the sidecar says so (isce2 `byte_order`, or
+/// any GAMMA `.par`).
 pub fn resolve_flat_meta(
     data_path: &Path,
     cols_flag: Option<usize>,
@@ -268,7 +279,7 @@ pub fn resolve_flat_meta(
             anyhow!(
                 "cannot determine the number of columns for {}: pass --cols N \
              (snaphu's line length / ROI_PAC WIDTH), or provide a sidecar \
-             ({0}.rsc, {0}.xml, or --meta <par/rsc/xml>)",
+             ({0}.rsc, {0}.xml, or the matching --*-meta <par/rsc/xml>)",
                 data_path.display()
             )
         })?;
@@ -279,6 +290,7 @@ pub fn resolve_flat_meta(
         endian: if big { Endian::Big } else { Endian::Little },
         dtype: sc.and_then(|s| s.dtype.clone()),
         bands: sc.and_then(|s| s.bands),
+        scheme: sc.and_then(|s| s.scheme.clone()),
     })
 }
 
@@ -314,6 +326,33 @@ pub fn check_rows(meta: &FlatMeta, path: &Path, got: usize) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Resolve a float raster's band layout from sidecar band count and isce2
+/// interleave scheme. `None` means the sidecar did not say enough and the
+/// caller should fall back to size-based auto detection.
+pub fn float_layout_from_meta(meta: &FlatMeta, path: &Path) -> Result<Option<FloatLayout>> {
+    match meta.bands {
+        Some(1) => Ok(Some(FloatLayout::Single)),
+        Some(2) => match meta.scheme.as_deref() {
+            // isce2/GDAL names.
+            Some("bil") => Ok(Some(FloatLayout::AltLine)),
+            Some("bip") => Ok(Some(FloatLayout::AltSample)),
+            Some("bsq") => Ok(Some(FloatLayout::Bsq)),
+            // ROI_PAC/snaphu sidecars often know the band count but not an
+            // explicit scheme; their two-band convention is line interleave.
+            None => Ok(Some(FloatLayout::AltLine)),
+            Some(s) => bail!(
+                "{}: unsupported two-band float scheme {s:?} (need BIL, BIP, or BSQ)",
+                path.display()
+            ),
+        },
+        Some(b) => bail!(
+            "{}: unsupported float band count {b} (need 1 or 2)",
+            path.display()
+        ),
+        None => Ok(None),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -430,6 +469,17 @@ pub fn read_flat_float(
                 data.extend(row.iter().skip(1).step_by(2));
             }
             Array2::from_shape_vec((rows, cols), data)?
+        }
+        FloatLayout::Bsq => {
+            if lines % 2 != 0 {
+                bail!(
+                    "{}: file size does not fit the two-band band-sequential layout",
+                    path.display()
+                );
+            }
+            let rows = lines / 2;
+            let start = rows * cols;
+            Array2::from_shape_vec((rows, cols), floats[start..start + rows * cols].to_vec())?
         }
     };
     if let Some(er) = expected_rows
@@ -594,6 +644,7 @@ mod tests {
         assert_eq!(sc.rows, Some(200));
         assert_eq!(sc.bands, Some(1));
         assert_eq!(sc.dtype.as_deref(), Some("cfloat"));
+        assert_eq!(sc.scheme.as_deref(), Some("bip"));
         assert_eq!(sc.big_endian, Some(false));
     }
 
@@ -671,9 +722,44 @@ mod tests {
         let a = read_flat_float(&p, 3, Endian::Little, FloatLayout::AltSample, Some(2)).unwrap();
         assert_eq!(a, array![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], "odd samples");
 
+        // bsq: all amplitude rows, then all data rows.
+        let mut bsq = Vec::new();
+        bsq.extend_from_slice(&amp);
+        bsq.extend_from_slice(&dat);
+        let p = tmpfile("bsq.cor", &le_floats(&bsq));
+        let a = read_flat_float(&p, 3, Endian::Little, FloatLayout::Bsq, Some(2)).unwrap();
+        assert_eq!(a, array![[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], "second band");
+
         // size matching neither 1- nor 2-band is an error
         let p = tmpfile("bad.cor", &le_floats(&[0.0; 9]));
         assert!(read_flat_float(&p, 3, Endian::Little, FloatLayout::Auto, Some(2)).is_err());
+    }
+
+    #[test]
+    fn isce_scheme_selects_float_layout() {
+        let path = Path::new("c.cor");
+        let mut meta = FlatMeta {
+            cols: 3,
+            rows: Some(2),
+            endian: Endian::Little,
+            dtype: Some("float".to_string()),
+            bands: Some(2),
+            scheme: Some("bil".to_string()),
+        };
+        assert_eq!(
+            float_layout_from_meta(&meta, path).unwrap(),
+            Some(FloatLayout::AltLine)
+        );
+        meta.scheme = Some("bip".to_string());
+        assert_eq!(
+            float_layout_from_meta(&meta, path).unwrap(),
+            Some(FloatLayout::AltSample)
+        );
+        meta.scheme = Some("bsq".to_string());
+        assert_eq!(
+            float_layout_from_meta(&meta, path).unwrap(),
+            Some(FloatLayout::Bsq)
+        );
     }
 
     #[test]
@@ -729,7 +815,7 @@ mod tests {
         // explicit --cols beats the sidecar
         let r = resolve_flat_meta(&data, Some(4), None, false).unwrap();
         assert_eq!(r.cols, 4);
-        // --meta pointing at a GAMMA par flips to big-endian
+        // an explicit metadata flag pointing at a GAMMA par flips to big-endian
         let par = dir.join("geom.off");
         std::fs::write(&par, b"interferogram_width: 2\n").unwrap();
         let r = resolve_flat_meta(&data, None, Some(&par), false).unwrap();

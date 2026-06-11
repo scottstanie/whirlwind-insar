@@ -69,14 +69,16 @@ whirlwind unwrap \
     --cor coherence.tif \
     --mask valid_mask.tif \
     --nlooks 10 \
-    --out unwrapped_phase.tif \
-    --conncomp conncomp.tif
+    --out unwrapped_phase.tif
 ```
 
 `--phase` is the wrapped phase in radians: a float32 TIFF, or a flat binary
 float32 file (see below). `--mask` is optional; nonzero means valid. When
 `--mask` is omitted the CLI uses `coherence > 0` (and `igram != 0` with
-`--ifg`) as the default valid mask, matching the Python API.
+`--ifg`) as the default valid mask, matching the Python API. The CLI writes a
+connected-component label map by default next to `--out` (`foo.conncomp.tif` for
+TIFF, `foo.unw.conncomp` for flat `.unw`); use `--conncomp PATH` to choose the
+path or `--no-conncomp` to skip it.
 
 ### Flat-binary formats (snaphu / ROI_PAC / isce2 / GAMMA)
 
@@ -93,11 +95,11 @@ whirlwind unwrap --ifg 20150902_20150914.int --cor 20150902_20150914.cc \
 
 # isce2 stripmapStack / topsStack: the <file>.xml sidecars provide everything
 whirlwind unwrap --ifg filt_fine.int --cor filt_fine.cor --nlooks 10 \
-    --out filt_fine.unw --conncomp filt_fine.unw.conncomp
+    --out filt_fine.unw
 
-# GAMMA: big-endian; width from a .par/.off via --meta (or --cols + --big-endian)
-whirlwind unwrap --ifg pair.diff --cor pair.cc --meta pair.off --nlooks 10 \
-    --out-format float --out pair.unw
+# GAMMA: big-endian; width from a .par/.off (or --cols + --big-endian)
+whirlwind unwrap --ifg pair.diff --ifg-meta pair.off \
+    --cor pair.cc --cor-meta pair.off --nlooks 10 --out-format float --out pair.unw
 ```
 
 - `--ifg` is the raw complex64 interferogram (snaphu `COMPLEX_DATA`, i.e.
@@ -111,12 +113,14 @@ whirlwind unwrap --ifg pair.diff --cor pair.cc --meta pair.off --nlooks 10 \
 - `--cols` (alias `--width`) is snaphu's "line length" / ROI_PAC `WIDTH`; the
   row count always comes from the file size. A `<file>.rsc` or `<file>.xml`
   next to each input supplies it automatically (and, for isce2, the dtype,
-  band count, and byte order).
+  band count, scheme, and byte order). Use `--ifg-meta`, `--phase-meta`, or
+  `--cor-meta` when the sidecar is not next to that input.
 - Output is chosen by extension (override with `--out-format`): `.tif` →
   TIFF; `.unw` → two-band amp+phase rmg (snaphu's default output layout);
-  anything else → flat float32 phase. `--conncomp` writes u16 TIFF or
-  one-byte-per-pixel flat (the snaphu/isce2 convention) by extension. Flat
-  outputs keep the input's byte order.
+  anything else → flat float32 phase. Conncomp follows the output style by
+  default: u16 TIFF for TIFF outputs, or one-byte-per-pixel flat for flat
+  outputs (the snaphu/isce2 convention). Flat outputs keep the input's byte
+  order.
 - `--mask` also accepts snaphu-style flat byte masks (nonzero = valid).
 
 For noisy scenes, coarsen the solve with `--downsample` (as in the Python API);
