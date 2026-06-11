@@ -175,7 +175,8 @@ cargo test --workspace
 ## More
 
 - [NISAR comparison](docs/NISAR_SUMMARY.md)
-- [Performance notes](docs/PERFORMANCE.md)
+- [Why SNAPHU/PHASS differ](docs/SNAPHU_PHASS_SPEED.md)
+- [Memory and scaling notes](docs/MEMORY_AND_SCALING.md)
 - [Algorithm notes](docs/ALGORITHM.md)
 - [Environment variables](docs/ENV_VARS.md)
 

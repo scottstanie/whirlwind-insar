@@ -5,9 +5,7 @@
 #
 # The mkdocs site is self-contained under docs/ (no symlinks). The README lives
 # at the repo root for GitHub rendering; the site links out to it from
-# docs/index.md. The reference pages (ALGORITHM.md, NISAR_SUMMARY.md,
-# PERFORMANCE.md, ENV_VARS.md, ATBD-whirlwind.md) and figures/ are real files
-# in docs/.
+# docs/index.md. The reference pages and figures/ are real files in docs/.
 
 site_name: whirlwind
 site_description: >-
@@ -31,9 +29,10 @@ nav:
   - Home: index.md
   - Algorithm: ALGORITHM.md
   - NISAR comparison: NISAR_SUMMARY.md
+  - Why SNAPHU/PHASS differ: SNAPHU_PHASS_SPEED.md
   - Bridging disconnected regions: BRIDGING.md
   - Tuning connected components: CONNCOMP_TUNING.md
-  - Performance: PERFORMANCE.md
+  - Memory and scaling: MEMORY_AND_SCALING.md
   - Environment variables: ENV_VARS.md
   - Deeper references:
       - Full ATBD: ATBD-whirlwind.md

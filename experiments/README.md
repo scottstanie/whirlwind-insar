@@ -9,5 +9,5 @@ and the documentation under [`docs/`](../docs).
 
 ## Contents
 
-- [SNAPHU_PHASS_SPEED.md](SNAPHU_PHASS_SPEED.md): a brief description of why whirlwind runs faster than SNAPHU and slower than PHASS using runtimes described in [NISAR comparison](../docs/NISAR_SUMMARY.md).
+- [SPEED_VS_ORIGINAL.md](SPEED_VS_ORIGINAL.md): historical comparison against the original Python prototype.
 - [TILING_DESIGN.md](TILING_DESIGN.md): notes from the tiled-unwrap attempt. The shipped default is the single-tile solver; the tiled path was never validated across the test set and is not exposed in the Python API.

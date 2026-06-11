@@ -1,14 +1,18 @@
 # Whirlwind, SNAPHU, and PHASS performance notes
 
-This note explains the main runtime differences in the 13-frame NISAR GUNW
-benchmark:
+This note explains the runtime pattern in the
+[13-frame NISAR GUNW benchmark](NISAR_SUMMARY.md): Whirlwind is much faster than
+single-tile SNAPHU and usually slower than PHASS. The measured runtime, memory,
+and quality numbers live in the NISAR comparison page and the raw
+[`nisar_4way_results.csv`](nisar_4way_results.csv); this page avoids repeating
+those tables.
 
-- Whirlwind: 10.5-27.3 s per frame.
-- SNAPHU, single tile: 465-1242 s per frame, 25-115x the Whirlwind runtime.
-- SNAPHU, 3x3 tiled plus reoptimize: 97-201 s per frame.
-- PHASS: 5.5-22.6 s per frame. PHASS beats Whirlwind on 12 of 13 frames, with a median runtime ratio of about 1.5x and a maximum of about 2.8x.
-
-The quality comparison in the public docs uses per-connected-component 2pi ambiguity agreement with the production NISAR GUNW unwrap. Whirlwind agrees with production SNAPHU on at least 98.8 percent of pixels on 12 of 13 frames.  The remaining frame, D_075, scores 88.2 percent, and the sweep's own SNAPHU runs (`cost=smooth`, `init=mcf`, both single-tile and 3x3 plus reoptimize) score the same 88.2 percent there, which points to a configuration mismatch against the production reference rather than a Whirlwind failure. PHASS ranges from 48.4 to 99.6 percent on the same frames.
+The quality metric in that comparison is per-connected-component 2pi ambiguity
+agreement with the production NISAR GUNW unwrap. One caveat matters: on D_075,
+the sweep's own SNAPHU runs (`cost=smooth`, `init=mcf`, both single-tile and 3x3
+plus reoptimize) match Whirlwind against the production reference, which points
+to a configuration mismatch against the production reference rather than a
+Whirlwind-only failure.
 
 ## Why Whirlwind is faster than single-tile SNAPHU
 
@@ -16,9 +20,9 @@ Whirlwind and SNAPHU are in the same broad algorithm family: compute residues, a
 
 1. Fixed linear costs. SNAPHU evaluates nonlinear, flow-dependent statistical costs, and re-evaluates them as flow changes. Whirlwind's default NISAR path uses a fixed linear Carballo/Lee per-arc cost with unit-capacity arcs (only the zero-cost boundary gutter ring is multi-unit). The residue-pairing structure is the same; the fixed integer costs make the network problem lighter.
 
-2. Shortest-path implementation. Whirlwind uses a tuned Dial bucket-queue Dijkstra (`shortest_path/dial.rs`) for the fixed integer-cost problem. Core count contributes little: `scripts/rayon_bench.py` measured about 1.2-1.3x going from 1 to 12 threads on D_077, because the PD/SSP solver is mostly serial. The parallel gain is concentrated in the O(mn) cost, residue, and connected-component setup.
+2. Shortest-path implementation. Whirlwind uses a tuned Dial bucket-queue Dijkstra (`shortest_path/dial.rs`) for the fixed integer-cost problem. Core count contributes little because the PD/SSP solver is mostly serial. The parallel gain is concentrated in the O(mn) cost, residue, and connected-component setup.
 
-3. Single tile is the NISAR production configuration. The isce3 GUNW defaults run SNAPHU with `ntiles: [1, 1]` (`cost=smooth`, `init=mcf`), so the single-tile column is the configuration NISAR actually ships, and the comparison is like for like: one whole-frame statistical-cost solve against one whole-frame fixed-cost solve. Other pipelines commonly tile SNAPHU for speed; the 3x3 run shows what that buys here (97-201 s), and in this sweep it also raised peak RSS on 12 of 13 frames because the tile workers run in parallel.
+3. Single tile is the NISAR production configuration. The isce3 GUNW defaults run SNAPHU with `ntiles: [1, 1]` (`cost=smooth`, `init=mcf`), so the single-tile column is the configuration NISAR actually ships, and the comparison is like for like: one whole-frame statistical-cost solve against one whole-frame fixed-cost solve. Other pipelines commonly tile SNAPHU for speed; the 3x3 run in the NISAR comparison shows that runtime/memory tradeoff.
 
 In short, Whirlwind solves the same kind of whole-frame network problem as single-tile SNAPHU, with a simpler fixed-cost model and a faster implementation of the shortest-path work that dominates the runtime.
 
@@ -30,7 +34,7 @@ The isce3 PHASS used by the sweep also computes residues and per-arc costs and r
 
 2. Free reuse of flowed arcs. Inside its successive-shortest-paths solve, any arc that already carries flow has zero cost for later paths (`ASSP.cc`), so later residue pairings funnel along existing flow lines. Each iteration gets cheaper as flow accumulates, at the price of exactness: the solution is no longer a minimum-cost flow for the stated costs.
 
-3. Region-level repair. After the flow step, PHASS flood-fills regions bounded by the flow lines, picks each region's 2pi ambiguity by a histogram-mode vote, and drops regions smaller than a pixel-count floor. These steps are fast, and they are also where PHASS diverges from production SNAPHU on hard frames (48.4 percent on D_075, 67.0 on A_025, 75.4 on A_030).
+3. Region-level repair. After the flow step, PHASS flood-fills regions bounded by the flow lines, picks each region's 2pi ambiguity by a histogram-mode vote, and drops regions smaller than a pixel-count floor. These steps are fast, and they are also where PHASS diverges from production SNAPHU on hard frames.
 
 Whirlwind's `unwrap_linear` path solves the fixed-cost MCF over the full uncut graph and drains every residue to integer balance. That costs more shortest-path work, especially on residue-heavy scenes, and it avoids the cut, vote, and small-region-discard heuristics. Condensed:
 

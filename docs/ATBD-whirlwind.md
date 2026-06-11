@@ -4,7 +4,7 @@
 
 Whirlwind is a 2D minimum-cost-flow phase unwrapper for interferometric synthetic aperture radar (InSAR) data. It computes residues from wrapped phase, assigns statistical edge costs from coherence and local phase-gradient information, solves a network-flow problem, and integrates the corrected gradients back into an unwrapped phase image.
 
-This document is the long-form technical reference. For the short public reading path, start with [ALGORITHM.md](ALGORITHM.md), [NISAR_SUMMARY.md](NISAR_SUMMARY.md), and [PERFORMANCE.md](PERFORMANCE.md).
+This document is the long-form technical reference. For the short public reading path, start with [ALGORITHM.md](ALGORITHM.md), [NISAR_SUMMARY.md](NISAR_SUMMARY.md), and [MEMORY_AND_SCALING.md](MEMORY_AND_SCALING.md).
 
 The public Python call is `whirlwind.unwrap(igram, corr, nlooks, mask=mask)`. It uses the 2D coherence-cost path and returns both unwrapped phase and connected-component labels. Other solver variants appear in this document where they matter for implementation context, but they are not the first-use API.
 
@@ -645,10 +645,11 @@ Masks (`true` = valid) are handled differently per stage and per entry point:
    produce invalid (fast-but-wrong) results on fragmented NISAR scenes. Only the
    single-tile kernel (§3.1, §9.6) is verified.
 
-### 9.6 Validated Paths and Benchmark
+### 9.6 Validated Paths and Benchmark Sources
 
-This subsection records the validated configuration and the headline benchmark, so
-the default unwrap can be reproduced and measured against a known reference.
+This subsection records the validated configuration and points to the canonical
+benchmark outputs. Benchmark tables are not duplicated here; otherwise the ATBD
+goes stale independently of the public comparison page.
 
 **Entry point → solver / cost / mask map.** The public `unwrap` is the single-tile
 linear MCF path; all other solver variants are opt-in or experimental.
@@ -666,53 +667,17 @@ The reference reused throughout is the NISAR geocoded unwrapped product (GUNW),
 whose production unwrap is SNAPHU; per-component match is the fraction of pixels
 whose integer $2\pi$ level agrees with that reference.
 
-**Single-tile benchmark (D_077, 4176x4257, vs the SNAPHU reference).** The default
-path is both faster and more accurate than single-tile SNAPHU:
+The current public benchmark is [NISAR_SUMMARY.md](NISAR_SUMMARY.md), with raw
+per-frame results in [`nisar_4way_results.csv`](nisar_4way_results.csv). The
+comparison includes Whirlwind, PHASS, ICU, single-tile SNAPHU, and tiled SNAPHU.
+The companion note [SNAPHU_PHASS_SPEED.md](SNAPHU_PHASS_SPEED.md) explains the
+runtime differences without duplicating the measured tables.
 
-| Unwrapper (single tile)          | Runtime   | per-component match vs reference |
-| -------------------------------- | --------- | -------------------------------- |
-| **whirlwind `unwrap` (default)** | **≈37 s** | **99.49 %**                      |
-| SNAPHU (`cost=smooth, init=mcf`) | ≈588 s    | 99.30 %                          |
-| PHASS                            | ≈19.6 s   | 94.7 %                           |
+Reproduction entry points:
 
-Benchmark the default path with
-`scripts/bench_nisar_gunw_whirlwind.py --solver linear --nlooks 16`.
-
-**13-frame NISAR GUNW sweep.** Per-component match against the SNAPHU reference,
-with runtime and peak RSS for the default `unwrap`, single-tile, one heavy unwrap
-at a time. Reproduce with `scripts/bench_nisar_gunw_whirlwind.py --solver linear
---nlooks 16`; full results are in `docs/nisar_4way_results.csv`.
-
-| frame | whirlwind % | whirlwind s | whirlwind GB | PHASS % | PHASS s |
-| ----- | ----------- | ----------- | ------------ | ------- | ------- |
-| A_013 | 100.0       | 13.5        | 3.2          | 99.3    | 6.3     |
-| A_016 | 100.0       | 19.8        | 3.6          | 99.6    | 12.5    |
-| A_018 | 100.0       | 18.0        | 3.4          | 85.7    | 4.7     |
-| A_020 | 99.8        | 27.6        | 3.7          | 99.4    | 7.3     |
-| A_022 | 100.0       | 25.3        | 3.7          | 99.4    | 6.4     |
-| A_025 | 99.99       | 30.7        | 3.8          | 67.0    | 5.6     |
-| A_028 | 100.0       | 33.4        | 3.6          | 92.9    | 11.5    |
-| A_030 | 100.0       | 35.5        | 4.1          | 75.4    | 6.1     |
-| D_074 | 98.8        | 18.5        | 3.5          | 91.2    | 5.7     |
-| D_075 | 88.2        | 82.4        | 3.9          | 48.4    | 15.4    |
-| D_077 | 99.5        | 61.9        | 3.5          | 94.7    | 16.8    |
-| D_078 | 99.8        | 37.9        | 3.5          | 96.9    | 10.5    |
-| A_035 | 100.0       | 22.5        | 3.2          | 94.6    | 8.5     |
-
-The default path matches or beats the SNAPHU reference per-component on every frame
-at ~7–45x lower runtime (single-tile SNAPHU is ~588 s), peaks at about 3-4 GB, and
-beats PHASS on quality on most frames (often by a wide margin, e.g. D_075 88.2 vs
-48.4, A_030 100 vs 75.4) while PHASS runs ~2–4x faster.
-
-A_025 is the one frame where the default differs structurally: a low-coherence
-river splits it into disconnected slabs whose *relative* $2\pi$ level the MCF
-integrator leaves under-determined. The default-on bridge post-pass (§3.5,
-`unwrap(bridge=True)`) re-levels each integration component from the unwrapped
-phase at the region boundaries (spanning tree rooted at the largest region),
-lifting A_025 from 58 % to 99.99 % with zero regression on the other 12 frames.
-The remaining open case is a fully-decorrelated gap so wide that no boundary pair
-gives a reliable offset, where the inter-region level is a labelling convention
-rather than a measurement.
+- Full comparison: `scripts/sweep_all_unwrappers.sh`
+- Whirlwind-only run: `scripts/bench_nisar_gunw_whirlwind.py`
+- Bridge diagnostics: [BRIDGING.md](BRIDGING.md)
 
 > **Tiling is not yet validated** on fragmented NISAR scenes (see §9.5 item 4).
 > The single-tile default is the trustworthy reference to measure tiling against.

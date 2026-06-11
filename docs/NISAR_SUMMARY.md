@@ -7,7 +7,7 @@ The comparison uses 13 HH NISAR GUNW frames with `nlooks=16`. Runtimes and memor
 ## Summary
 
 - Whirlwind agrees with the production SNAPHU unwrap on at least 98.8 percent of pixels on 12 of 13 frames (99 percent or better on 11 of them).
-- The remaining frame, D_075, is difficult for every method in this sweep; Whirlwind agrees with production SNAPHU on 88.2 percent of pixels there, while PHASS agrees on 48.4 percent.
+- The remaining frame, D_075, is the outlier. The sweep's own SNAPHU runs also score 88.2 percent against the production reference there, so this appears to be a configuration mismatch with the production unwrap rather than a Whirlwind-specific failure; PHASS agrees on 48.4 percent.
 - Runtime is 10-27 seconds per frame for Whirlwind, compared with 465-1242 seconds for single-tile SNAPHU and about 100-200 seconds for SNAPHU 3x3 tiled (9 tiles in parallel) plus reoptimization.
 - Peak memory is about 2.5 GB per NISAR frame for Whirlwind (2.2-2.8 GB), compared with about 8 GB for single-tile SNAPHU and about 6-13 GB for 3x3 tiled SNAPHU. The tiled peak is not intrinsic: it is dominated by the parallel tile phase, so it scales with how many tiles unwrap at once (`nproc`) -- capping concurrency roughly halves it (see the note under the table).
 
@@ -28,7 +28,7 @@ The quality number is per-connected-component 2pi ambiguity agreement with the p
 | A_028 |                          100.0 |                       92.9 |                                         |
 | A_030 |                          100.0 |                       75.4 |                                         |
 | D_074 |                           98.8 |                       91.2 |                                         |
-| D_075 |                           88.2 |                       48.4 | hard frame for all methods in the sweep |
+| D_075 |                           88.2 |                       48.4 | sweep SNAPHU also scores 88.2           |
 | D_077 |                           99.5 |                       94.7 |                                         |
 | D_078 |                           99.8 |                       96.9 |                                         |
 | A_035 |                          100.0 |                       94.6 |                                         |
@@ -55,4 +55,6 @@ Memory note: the SNAPHU tiled numbers are peak RSS summed over the whole process
 - Per-frame 6-panel comparisons: `scripts/plot_nisar_per_frame.py`
 - Headline figure: `scripts/plot_nisar_summary.py`
 
-See [Algorithm notes](ALGORITHM.md) for how the unwrapper works and [Performance notes](PERFORMANCE.md) for synthetic timing and memory details.
+See [Algorithm notes](ALGORITHM.md) for how the unwrapper works,
+[Why SNAPHU/PHASS differ](SNAPHU_PHASS_SPEED.md) for the runtime interpretation,
+and [Memory and scaling notes](MEMORY_AND_SCALING.md) for rough memory planning.
