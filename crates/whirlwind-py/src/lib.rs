@@ -96,6 +96,21 @@ fn label_components<'py>(
     (labels.into_pyarray(py), next as usize)
 }
 
+/// Run the `whirlwind` CLI in-process and return its exit code.
+///
+/// ``argv`` excludes the program name (pass ``sys.argv[1:]``). Backs the
+/// ``whirlwind`` console script (``[project.scripts]`` ->
+/// ``whirlwind._climain:main``) so pip/uvx installs get the same CLI as the
+/// standalone Rust binary - one flag surface, no second implementation.
+/// Releases the GIL for the duration.
+#[pyfunction]
+fn cli_main(py: Python<'_>, argv: Vec<String>) -> i32 {
+    let full: Vec<std::ffi::OsString> = std::iter::once("whirlwind".into())
+        .chain(argv.into_iter().map(Into::into))
+        .collect();
+    py.detach(|| whirlwind_cli::run(full))
+}
+
 /// Re-level the disconnected regions of an unwrapped phase image.
 ///
 /// Integration-component gauge bridging: sets the relative 2π integer offset
@@ -857,6 +872,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;
     m.add_function(wrap_pyfunction!(label_components, m)?)?;
     m.add_function(wrap_pyfunction!(bridge_components, m)?)?;
+    m.add_function(wrap_pyfunction!(cli_main, m)?)?;
     m.add_function(wrap_pyfunction!(interpolate, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_ifg, m)?)?;
     m.add_function(wrap_pyfunction!(closure_correct, m)?)?;

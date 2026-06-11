@@ -126,6 +126,10 @@ def wrap_phase(unw: NDArray[np.float32]) -> NDArray[np.float32]: ...
 def label_components(mask: NDArray[np.bool_]) -> tuple[NDArray[np.int32], int]:
     """4-connected component labels of a boolean mask -> ``(labels, n)``."""
 
+def cli_main(argv: list[str]) -> int:
+    """Run the `whirlwind` CLI in-process (argv excludes the program name);
+    returns the exit code. Backs the ``whirlwind`` console script."""
+
 def bridge_components(
     unw: NDArray[np.float32],
     mask: NDArray[np.bool_] | None = ...,

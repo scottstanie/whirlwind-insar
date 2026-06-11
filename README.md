@@ -45,19 +45,27 @@ available as a flag. Run `whirlwind unwrap --help` for the full list.
 
 ### Install
 
-Pick whichever is simplest for you - no Python required for any of these:
+Pick whichever is simplest for you:
 
-1. **Prebuilt binary (simplest, no toolchain).** Download the archive for your
+1. **Prebuilt binary (no Python or toolchain).** Download the archive for your
    platform from the [latest release][releases], unpack it, and run the
    `whirlwind` executable. A single self-contained binary - handy for MATLAB
    users driving it via `system('whirlwind unwrap ...')`.
-2. **From source with Cargo** (needs the Rust toolchain):
+2. **With the Python package.** The wheel ships a `whirlwind` console script
+   (the same Rust CLI, entered in-process):
+
+   ```bash
+   uvx --from whirlwind-insar whirlwind --help   # zero-install try-out
+   pip install whirlwind-insar                   # puts `whirlwind` on PATH
+   ```
+
+3. **From source with Cargo** (needs the Rust toolchain):
 
    ```bash
    cargo install --path crates/whirlwind-cli --locked
    ```
 
-3. **Docker** (see below).
+4. **Docker** (see below).
 
 [releases]: https://github.com/scottstanie/whirlwind-insar/releases/latest
 

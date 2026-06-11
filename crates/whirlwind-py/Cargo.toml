@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 whirlwind-core = { path = "../whirlwind-core" }
+whirlwind-cli = { path = "../whirlwind-cli" }
 ndarray.workspace = true
 num-complex.workspace = true
 rand.workspace = true

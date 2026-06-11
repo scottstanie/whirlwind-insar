@@ -30,6 +30,12 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 
+[project.scripts]
+# Same Rust CLI as the standalone binary, entered through the extension module
+# (see python/whirlwind/_climain.py); makes `uvx --from whirlwind-insar
+# whirlwind` and plain `whirlwind` work in any pip/uv install.
+whirlwind = "whirlwind._climain:main"
+
 [project.urls]
 Homepage = "https://github.com/scottstanie/whirlwind-insar"
 Documentation = "https://github.com/scottstanie/whirlwind-insar/tree/main/docs"
