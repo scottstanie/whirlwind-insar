@@ -1,125 +1,108 @@
-# Whirlwind performance: why it's ~15–40x faster than SNAPHU (and ~2–4x slower than PHASS)
+# Whirlwind, SNAPHU, and PHASS performance notes
 
-Two questions come up on the benchmark: **why is whirlwind so much faster than
-SNAPHU** (the headline ~15–40x on single-tile NISAR frames), and **why is isce3
-PHASS still ~2–4x faster than whirlwind** (e.g. D_077 ≈ 20 s vs ≈ 37 s). This note
-answers both. (Aside: a tiled or reoptimize warm-start can cut runtime but **not**
-full-frame memory - the final single-tile solve still allocates the whole-image
-network.)
+This note explains the main runtime difference in the 13-frame NISAR GUNW
+benchmark:
 
-## Why ~15–40x faster than SNAPHU?
+- Whirlwind: 10.5-27.3 s per frame.
+- SNAPHU, single tile: 465-1242 s per frame, or about 25-115x slower.
+- SNAPHU, 3x3 tiled plus reoptimize: 97-201 s per frame.
+- PHASS: 5.5-22.6 s per frame. Whirlwind is usually slower than PHASS, with a
+  median runtime ratio of about 1.5x and a maximum of about 2.8x on this sweep.
 
-On these NISAR frames whirlwind unwraps in ~14–41 s vs single-tile SNAPHU's
-~500–900 s. The honest framing first: **this is the same algorithm class.** SNAPHU
-and whirlwind both reduce 2D unwrapping to a minimum-cost flow on the residue
-network - whirlwind is *not* trading quality for speed here (that is the PHASS story
-below); it matches SNAPHU's per-component quality. So the gap is *how the MCF is
-built and solved*, not a different or weaker problem. Four factors, roughly by
-impact:
+The quality comparison in the public docs uses per-connected-component 2pi
+ambiguity agreement with the production NISAR GUNW unwrap. Whirlwind agrees with
+production SNAPHU on at least 98.8 percent of pixels on 12 of 13 frames; the
+remaining frame, D_075, scores 88.2 percent. The sweep's own SNAPHU runs
+(`cost=smooth`, `init=mcf`, both single-tile and 3x3 plus reoptimize) also score
+88.2 percent on D_075, so that frame appears to reflect a production-reference
+configuration mismatch rather than a Whirlwind-only failure. PHASS ranges from
+48.4 to 99.6 percent on the same frames.
 
-1. **A fixed linear cost vs nonlinear statistical costs.** SNAPHU's costs are
-   *statistical* (MAP-derived) and **nonlinear** functions of the per-arc flow - its
-   2001 paper is titled "…statistical models for cost functions in **nonlinear
-   optimization**" (Chen & Zebker, *JOSA A*) - so its network-flow solve carries
-   convex, multi-unit arc costs and is correspondingly heavier. whirlwind uses a
-   **fixed linear** Carballo (Lee-1994) per-arc cost and a capacity-1 MCF, so it
-   solves a single, lighter network. Same residue-pairing problem, a simpler (and
-   so cheaper) cost model - at no measured quality cost on these frames. *(This is
-   the factor I can least precisely quantify without profiling SNAPHU's internals;
-   the implementation and configuration factors below are the surer bets.)*
+A tiled or warm-started path can reduce runtime, but it does not remove the peak
+memory cost of a final whole-frame solve if the final solve still builds the
+whole-image network.
 
-2. **An efficient *serial* solver - not parallelism.** It is tempting to credit
-   rayon, but measured (`scripts/rayon_bench.py`): 1 thread vs 12 is only
-   **~1.2–1.3x** (D_077 43.6 → 37.4 s), because the PD/SSP solver is largely serial
-   and rayon only parallelizes the O(mn) cost/residue/conncomp build. The telling
-   number: **whirlwind on a single thread is still ~13x faster than single-tile
-   SNAPHU.** So the gap is the *solver and cost model*, not core count - a lean
-   per-arc linear cost and a tuned Dial-bucket Dijkstra MCF (with the recent
-   per-source-rescan fix, ~1.4–2.4x). SNAPHU v2 is mature, portable C; parallelism
-   is not where the difference comes from.
+## Why Whirlwind is faster than single-tile SNAPHU
 
-3. **Single-tile is SNAPHU's *slow* configuration.** SNAPHU's operational strength
-   is **tiling** - bounded per-tile graphs plus a single-tile reoptimize pass - and
-   that path is fast and battle-tested. A single-tile solve over a full ~18-Mpx
-   NISAR frame is the largest, slowest setup for it: we are benchmarking at SNAPHU's
-   worst case. Which is exactly the result worth stating - **whirlwind reaches
-   SNAPHU-quality on the whole frame in one pass, with no tiling**, so the tile
-   bookkeeping, the seam artifacts, and the reoptimize step drop out of the pipeline.
+Whirlwind and SNAPHU are in the same broad algorithm family: compute residues,
+assign statistical edge costs, solve a network-flow problem, then integrate the
+corrected gradients. The speed difference in this benchmark is mostly in the
+flow representation and shortest-path implementation.
 
-4. *(minor)* whirlwind grows connected-component labels directly from the cost grid
-   **without** an MCF solve, so conncomps do not add a second global pass.
+1. Fixed linear costs. SNAPHU uses nonlinear, flow-dependent statistical costs.
+   Whirlwind's default NISAR path uses a fixed linear Carballo/Lee per-arc cost
+   and capacity-1 flow. That keeps the same residue-pairing structure, but makes
+   the network problem lighter.
 
-**Bottom line, fair to SNAPHU:** it is still the quality reference, and its tiled
-path is fast. whirlwind's edge is not a cleverer algorithm - it is that a single
-fixed-cost linear MCF, solved efficiently in parallel, hits SNAPHU's single-tile
-quality far faster, so you do not *need* to tile a NISAR frame to unwrap it quickly.
+2. Shortest-path implementation. Whirlwind uses a tuned Dial-bucket Dijkstra
+   path for the fixed integer-cost problem. The speedup is not mainly from core
+   count: `scripts/rayon_bench.py` measured only about 1.2-1.3x from 1 thread to
+   12 threads on D_077, because the PD/SSP solver is mostly serial. The
+   parallel work is mainly the O(mn) cost, residue, and connected-component
+   setup.
 
-## Why is PHASS faster than whirlwind? An algorithm-class difference - but PHASS is *not* "no flow"
+3. SNAPHU single-tile is the slow configuration. SNAPHU's operational path is
+   tiled unwrapping plus reoptimization. A single-tile solve over an entire
+   NISAR frame is the largest and slowest way to run it. That comparison is
+   still useful because Whirlwind reaches near-production-SNAPHU agreement on
+   most frames in one whole-frame pass, without the tiled solve and reoptimize
+   workflow.
 
-A common over-simplification is "PHASS just region-grows, it doesn't solve a
-flow." That is wrong. PHASS **builds residues and a cost graph and runs a
-min-cost-flow `solve(node_patch)`**, then flood-fills. Its speed comes from three
-things, none of which is "skip the flow":
+4. Connected components are cheap in Whirlwind. Whirlwind grows component labels
+   directly from the cost grid rather than running a second global flow solve.
 
-1. **Hard-cut structure.** PHASS injects hard `cost = 0 / 255` barriers from a
-   Canny edge detector, ≥ 1 rad phase-gradient cuts, and good-coherence clamps.
-   These *drastically* slash the connectivity of the flow problem, so the
-   `solve()` it runs is over a much smaller / fragmented graph.
-2. **Flow reuse** across solves.
-3. **Heuristic post-processing** instead of exact convergence: a flood-fill seed,
-   a per-region **histogram-mode** wrap vote, and **discarding any region
-   < 200 px**.
+The short version: Whirlwind is not using a fundamentally weaker problem than
+single-tile SNAPHU for this comparison. It is using a simpler fixed-cost MCF and
+a faster implementation of the corresponding shortest-path work.
 
-whirlwind's `unwrap_linear`, by contrast, solves the **exact global min-cost flow
-on the full (uncut) graph**, draining *every* residue to integer balance. That
-exactness is the quality lead: on the NISAR GUNW set whirlwind scores 99–100 %
-per-component vs PHASS's 48–99 % (94.7 % on D_077), because PHASS's hard cuts,
-mode vote and small-region discards each shed accuracy for speed.
+## Why PHASS is usually faster than Whirlwind
 
-So the trade is **heuristic-cut-down-flow + flood-fill + reuse (PHASS)** vs
-**exact global MCF (whirlwind)** - not "no search vs search."
+PHASS is faster because it reduces and fragments the problem before making
+region-level decisions. In the isce3/tophu PHASS path used by the sweep, PHASS
+does build residues and a cost graph, runs a min-cost-flow solve on node patches,
+and then flood-fills regions.
 
-## Where whirlwind actually spent its time
+The main speed factors are:
 
-Profiled on D_077 (4176 x 4257, `WHIRLWIND_DEBUG=1`):
+1. Hard cuts and barriers. PHASS adds hard cost barriers from edge and
+   phase-gradient tests, plus coherence-based constraints. That reduces graph
+   connectivity and makes each solve smaller.
 
-| stage                                 | time  | notes                                                  |
-| ------------------------------------- | ----- | ------------------------------------------------------ |
-| **SSP fallback**                      | ~45 s | 927 single-source Dijkstras after PD hands off         |
-| PD (8 full Dijkstra)                  | ~13 s | early iters drain thousands of units, later ones < 100 |
-| cost / residue / integrate / conncomp | ~8 s  | all O(*mn*), rayon-parallel                            |
+2. Flow reuse. Previously used flow paths are cheap to reuse, so repeated solves
+   do not pay the same cost as an independent global solve.
 
-More PD iterations are strictly slower for identical quality (the residual past
-iter 8 is "stranded" for multi-source PD), so 8 is the sweet spot and SSP draining
-is the real cost.
+3. Region-level post-processing. After the flow step, PHASS uses flood fill, a
+   per-region histogram-mode wrap vote, and drops very small regions. These
+   choices are fast, but they are also where some disagreement with production
+   SNAPHU can enter on difficult NISAR frames.
 
-## The fix that came out of it (~1.4–2.4x, shipped)
+Whirlwind's `unwrap_linear` path instead solves the fixed-cost MCF over the full
+uncut graph and drains every residue to integer balance. That costs more
+shortest-path work, especially on residue-heavy scenes, but avoids PHASS's hard
+cut, region-vote, and small-region-discard tradeoffs.
 
-Drilling into the SSP fallback with `WHIRLWIND_DEBUG` showed the dominant cost was
-**not** the Dijkstra traversals but `max_reduced_cost_par` - an O(E) scan over
-~38 M arcs that ran **once per source** purely to size the Dial buckets:
-**34 s of D_077's 61 s (~52 % of runtime, ~76 % of the SSP phase).**
+So the useful distinction is:
 
-A naive "scan once" hoist is unsafe: the capped potential update *grows*
-potentials, so the max reduced cost rises and a stale, too-small Dial `k` would
-alias the circular buckets and return a wrong answer. The fix maintains `max_rc`
-**across** sources (one tight scan up front) and rescans **only on overflow** - if
-any relaxation observes `rc ≥ k`, it discards that source's partial Dijkstra,
-recomputes `max_rc` tight, and retries, so an under-sized `k` can never commit.
+- PHASS: fragmented/reused flow plus flood-fill and region decisions.
+- Whirlwind: whole-frame fixed-cost MCF with exact residue balance for that
+  cost model.
 
-**Result:** D_077 61 → 37 s, D_075 2.44x, A_035 1.65x, several others 1.4–1.5x;
-the optimal cost is byte-identical, per-component match is unchanged on all 13
-NISAR frames, and the 79 core tests stay green. Residue-light frames are
-unchanged (they barely touch the SSP fallback).
+## Current bottleneck
 
-Profile it yourself: `scripts/prof_pdssp.py` (a PD-iters sweep) and
-`WHIRLWIND_DEBUG=1`, which prints `max_reduced_cost_scan=…ms`.
+On residue-heavy NISAR frames, Whirlwind spends most of its time in the
+primal-dual and SSP shortest-path work. The O(mn) steps--cost construction,
+residue computation, integration, and connected-component labeling--are
+parallel and are not the main limit.
 
-## Remaining levers (not yet done)
+Useful profiling entry points:
 
-- **Reliability region-growing / reoptimize warm-start** - borrow PHASS's idea as
-  an *init*: a fast coarse/tiled pass produces a near-solution, the single-tile
-  MCF then *reoptimizes* from it, so far fewer residues remain for PD/SSP. Speed
-  only (the final solve is still full-image memory); estimated 2–3x more.
-- **Parallelize the SSP source loop** - disjoint residual components are
-  independent.
+- `scripts/prof_pdssp.py`: sweeps the number of primal-dual iterations.
+- `WHIRLWIND_DEBUG=1`: prints detailed PD/SSP timings, including reduced-cost
+  scan time.
+
+## Possible speed work
+
+- Reliability or tiled warm-start: use a fast coarse or tiled pass to start the
+  whole-frame MCF closer to the final solution. This targets runtime only; the
+  final whole-frame solve still has whole-frame memory use.
+- Parallel SSP over independent residual components.
