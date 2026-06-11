@@ -78,7 +78,7 @@ float32 file (see below). `--mask` is optional; nonzero means valid. When
 `--mask` is omitted the CLI uses `coherence > 0` (and `igram != 0` with
 `--ifg`) as the default valid mask, matching the Python API.
 
-### Legacy flat-binary formats (snaphu / ROI_PAC / isce2 / GAMMA)
+### Flat-binary formats (snaphu / ROI_PAC / isce2 / GAMMA)
 
 Headerless flat-binary rasters from the classic pipelines work directly - no
 GDAL conversion needed:

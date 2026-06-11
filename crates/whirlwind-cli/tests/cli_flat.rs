@@ -1,4 +1,4 @@
-//! End-to-end CLI tests for the flat-binary legacy formats (snaphu /
+//! End-to-end CLI tests for the flat-binary formats (snaphu /
 //! ROI_PAC / isce2 / GAMMA): the same scene fed as TIFF and as each flat
 //! layout must produce bit-identical unwrapped output.
 //!

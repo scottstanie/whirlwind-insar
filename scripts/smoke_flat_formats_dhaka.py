@@ -2,7 +2,7 @@
 """Real-data smoke test for the CLI flat-binary formats (ROI_PAC dhaka pair).
 
 Feeds the same Sentinel-1 interferogram to `whirlwind unwrap` twice:
-  1. legacy flat path: --ifg <pair>.int  --cor <pair>.cc   (geometry from the
+  1. flat binary path: --ifg <pair>.int  --cor <pair>.cc   (geometry from the
      auto-discovered .rsc sidecar; .cc is the 2-band rmg amp+cor layout)
   2. TIFF path:        --phase phase.tif --cor cor.tif     (written here with
      rasterio from the same arrays)
@@ -57,9 +57,7 @@ def main() -> None:
     mask.tofile(mask_file)
 
     # TIFF twins of phase/cor for the reference run
-    prof = dict(
-        driver="GTiff", width=WIDTH, height=LENGTH, count=1, dtype="float32"
-    )
+    prof = dict(driver="GTiff", width=WIDTH, height=LENGTH, count=1, dtype="float32")
     phase_tif, cor_tif = OUT / "phase.tif", OUT / "cor.tif"
     with rasterio.open(phase_tif, "w", **prof) as dst:
         dst.write(np.angle(ifg).astype(np.float32), 1)
@@ -71,22 +69,58 @@ def main() -> None:
     unw_rmg = OUT / "unw_from_flat.unw"
     cc_flat = OUT / "conncomp_from_flat.conncomp"
 
-    # 1) legacy flat inputs (.rsc sidecar provides the width), rmg cor
+    # 1) flat inputs (.rsc sidecar provides the width), rmg cor
     run(
-        [str(BIN), "unwrap", "--ifg", str(int_file), "--cor", str(cc_file),
-         "--mask", str(mask_file), "--nlooks", NLOOKS,
-         "--out", str(unw_flatpath), "--conncomp", str(cc_flat)]
+        [
+            str(BIN),
+            "unwrap",
+            "--ifg",
+            str(int_file),
+            "--cor",
+            str(cc_file),
+            "--mask",
+            str(mask_file),
+            "--nlooks",
+            NLOOKS,
+            "--out",
+            str(unw_flatpath),
+            "--conncomp",
+            str(cc_flat),
+        ]
     )
     # 1b) same, but flat rmg .unw output
     run(
-        [str(BIN), "unwrap", "--ifg", str(int_file), "--cor", str(cc_file),
-         "--mask", str(mask_file), "--nlooks", NLOOKS, "--out", str(unw_rmg)]
+        [
+            str(BIN),
+            "unwrap",
+            "--ifg",
+            str(int_file),
+            "--cor",
+            str(cc_file),
+            "--mask",
+            str(mask_file),
+            "--nlooks",
+            NLOOKS,
+            "--out",
+            str(unw_rmg),
+        ]
     )
     # 2) TIFF reference
     run(
-        [str(BIN), "unwrap", "--phase", str(phase_tif), "--cor", str(cor_tif),
-         "--mask", str(mask_file), "--nlooks", NLOOKS,
-         "--out", str(unw_tiffpath)]
+        [
+            str(BIN),
+            "unwrap",
+            "--phase",
+            str(phase_tif),
+            "--cor",
+            str(cor_tif),
+            "--mask",
+            str(mask_file),
+            "--nlooks",
+            NLOOKS,
+            "--out",
+            str(unw_tiffpath),
+        ]
     )
 
     with rasterio.open(unw_flatpath) as src:
@@ -95,8 +129,10 @@ def main() -> None:
         b = src.read(1)
     diff = np.abs(a - b)[mask.astype(bool)]
     n_off = int((diff > 1e-3).sum())
-    print(f"flat vs tiff path: max|diff|={diff.max():.3e} on valid px, "
-          f"{n_off}/{diff.size} px differ >1e-3")
+    print(
+        f"flat vs tiff path: max|diff|={diff.max():.3e} on valid px, "
+        f"{n_off}/{diff.size} px differ >1e-3"
+    )
     assert n_off == 0, "flat and TIFF paths disagree"
 
     rmg = np.fromfile(unw_rmg, dtype=np.float32).reshape(LENGTH, 2, WIDTH)
@@ -107,8 +143,10 @@ def main() -> None:
     print(".unw rmg output: phase band identical, amplitude band == |ifg|")
 
     ccomp = np.fromfile(cc_flat, dtype=np.uint8).reshape(LENGTH, WIDTH)
-    print(f"flat conncomp: {ccomp.max()} component(s), "
-          f"{(ccomp > 0).mean():.1%} labeled")
+    print(
+        f"flat conncomp: {ccomp.max()} component(s), "
+        f"{(ccomp > 0).mean():.1%} labeled"
+    )
 
     # the mandatory look at the result
     import matplotlib.pyplot as plt

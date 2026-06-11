@@ -545,8 +545,7 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
     // mirror the Python default `mask = (igram != 0) & (corr > 0)` - on the
     // --phase path the igram is unit-magnitude, so that reduces to `corr > 0`.
     // We only materialize the default when some pixel would actually be masked;
-    // an all-valid frame stays `None` to keep the unmasked solver fast path and
-    // legacy output.
+    // an all-valid frame stays `None` to keep the unmasked solver fast path
     let mk: Option<Array2<bool>> = match mask.as_ref() {
         Some(p) => Some(if is_tiff(p) {
             read_bool_mask(p)?

@@ -1,4 +1,4 @@
-//! Flat-binary legacy InSAR raster support (snaphu / ROI_PAC / isce2 / GAMMA).
+//! Flat-binary InSAR raster support (snaphu / ROI_PAC / isce2 / GAMMA).
 //!
 //! All of these are headerless rasters: the only metadata is the number of
 //! columns (snaphu's "line length", ROI_PAC's `WIDTH`), the element type, the
