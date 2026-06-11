@@ -92,7 +92,7 @@ fn default_conncomp_path(out: &Path, out_format: OutFormat) -> PathBuf {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "whirlwind", about = "InSAR phase unwrapper (Rust)")]
+#[command(name = "whirlwind", version, about = "InSAR phase unwrapper")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
