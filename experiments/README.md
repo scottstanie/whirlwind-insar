@@ -9,15 +9,5 @@ and the documentation under [`docs/`](../docs).
 
 ## Contents
 
-- [TILING_DESIGN.md](TILING_DESIGN.md): notes from the tiled-unwrap attempt. The
-  shipped default is the single-tile solver; the tiled path was never validated
-  across the test set and is not exposed in the Python API.
-- [PHASS_SPEED.md](PHASS_SPEED.md): a longer analysis of why whirlwind is faster
-  than SNAPHU and slower than PHASS. The headline numbers live in the
-  [NISAR comparison](../docs/NISAR_SUMMARY.md).
-- [ATBD-3d.md](ATBD-3d.md): the 3D / time-series (CRLB) algorithm basis. The 3D
-  path is experimental and not shipped.
-- [proto_tile_linear.py](proto_tile_linear.py): a prototype of memory-bounded
-  tiling that stitches independent single-tile solves with the bridge
-  integer-gauge idea over tile overlaps. This is the approach a future tiling
-  effort would likely start from. It is a prototype, not part of the package.
+- [SNAPHU_PHASS_SPEED.md](SNAPHU_PHASS_SPEED.md): a brief description of why whirlwind runs faster than SNAPHU and slower than PHASS using runtimes described in [NISAR comparison](../docs/NISAR_SUMMARY.md).
+- [TILING_DESIGN.md](TILING_DESIGN.md): notes from the tiled-unwrap attempt. The shipped default is the single-tile solver; the tiled path was never validated across the test set and is not exposed in the Python API.
