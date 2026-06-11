@@ -1,7 +1,10 @@
 //! `whirlwind` CLI: simulate synthetic interferograms and unwrap them.
 
-use anyhow::{Context, Result, anyhow};
-use clap::{Parser, Subcommand};
+mod formats;
+
+use anyhow::{Context, Result, anyhow, bail};
+use clap::{Parser, Subcommand, ValueEnum};
+use formats::{Endian, FloatLayout};
 use ndarray::Array2;
 use num_complex::Complex32;
 use std::fs::File;
@@ -10,6 +13,42 @@ use std::path::{Path, PathBuf};
 use tiff::decoder::{Decoder, DecodingResult};
 use tiff::encoder::{TiffEncoder, colortype};
 
+/// Band layout of a flat-binary `--cor` input.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
+enum CorFormat {
+    /// single- vs two-band (line-interleaved) from the file size
+    Auto,
+    /// single-band float32 (snaphu FLOAT_DATA)
+    Float,
+    /// two-band line-interleaved, correlation second (snaphu ALT_LINE_DATA)
+    AltLine,
+    /// two-band sample-interleaved, correlation second (snaphu ALT_SAMPLE_DATA)
+    AltSample,
+}
+
+/// Format of the unwrapped-phase output.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
+enum OutFormat {
+    /// TIFF for .tif/.tiff, alt-line for .unw, flat float32 otherwise
+    Auto,
+    /// float32 TIFF
+    Tiff,
+    /// flat float32, phase only (snaphu FLOAT_DATA)
+    Float,
+    /// flat two-band line-interleaved amplitude+phase (snaphu ALT_LINE_DATA)
+    AltLine,
+}
+
+fn is_tiff(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
+        Some("tif" | "tiff")
+    )
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "whirlwind", about = "InSAR phase unwrapper (Rust)")]
 struct Cli {
@@ -17,6 +56,9 @@ struct Cli {
     cmd: Cmd,
 }
 
+// The Unwrap variant carries the whole flag surface; the size skew vs
+// Simulate is irrelevant for a once-parsed CLI enum.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Generate a synthetic interferogram + coherence pair.
@@ -42,21 +84,63 @@ enum Cmd {
     },
     /// Unwrap an interferogram.
     ///
-    /// Takes the wrapped phase as a single float32 TIFF (radians, range
-    /// `[-π, π]`). Internally the unwrapper only reads `arg(z)` from the
-    /// IG - the magnitude is unused - so wrapped phase is the full input.
+    /// Takes either the complex interferogram (`--ifg`, flat binary
+    /// complex64: snaphu COMPLEX_DATA / ROI_PAC / isce2 `.int`, GAMMA
+    /// `.int`/`.diff`) or the wrapped phase (`--phase`, float32 TIFF or flat
+    /// binary, radians in `[-π, π]`).
     ///
-    /// If you have a complex-valued GeoTIFF, you can extract the phase first via
+    /// Flat-binary (headerless) inputs need the number of columns: pass
+    /// `--cols` (snaphu's "line length" / ROI_PAC `WIDTH`), or let it be
+    /// read from a `<file>.rsc` / `<file>.xml` sidecar found next to the
+    /// data, or point `--meta` at a ROI_PAC `.rsc`, isce2 `.xml`, or GAMMA
+    /// `.par`/`.off` file. The number of rows always comes from the file
+    /// size. GAMMA rasters are big-endian: use `--big-endian` (implied when
+    /// `--meta` is a GAMMA par file).
+    ///
+    /// If you have a complex-valued GeoTIFF, extract the phase first via
     ///
     ///     gdal_translate DERIVED_SUBDATASET:PHASE:complex.int.tif wrapped.tif
     ///
     Unwrap {
-        /// wrapped-phase TIFF (float32, radians)
+        /// complex interferogram, flat binary complex64 (interleaved float32
+        /// real/imag pairs). Exactly one of --ifg / --phase is required.
+        #[arg(long, conflicts_with = "phase")]
+        ifg: Option<PathBuf>,
+        /// wrapped phase (float32, radians): TIFF by extension (.tif/.tiff),
+        /// otherwise flat binary (snaphu FLOAT_DATA)
         #[arg(long)]
-        phase: PathBuf,
-        /// coherence TIFF (float32)
+        phase: Option<PathBuf>,
+        /// coherence (float32): TIFF by extension, otherwise flat binary -
+        /// single-band (snaphu FLOAT_DATA, isce2 .cor, GAMMA .cc) or two-band
+        /// amplitude+correlation (snaphu ALT_LINE_DATA, ROI_PAC .cc), told
+        /// apart by file size; see --cor-format
         #[arg(long)]
         cor: PathBuf,
+        /// columns per row for flat-binary inputs (snaphu's "line length",
+        /// ROI_PAC WIDTH). Overrides any sidecar
+        #[arg(long, visible_alias = "width")]
+        cols: Option<usize>,
+        /// explicit metadata sidecar for flat-binary inputs: ROI_PAC .rsc,
+        /// isce2 .xml, or GAMMA .par/.off/.diff_par (GAMMA implies
+        /// big-endian). Without it, `<file>.rsc` / `<file>.xml` next to each
+        /// input is used when present
+        #[arg(long)]
+        meta: Option<PathBuf>,
+        /// flat-binary inputs/outputs are big-endian (GAMMA convention)
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        big_endian: bool,
+        /// band layout of a flat-binary --cor file. `auto` picks single- vs
+        /// two-band (line-interleaved, correlation in the second channel)
+        /// from the file size; `alt-sample` forces snaphu's sample-interleaved
+        /// two-band layout, which `auto` cannot distinguish from `alt-line`
+        #[arg(long, value_enum, default_value_t = CorFormat::Auto)]
+        cor_format: CorFormat,
+        /// format of the unwrapped-phase output. `auto`: TIFF for
+        /// .tif/.tiff, two-band amplitude+phase (snaphu ALT_LINE_DATA / "rmg")
+        /// for .unw, flat float32 otherwise. The amplitude band is |igram|
+        /// (all ones when the input was --phase)
+        #[arg(long, value_enum, default_value_t = OutFormat::Auto)]
+        out_format: OutFormat,
         /// optional valid-pixel mask (TIFF, u8/u16/i8/i16/f32/f64).
         /// Any nonzero value = valid (SNAPHU convention). Pre-saturates arcs
         /// crossing masked pixels so MCF skips them - critical for large
@@ -127,12 +211,14 @@ enum Cmd {
         /// smoothing in the filter.
         #[arg(long, default_value_t = 64)]
         goldstein_psize: usize,
-        /// Optional connected-components output TIFF (uint16). When set,
-        /// runs SNAPHU-style component growing from the same MCF solve and
-        /// writes a per-pixel component label (0 = background / unassigned,
-        /// 1..N = kept components). Phase is unwrapped consistently within
-        /// each component, but the relative 2π·k offset between components
-        /// is undefined.
+        /// Optional connected-components output: uint16 TIFF for .tif/.tiff,
+        /// otherwise one byte per pixel (the snaphu / isce2 .conncomp
+        /// convention; labels above 255 are an error). When set, runs
+        /// SNAPHU-style component growing from the same MCF solve and writes
+        /// a per-pixel component label (0 = background / unassigned, 1..N =
+        /// kept components). Phase is unwrapped consistently within each
+        /// component, but the relative 2π·k offset between components is
+        /// undefined.
         #[arg(long)]
         conncomp: Option<PathBuf>,
         /// Drop connected components smaller than this fraction of valid
@@ -165,7 +251,8 @@ enum Cmd {
         /// both `--cost-threshold` and `--conncomp-cycle-prob`.
         #[arg(long)]
         conncomp_sigma: Option<f64>,
-        /// output unwrapped phase TIFF
+        /// output unwrapped phase; format chosen by --out-format (default:
+        /// by extension)
         #[arg(long)]
         out: PathBuf,
     },
@@ -183,8 +270,14 @@ fn main() -> Result<()> {
             seed,
         } => cmd_simulate(shape, out, pattern, nlooks, coherence, seed),
         Cmd::Unwrap {
+            ifg,
             phase,
             cor,
+            cols,
+            meta,
+            big_endian,
+            cor_format,
+            out_format,
             mask,
             nlooks,
             downsample,
@@ -206,8 +299,14 @@ fn main() -> Result<()> {
             conncomp_sigma,
             out,
         } => cmd_unwrap(UnwrapArgs {
+            ifg,
             phase,
             cor,
+            cols,
+            meta,
+            big_endian,
+            cor_format,
+            out_format,
             mask,
             nlooks,
             downsample,
@@ -235,8 +334,14 @@ fn main() -> Result<()> {
 /// Resolved arguments for the `unwrap` subcommand. Mirrors the Python
 /// `whirlwind.unwrap` keyword surface so the CLI is at feature parity.
 struct UnwrapArgs {
-    phase: PathBuf,
+    ifg: Option<PathBuf>,
+    phase: Option<PathBuf>,
     cor: PathBuf,
+    cols: Option<usize>,
+    meta: Option<PathBuf>,
+    big_endian: bool,
+    cor_format: CorFormat,
+    out_format: OutFormat,
     mask: Option<PathBuf>,
     nlooks: f32,
     downsample: usize,
@@ -295,8 +400,14 @@ fn cmd_simulate(
 
 fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
     let UnwrapArgs {
+        ifg,
         phase,
         cor,
+        cols,
+        meta,
+        big_endian,
+        cor_format,
+        out_format,
         mask,
         nlooks,
         downsample,
@@ -319,8 +430,88 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
         out,
     } = args;
 
-    let ph = read_f32_tiff(&phase)?;
-    let co = read_f32_tiff(&cor)?;
+    // ---- inputs ---------------------------------------------------------
+    // Each input is a TIFF by extension, flat binary otherwise (formats.rs).
+    // `in_endian` tracks the interferogram's byte order so flat outputs match
+    // the inputs (GAMMA in -> GAMMA out).
+    let mut in_endian = if big_endian {
+        Endian::Big
+    } else {
+        Endian::Little
+    };
+    let (igram_orig, ph): (Array2<Complex32>, Array2<f32>) = match (&ifg, &phase) {
+        (Some(p), None) => {
+            if is_tiff(p) {
+                bail!(
+                    "--ifg expects a flat-binary complex64 file; complex TIFF is not \
+                     supported. Extract the phase first (gdal_translate \
+                     DERIVED_SUBDATASET:PHASE:{} phase.tif) and pass --phase",
+                    p.display()
+                );
+            }
+            let m = formats::resolve_flat_meta(p, cols, meta.as_deref(), big_endian)?;
+            formats::check_dtype(&m, p, formats::COMPLEX_DTYPES, "complex64/cfloat")?;
+            if let Some(b) = m.bands
+                && b != 1
+            {
+                bail!(
+                    "{}: expected a 1-band complex interferogram, sidecar says {b} bands",
+                    p.display()
+                );
+            }
+            in_endian = m.endian;
+            let ig = formats::read_flat_complex(p, m.cols, m.endian)?;
+            formats::check_rows(&m, p, ig.nrows())?;
+            let ph = ig.mapv(|z| z.arg());
+            (ig, ph)
+        }
+        (None, Some(p)) => {
+            let ph = if is_tiff(p) {
+                read_f32_tiff(p)?
+            } else {
+                let m = formats::resolve_flat_meta(p, cols, meta.as_deref(), big_endian)?;
+                formats::check_dtype(&m, p, formats::FLOAT_DTYPES, "float32")?;
+                in_endian = m.endian;
+                let arr = formats::read_flat_float(p, m.cols, m.endian, FloatLayout::Single, None)?;
+                formats::check_rows(&m, p, arr.nrows())?;
+                arr
+            };
+            // The unwrapper consumes complex; reconstruct unit-magnitude
+            // exp(i·phase). Internally only arg(z) is read on this path.
+            (ph.mapv(|v| Complex32::from_polar(1.0, v)), ph)
+        }
+        _ => bail!("exactly one of --ifg / --phase is required"),
+    };
+
+    let co = if is_tiff(&cor) {
+        read_f32_tiff(&cor)?
+    } else {
+        // The correlation always shares the interferogram's geometry, so its
+        // column count never blocks on a sidecar; its own `<cor>.rsc/.xml`
+        // (when present) still contributes dtype/band-count/byte-order.
+        let m = formats::resolve_flat_meta(
+            &cor,
+            cols.or(Some(ph.ncols())),
+            None,
+            big_endian || in_endian == Endian::Big,
+        )?;
+        formats::check_dtype(&m, &cor, formats::FLOAT_DTYPES, "float32")?;
+        let layout = match cor_format {
+            CorFormat::Float => FloatLayout::Single,
+            CorFormat::AltLine => FloatLayout::AltLine,
+            CorFormat::AltSample => FloatLayout::AltSample,
+            CorFormat::Auto => match m.bands {
+                Some(1) => FloatLayout::Single,
+                Some(2) => FloatLayout::AltLine,
+                Some(b) => bail!(
+                    "{}: unsupported correlation band count {b} (need 1 or 2)",
+                    cor.display()
+                ),
+                None => FloatLayout::Auto,
+            },
+        };
+        formats::read_flat_float(&cor, m.cols, m.endian, layout, Some(ph.nrows()))?
+    };
     if ph.dim() != co.dim() {
         return Err(anyhow!(
             "shape mismatch: phase={:?} cor={:?}",
@@ -329,15 +520,32 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
         ));
     }
     // Resolve the valid mask. With `--mask` it is read from disk; without it we
-    // mirror the Python default `mask = (igram != 0) & (corr > 0)` - the igram is
-    // unit-magnitude here, so that reduces to `corr > 0`. We only materialize the
-    // default when some coherence is non-positive (or NaN); an all-valid frame
-    // stays `None` to keep the unmasked solver fast path and legacy output.
+    // mirror the Python default `mask = (igram != 0) & (corr > 0)` - on the
+    // --phase path the igram is unit-magnitude, so that reduces to `corr > 0`.
+    // We only materialize the default when some pixel would actually be masked;
+    // an all-valid frame stays `None` to keep the unmasked solver fast path and
+    // legacy output.
     let mk: Option<Array2<bool>> = match mask.as_ref() {
-        Some(p) => Some(read_bool_mask(p)?),
+        Some(p) => Some(if is_tiff(p) {
+            read_bool_mask(p)?
+        } else {
+            formats::read_flat_mask(p, ph.ncols(), ph.nrows(), in_endian)?
+        }),
         None => {
-            if co.iter().any(|&c| c <= 0.0 || c.is_nan()) {
-                Some(co.mapv(|c| c > 0.0))
+            let zero = Complex32::new(0.0, 0.0);
+            let any_zero_ig = ifg.is_some() && igram_orig.iter().any(|&z| z == zero);
+            if any_zero_ig || co.iter().any(|&c| c <= 0.0 || c.is_nan()) {
+                let mut m = co.mapv(|c| c > 0.0);
+                if any_zero_ig {
+                    ndarray::Zip::from(&mut m)
+                        .and(&igram_orig)
+                        .for_each(|mv, &z| {
+                            if z == zero {
+                                *mv = false;
+                            }
+                        });
+                }
+                Some(m)
             } else {
                 None
             }
@@ -365,9 +573,6 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
     } else {
         cost_threshold
     };
-
-    // The unwrapper consumes complex; reconstruct as unit-magnitude exp(i·phase).
-    let igram_orig = ph.mapv(|p| Complex32::from_polar(1.0, p));
 
     // Build the phase fed to the MCF. Interpolation and Goldstein filtering both
     // only INFORM the solver; the integer 2π·k field they produce is transferred
@@ -480,7 +685,35 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
         );
     }
 
-    write_f32_tiff(&out, unw.view())?;
+    // ---- outputs --------------------------------------------------------
+    let ofmt = match out_format {
+        OutFormat::Auto => {
+            let ext = out
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_ascii_lowercase());
+            if is_tiff(&out) {
+                OutFormat::Tiff
+            } else if ext.as_deref() == Some("unw") {
+                OutFormat::AltLine
+            } else {
+                OutFormat::Float
+            }
+        }
+        f => f,
+    };
+    match ofmt {
+        OutFormat::Auto => unreachable!("Auto resolved above"),
+        OutFormat::Tiff => write_f32_tiff(&out, unw.view())?,
+        OutFormat::Float => formats::write_flat_float(&out, unw.view(), in_endian)?,
+        OutFormat::AltLine => {
+            // snaphu's default .unw layout: per row, the magnitude line then
+            // the phase line. The magnitude is |igram| - all ones when the
+            // input was --phase.
+            let mag = igram_orig.mapv(|z| z.norm());
+            formats::write_flat_altline(&out, mag.view(), unw.view(), in_endian)?;
+        }
+    }
     eprintln!("wrote {}", out.display());
 
     if let (Some(cc_path), Some(cc_arr)) = (conncomp.as_ref(), cc_raster.as_ref()) {
@@ -503,7 +736,12 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
         let bg_pct = 100.0 * bg as f64 / cc_arr.len().max(1) as f64;
         eprintln!("  bg/dropped: {bg:>10} px  ({bg_pct:5.2}% of total)");
 
-        write_u16_tiff(cc_path, cc_arr.view())?;
+        if is_tiff(cc_path) {
+            write_u16_tiff(cc_path, cc_arr.view())?;
+        } else {
+            // snaphu / isce2 convention: one byte per pixel.
+            formats::write_flat_conncomp_u8(cc_path, cc_arr.view())?;
+        }
         eprintln!("wrote {}", cc_path.display());
     }
 

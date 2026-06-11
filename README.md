@@ -73,9 +73,51 @@ whirlwind unwrap \
     --conncomp conncomp.tif
 ```
 
-`--phase` is a float32 TIFF of wrapped phase in radians. `--mask` is optional;
-nonzero means valid. When `--mask` is omitted the CLI uses `coherence > 0` as the
-default valid mask, matching the Python API.
+`--phase` is the wrapped phase in radians: a float32 TIFF, or a flat binary
+float32 file (see below). `--mask` is optional; nonzero means valid. When
+`--mask` is omitted the CLI uses `coherence > 0` (and `igram != 0` with
+`--ifg`) as the default valid mask, matching the Python API.
+
+### Legacy flat-binary formats (snaphu / ROI_PAC / isce2 / GAMMA)
+
+Headerless flat-binary rasters from the classic pipelines work directly - no
+GDAL conversion needed:
+
+```bash
+# snaphu-style: complex64 .int + amp/cor .cc; width ("line length") on the CLI
+whirlwind unwrap --ifg pair.int --cor pair.cc --cols 1024 --nlooks 10 --out pair.unw
+
+# ROI_PAC / Stanford: geometry read from the <file>.rsc sidecar automatically
+whirlwind unwrap --ifg 20150902_20150914.int --cor 20150902_20150914.cc \
+    --nlooks 10 --out 20150902_20150914.unw
+
+# isce2 stripmapStack / topsStack: the <file>.xml sidecars provide everything
+whirlwind unwrap --ifg filt_fine.int --cor filt_fine.cor --nlooks 10 \
+    --out filt_fine.unw --conncomp filt_fine.unw.conncomp
+
+# GAMMA: big-endian; width from a .par/.off via --meta (or --cols + --big-endian)
+whirlwind unwrap --ifg pair.diff --cor pair.cc --meta pair.off --nlooks 10 \
+    --out-format float --out pair.unw
+```
+
+- `--ifg` is the raw complex64 interferogram (snaphu `COMPLEX_DATA`, i.e.
+  `numpy.tofile()` of a complex64 array); `--phase` also accepts flat float32
+  (snaphu `FLOAT_DATA`). Exactly one of the two is given.
+- `--cor` may be single-band float32 (isce2 `.cor`, GAMMA `.cc`) or the
+  two-band line-interleaved amplitude+correlation "rmg" layout (snaphu's
+  default, ROI_PAC `.cc`): the band count is detected from the file size and
+  the correlation is read from the second channel, exactly as snaphu does.
+  `--cor-format alt-sample` covers snaphu's sample-interleaved variant.
+- `--cols` (alias `--width`) is snaphu's "line length" / ROI_PAC `WIDTH`; the
+  row count always comes from the file size. A `<file>.rsc` or `<file>.xml`
+  next to each input supplies it automatically (and, for isce2, the dtype,
+  band count, and byte order).
+- Output is chosen by extension (override with `--out-format`): `.tif` →
+  TIFF; `.unw` → two-band amp+phase rmg (snaphu's default output layout);
+  anything else → flat float32 phase. `--conncomp` writes u16 TIFF or
+  one-byte-per-pixel flat (the snaphu/isce2 convention) by extension. Flat
+  outputs keep the input's byte order.
+- `--mask` also accepts snaphu-style flat byte masks (nonzero = valid).
 
 For noisy scenes, coarsen the solve with `--downsample` (as in the Python API);
 the integration-component `--no-bridge`-able re-leveling pass runs by default:
