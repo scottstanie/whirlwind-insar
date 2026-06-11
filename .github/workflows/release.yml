@@ -186,6 +186,27 @@ jobs:
           name: wheels-sdist
           path: dist
 
+  create-release:
+    # The binary-upload action below only uploads to an EXISTING GitHub
+    # Release - it polls "release not found" until timeout otherwise (the
+    # v0.2.0/v0.2.1 releases only worked when a release had been created in
+    # the UI first). Create it from the tag up front; idempotent if it
+    # already exists.
+    name: create GitHub release
+    needs: [version-check]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: create release if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag \
+            || echo "release already exists"
+
   cli-binaries:
     name: cli binary / ${{ matrix.target }}
     # Attach prebuilt `whirlwind` CLI executables to the GitHub Release so
@@ -193,7 +214,7 @@ jobs:
     # Rust, or Docker required. Tag refs only; branch workflow_dispatch builds
     # are validated by CI.yml on every PR/push.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [version-check]
+    needs: [version-check, create-release]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write   # create the GitHub Release and upload assets
@@ -217,7 +238,7 @@ jobs:
       # Builds `cargo build --release --bin whirlwind --target <triple>` (using
       # `cross` automatically for the linux aarch64 target), packages a
       # tar.gz/zip, generates a SHA-256 checksum, and uploads everything to the
-      # Release for this tag (creating it if it does not exist yet).
+      # Release for this tag (created by the create-release job above).
       - name: build + upload CLI binary
         uses: taiki-e/upload-rust-binary-action@v1
         with:
