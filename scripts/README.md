@@ -1,9 +1,5 @@
 # whirlwind scripts
 
-The handful of scripts here are the ones worth knowing. Older one-off debug /
-experiment scripts have been moved to [`archive/`](archive/) - kept for
-reference, but not part of the normal workflow.
-
 ## Reproduce the NISAR GUNW benchmark (the §9.6 table)
 
 The 4-way single-tile comparison - **whirlwind vs ww-orig vs PHASS vs ICU**,
