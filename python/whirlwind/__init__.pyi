@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 __version__: str
 
 from ._native import (
+    bridge_components as bridge_components,
     compute_residues as compute_residues,
     goldstein as goldstein,
     interpolate as interpolate,
@@ -56,16 +57,3 @@ def unwrap(
     ``conncomp_cycle_prob``) and other parameters.
     """
 
-def bridge_components(
-    unw: NDArray[np.float32],
-    mask: NDArray[np.bool_] | None = ...,
-    *,
-    radius: int = ...,
-    min_px: int = ...,
-    max_boundary: int = ...,
-) -> NDArray[np.float32]:
-    """Re-level the disconnected regions of an unwrapped phase image.
-
-    The MST gauge-bridging post-pass `unwrap(bridge=True)` applies by default,
-    exposed standalone. See ``whirlwind/_bridge.py`` for the algorithm.
-    """

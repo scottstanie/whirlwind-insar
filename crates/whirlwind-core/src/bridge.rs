@@ -2,7 +2,8 @@
 //!
 //! Sets the relative 2π integer offset between the disconnected valid regions an
 //! MCF integrator seeds independently (for example two land slabs separated by a
-//! low-coherence river). This is a Rust port of [`whirlwind._bridge`], itself a
+//! low-coherence river). This is the canonical implementation - the Python API
+//! binds to it through `whirlwind-py` and the CLI calls it directly. It is a
 //! port of the algorithm isce3's NISAR GUNW workflow uses
 //! (`isce3.unwrap.bridge_phase.bridge_unwrapped_phase`):
 //!
@@ -15,8 +16,8 @@
 //!     integer number of cycles, and shift the child region (and, transitively,
 //!     its descendants).
 //!
-//! Keeping the Rust and Python implementations in lockstep is what lets the CLI
-//! reach parity with the Python `unwrap` without shelling out to Python.
+//! The retired pure-numpy original survives as a frozen parity oracle in
+//! `python/tests/bridge_reference.py`.
 
 use crate::tile::label_components;
 use ndarray::{Array2, ArrayView2};
@@ -51,7 +52,6 @@ pub fn bridge_components(
     min_px: usize,
     max_boundary: usize,
 ) -> Array2<f32> {
-    let tau32 = std::f32::consts::TAU;
     let tau64 = std::f64::consts::TAU;
     let (m, n) = unw.dim();
 
@@ -82,11 +82,14 @@ pub fn bridge_components(
         return unw.to_owned(); // nothing sizeable to bridge
     }
 
-    // Largest region = MST root.
-    let ref_lab = *big
-        .iter()
-        .max_by_key(|&&lab| sizes[lab as usize])
-        .expect("big is non-empty");
+    // Largest region = MST root; first maximum on a size tie (`max_by_key`
+    // would take the last, flipping which region stays put).
+    let mut ref_lab = big[0];
+    for &lab in &big[1..] {
+        if sizes[lab as usize] > sizes[ref_lab as usize] {
+            ref_lab = lab;
+        }
+    }
     let ref_idx = big.iter().position(|&l| l == ref_lab).unwrap();
 
     let bcoords = boundary_coords(&region, &big, max_boundary);
@@ -175,7 +178,10 @@ pub fn bridge_components(
         // cycles to add to the child (round-half-to-even, matching np.rint).
         let s = -(libm::rint((val_chi - val_par) / tau64) as i64);
         if s != 0 {
-            let shift = tau32 * s as f32;
+            // f64 2π·s rounded once to f32, then f32 adds - the exact arithmetic
+            // of numpy's `out[region == chi] += tau * s` (f64 scalar weak-cast
+            // to the f32 array dtype), keeping oracle parity bit-for-bit.
+            let shift = (tau64 * s as f64) as f32;
             for ((i, j), &rr) in region.indexed_iter() {
                 if rr == chi_lab {
                     out[(i, j)] += shift;
@@ -315,10 +321,11 @@ mod tests {
         }
     }
 
-    /// Cross-check against the Python `whirlwind._bridge` reference on an
-    /// identical deterministic 3-slab scene. The Python implementation yields
-    /// per-region cycle shifts A:0, B:-1, C:-2 (captured from `py_bridge`); this
-    /// port must match exactly.
+    /// Cross-check against the numpy reference (`python/tests/bridge_reference.py`)
+    /// on an identical deterministic 3-slab scene. The reference yields
+    /// per-region cycle shifts A:0, B:-1, C:-2; this implementation must match
+    /// exactly. The pytest parity suite (`test_bridge_parity.py`) covers
+    /// randomized scenes.
     #[test]
     fn matches_python_reference_three_slabs() {
         let (m, n) = (20usize, 20usize);

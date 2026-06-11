@@ -96,6 +96,62 @@ fn label_components<'py>(
     (labels.into_pyarray(py), next as usize)
 }
 
+/// Re-level the disconnected regions of an unwrapped phase image.
+///
+/// Integration-component gauge bridging: sets the relative 2π integer offset
+/// between the disconnected valid regions an MCF integrator seeds independently
+/// (for example two land slabs separated by a low-coherence river), following
+/// the algorithm isce3's NISAR GUNW workflow uses
+/// (``isce3.unwrap.bridge_phase.bridge_unwrapped_phase``):
+///
+/// 1. Label the integration regions (4-connected components of the valid mask).
+/// 2. For every pair of regions, find the closest boundary-pixel pair (the
+///    natural place to bridge - where the true phase gap is smallest).
+/// 3. Build a minimum spanning tree of those distances, rooted at the largest
+///    region, so each region is referenced through its nearest neighbour
+///    rather than directly to one global anchor.
+/// 4. Walking the tree outward from the root, compare the median unwrapped
+///    phase in a local box around the two bridge endpoints, round the
+///    difference to an integer number of cycles, and shift the child region
+///    (and, transitively, its descendants).
+///
+/// The offset is read straight from the unwrapped phase at the region
+/// boundaries, so this needs only the unwrapped phase and a valid mask - no
+/// coherence or interferogram.
+///
+/// * ``unw`` - float32 unwrapped phase, masked/nodata pixels left at 0 (or NaN).
+/// * ``mask`` - bool valid-pixel mask defining the integration regions;
+///   defaults to the finite, nonzero pixels of ``unw``.
+/// * ``radius`` - half-width of the box around each bridge endpoint over which
+///   the region's local phase level is taken (clamped to a scene-relative size).
+/// * ``min_px`` - ignore integration regions smaller than this many pixels.
+/// * ``max_boundary`` - cap on boundary pixels sampled per region for the
+///   nearest-pair search.
+///
+/// Returns ``unw`` with each region shifted by an integer number of cycles to
+/// agree with the reference (largest) region. A single-region frame is
+/// returned unchanged.
+#[pyfunction]
+#[pyo3(signature = (
+    unw, mask = None, *,
+    radius = whirlwind_core::bridge::DEFAULT_RADIUS,
+    min_px = whirlwind_core::bridge::DEFAULT_MIN_PX,
+    max_boundary = whirlwind_core::bridge::DEFAULT_MAX_BOUNDARY,
+))]
+fn bridge_components<'py>(
+    py: Python<'py>,
+    unw: PyReadonlyArray2<'py, f32>,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    radius: usize,
+    min_px: usize,
+    max_boundary: usize,
+) -> Bound<'py, PyArray2<f32>> {
+    let u = unw.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let out = py.detach(|| whirlwind_core::bridge_components(u, m, radius, min_px, max_boundary));
+    out.into_pyarray(py)
+}
+
 /// Spiral persistent-scatterer phase interpolator - the Rust port of dolphin's
 /// ``interpolation.interpolate``.
 ///
@@ -800,6 +856,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diagonal_ramp, m)?)?;
     m.add_function(wrap_pyfunction!(wrap_phase, m)?)?;
     m.add_function(wrap_pyfunction!(label_components, m)?)?;
+    m.add_function(wrap_pyfunction!(bridge_components, m)?)?;
     m.add_function(wrap_pyfunction!(interpolate, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_ifg, m)?)?;
     m.add_function(wrap_pyfunction!(closure_correct, m)?)?;

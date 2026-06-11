@@ -1,9 +1,16 @@
-"""Integration-component gauge bridging post-pass for :func:`whirlwind.unwrap`.
+"""Frozen numpy reference for ``whirlwind.bridge_components`` (parity oracle).
 
-Sets the relative 2π integer offset between the disconnected valid regions an
-MCF integrator seeds independently (for example two land slabs separated by a
-low-coherence river). This is a pure-numpy port of the algorithm isce3's NISAR
-GUNW workflow uses (``isce3.unwrap.bridge_phase.bridge_unwrapped_phase``):
+This is the retired pure-numpy original of the integration-component gauge
+bridging post-pass, itself a port of the algorithm isce3's NISAR GUNW workflow
+uses (``isce3.unwrap.bridge_phase.bridge_unwrapped_phase``). The canonical
+implementation now lives in Rust (``crates/whirlwind-core/src/bridge.rs``,
+bound as ``whirlwind.bridge_components``); this copy exists only so
+``test_bridge_parity.py`` can assert the native version reproduces it exactly.
+Do not edit the algorithm here - behaviour changes belong in the Rust
+implementation, and this oracle should only ever change in lockstep with an
+intentional, test-acknowledged behaviour change there.
+
+The algorithm:
 
   1. Label the integration regions (connected components of the valid mask).
   2. For every pair of regions, find the closest boundary-pixel pair (the
@@ -30,7 +37,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ._native import label_components
+from whirlwind import label_components
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -66,7 +73,7 @@ def _boundary_coords(
     return coords
 
 
-def bridge_components(
+def bridge_components_reference(
     unw: "NDArray[np.float32]",
     mask: "NDArray[np.bool_] | None" = None,
     *,

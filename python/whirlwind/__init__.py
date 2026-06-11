@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 __version__ = version("whirlwind-insar")
 
 from ._native import (
+    bridge_components,
     closure_correct,
     closure_refine_mcf,
     compute_residues,
@@ -32,7 +33,6 @@ from ._native import (
     wrap_phase,
 )
 from ._native import _unwrap_native, _unwrap_with_costs, label_components
-from ._bridge import bridge_components
 
 # `interpolate` is re-exported above as the public native binding. Alias it so
 # the `interpolate=` keyword argument inside unwrap() (which shadows the name in

@@ -126,6 +126,22 @@ def wrap_phase(unw: NDArray[np.float32]) -> NDArray[np.float32]: ...
 def label_components(mask: NDArray[np.bool_]) -> tuple[NDArray[np.int32], int]:
     """4-connected component labels of a boolean mask -> ``(labels, n)``."""
 
+def bridge_components(
+    unw: NDArray[np.float32],
+    mask: NDArray[np.bool_] | None = ...,
+    *,
+    radius: int = ...,
+    min_px: int = ...,
+    max_boundary: int = ...,
+) -> NDArray[np.float32]:
+    """Re-level the disconnected regions of an unwrapped phase image.
+
+    Integration-component gauge bridging (the ``unwrap(bridge=True)``
+    post-pass): MST over closest-boundary distances rooted at the largest
+    region, each child region shifted by an integer number of cycles read from
+    boundary-local medians. See ``crates/whirlwind-core/src/bridge.rs``.
+    """
+
 def interpolate(
     ifg: NDArray[np.complex64],
     weights: NDArray[np.float32],
