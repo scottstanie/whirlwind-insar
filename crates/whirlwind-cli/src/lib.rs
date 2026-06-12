@@ -1,9 +1,9 @@
-//! `whirlwind` CLI: simulate synthetic interferograms and unwrap them.
+//! `whirlwind` CLI: unwrap an interferogram.
 
 mod formats;
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, ValueEnum};
 use formats::{Endian, FloatLayout};
 use ndarray::Array2;
 use num_complex::Complex32;
@@ -91,246 +91,213 @@ fn default_conncomp_path(out: &Path, out_format: OutFormat) -> PathBuf {
     }
 }
 
+/// InSAR phase unwrapper.
+///
+/// Takes either the complex interferogram (--ifg, flat binary complex64:
+/// snaphu COMPLEX_DATA / ROI_PAC / isce2 .int, GAMMA .int/.diff) or the
+/// wrapped phase (--phase, float32 TIFF or flat binary, radians in
+/// [-pi, pi]).
+///
+/// Flat-binary (headerless) inputs need the number of columns: pass
+/// --cols (snaphu's "line length" / ROI_PAC WIDTH), or let it be read
+/// from a <file>.rsc / <file>.xml sidecar found next to the data, or
+/// point the matching --ifg-meta / --phase-meta / --cor-meta flag at a
+/// ROI_PAC .rsc, isce2 .xml, or GAMMA .par/.off file. The number of
+/// rows always comes from the file size. GAMMA rasters are big-endian:
+/// use --big-endian (implied when the explicit meta flag is a GAMMA par
+/// file).
+///
+/// Examples:
+///
+///   GeoTIFF (float32 wrapped phase + coherence):
+///     whirlwind --phase wrapped.tif --cor coherence.tif \
+///         --nlooks 10 --out unwrapped.tif
+///
+///   snaphu / ROI_PAC flat binary (.int = complex64, .cc = amp+cor
+///   "rmg"; width from --cols, or from <file>.rsc when present):
+///     whirlwind --ifg 20150902_20150914.int \
+///         --cor 20150902_20150914.cc --cols 840 --nlooks 10 \
+///         --out 20150902_20150914.unw
+///
+///   isce2 stripmapStack / topsStack (geometry, dtype, and byte order
+///   all come from the <file>.xml sidecars; no extra flags):
+///     whirlwind --ifg filt_fine.int --cor filt_fine.cor \
+///         --nlooks 10 --out filt_fine.unw
+///
+///   GAMMA (big-endian; width from the .off/.par; phase-only float32
+///   .unw output like GAMMA's own):
+///     whirlwind --ifg pair.diff --ifg-meta pair.off \
+///         --cor pair.cc --cor-meta pair.off \
+///         --nlooks 10 --out-format float --out pair.unw
+///
+/// If you have a complex-valued GeoTIFF, extract the phase first via
+///   gdal_translate DERIVED_SUBDATASET:PHASE:complex.int.tif wrapped.tif
 #[derive(Parser, Debug)]
-#[command(name = "whirlwind", version, about = "InSAR phase unwrapper")]
+#[command(name = "whirlwind", version, verbatim_doc_comment)]
 struct Cli {
-    #[command(subcommand)]
-    cmd: Cmd,
-}
-
-// The Unwrap variant carries the whole flag surface; the size skew vs
-// Simulate is irrelevant for a once-parsed CLI enum.
-#[allow(clippy::large_enum_variant)]
-#[derive(Subcommand, Debug)]
-enum Cmd {
-    /// Generate a synthetic interferogram + coherence pair.
-    Simulate {
-        /// shape as MxN (e.g. 256x256)
-        #[arg(long, default_value = "256x256")]
-        shape: String,
-        /// output directory (writes wrapped.tif, cor.tif, truth.tif)
-        #[arg(long)]
-        out: PathBuf,
-        /// "ramp" or "bump"
-        #[arg(long, default_value = "bump")]
-        pattern: String,
-        /// number of looks for synthetic noise
-        #[arg(long, default_value_t = 10)]
-        nlooks: usize,
-        /// coherence (uniform)
-        #[arg(long, default_value_t = 0.85)]
-        coherence: f32,
-        /// rng seed
-        #[arg(long, default_value_t = 42)]
-        seed: u64,
-    },
-    /// Unwrap an interferogram.
-    ///
-    /// Takes either the complex interferogram (--ifg, flat binary complex64:
-    /// snaphu COMPLEX_DATA / ROI_PAC / isce2 .int, GAMMA .int/.diff) or the
-    /// wrapped phase (--phase, float32 TIFF or flat binary, radians in
-    /// [-pi, pi]).
-    ///
-    /// Flat-binary (headerless) inputs need the number of columns: pass
-    /// --cols (snaphu's "line length" / ROI_PAC WIDTH), or let it be read
-    /// from a <file>.rsc / <file>.xml sidecar found next to the data, or
-    /// point the matching --ifg-meta / --phase-meta / --cor-meta flag at a
-    /// ROI_PAC .rsc, isce2 .xml, or GAMMA .par/.off file. The number of
-    /// rows always comes from the file size. GAMMA rasters are big-endian:
-    /// use --big-endian (implied when the explicit meta flag is a GAMMA par
-    /// file).
-    ///
-    /// Examples:
-    ///
-    ///   GeoTIFF (float32 wrapped phase + coherence):
-    ///     whirlwind unwrap --phase wrapped.tif --cor coherence.tif \
-    ///         --nlooks 10 --out unwrapped.tif
-    ///
-    ///   snaphu / ROI_PAC flat binary (.int = complex64, .cc = amp+cor
-    ///   "rmg"; width from --cols, or from <file>.rsc when present):
-    ///     whirlwind unwrap --ifg 20150902_20150914.int \
-    ///         --cor 20150902_20150914.cc --cols 840 --nlooks 10 \
-    ///         --out 20150902_20150914.unw
-    ///
-    ///   isce2 stripmapStack / topsStack (geometry, dtype, and byte order
-    ///   all come from the <file>.xml sidecars; no extra flags):
-    ///     whirlwind unwrap --ifg filt_fine.int --cor filt_fine.cor \
-    ///         --nlooks 10 --out filt_fine.unw
-    ///
-    ///   GAMMA (big-endian; width from the .off/.par; phase-only float32
-    ///   .unw output like GAMMA's own):
-    ///     whirlwind unwrap --ifg pair.diff --ifg-meta pair.off \
-    ///         --cor pair.cc --cor-meta pair.off \
-    ///         --nlooks 10 --out-format float --out pair.unw
-    ///
-    /// If you have a complex-valued GeoTIFF, extract the phase first via
-    ///   gdal_translate DERIVED_SUBDATASET:PHASE:complex.int.tif wrapped.tif
-    #[command(verbatim_doc_comment)]
-    Unwrap {
-        /// complex interferogram, flat binary complex64 (interleaved float32
-        /// real/imag pairs). Exactly one of --ifg / --phase is required.
-        #[arg(long, conflicts_with = "phase")]
-        ifg: Option<PathBuf>,
-        /// wrapped phase (float32, radians): TIFF by extension (.tif/.tiff),
-        /// otherwise flat binary (snaphu FLOAT_DATA)
-        #[arg(long)]
-        phase: Option<PathBuf>,
-        /// coherence (float32): TIFF by extension, otherwise flat binary -
-        /// single-band (snaphu FLOAT_DATA, isce2 .cor, GAMMA .cc) or two-band
-        /// amplitude+correlation (snaphu ALT_LINE_DATA, ROI_PAC .cc), told
-        /// apart by file size; see --cor-format
-        #[arg(long)]
-        cor: PathBuf,
-        /// columns per row for flat-binary inputs (snaphu's "line length",
-        /// ROI_PAC WIDTH). Overrides any sidecar
-        #[arg(long, visible_alias = "width")]
-        cols: Option<usize>,
-        /// explicit metadata sidecar for --ifg: ROI_PAC .rsc, isce2 .xml, or
-        /// GAMMA .par/.off/.diff_par (GAMMA implies big-endian). Without it,
-        /// `<ifg>.rsc` / `<ifg>.xml` is used when present
-        #[arg(long, requires = "ifg")]
-        ifg_meta: Option<PathBuf>,
-        /// explicit metadata sidecar for flat-binary --phase. Without it,
-        /// `<phase>.rsc` / `<phase>.xml` is used when present
-        #[arg(long, requires = "phase")]
-        phase_meta: Option<PathBuf>,
-        /// explicit metadata sidecar for flat-binary --cor. Without it,
-        /// `<cor>.rsc` / `<cor>.xml` is used when present
-        #[arg(long)]
-        cor_meta: Option<PathBuf>,
-        /// flat-binary inputs/outputs are big-endian (GAMMA convention)
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        big_endian: bool,
-        /// band layout of a flat-binary --cor file. `auto` picks single- vs
-        /// two-band (line-interleaved, correlation in the second channel)
-        /// from the file size; `alt-sample` forces snaphu's sample-interleaved
-        /// two-band layout, which `auto` cannot distinguish from `alt-line`
-        /// by file size alone. isce2 XML `scheme` selects BIL/BIP/BSQ
-        /// automatically when present
-        #[arg(long, value_enum, default_value_t = CorFormat::Auto)]
-        cor_format: CorFormat,
-        /// format of the unwrapped-phase output. `auto`: TIFF for
-        /// .tif/.tiff, two-band amplitude+phase (snaphu ALT_LINE_DATA / "rmg")
-        /// for .unw, flat float32 otherwise. The amplitude band is |igram|
-        /// (all ones when the input was --phase)
-        #[arg(long, value_enum, default_value_t = OutFormat::Auto)]
-        out_format: OutFormat,
-        /// optional valid-pixel mask (TIFF, u8/u16/i8/i16/f32/f64).
-        /// Any nonzero value = valid (SNAPHU convention). Pre-saturates arcs
-        /// crossing masked pixels so MCF skips them - critical for large
-        /// real scenes with water / shadow / decorrelated regions, where
-        /// the unmasked path treats NoData pixels as real residues and
-        /// can slow down by 10-100x.
-        #[arg(long)]
-        mask: Option<PathBuf>,
-        /// number of looks
-        #[arg(long, default_value_t = 1.0)]
-        nlooks: f32,
-        /// Coarse-solve factor for noisy scenes. When > 1, the complex
-        /// interferogram is coherently averaged into `downsample x downsample`
-        /// blocks and that smaller, smoother frame is unwrapped to decide which
-        /// 2π cycle each block sits on; only the integer cycle is borrowed back
-        /// onto the full-resolution wrapped phase. `--nlooks` stays the effective
-        /// looks of your input coherence (the down-look scaling is internal).
-        /// Use it for noisy/moderate-coherence scenes (e.g. Sentinel-1); leave
-        /// at 1 for clean scenes.
-        #[arg(long, default_value_t = 1)]
-        downsample: usize,
-        /// Disable the integration-component "bridge" post-pass. By default
-        /// (bridge ON, matching the Python API) the relative 2π level of regions
-        /// the valid mask splits apart (e.g. two land slabs separated by a
-        /// low-coherence river) is re-leveled along a minimum spanning tree
-        /// rooted at the largest region. A single coherently-connected frame is
-        /// unchanged either way.
-        #[arg(long = "no-bridge", action = clap::ArgAction::SetTrue)]
-        no_bridge: bool,
-        /// Spiral persistent-scatterer interpolation pre-pass. When set, every
-        /// valid pixel whose coherence is below `--interp-cutoff` has its phase
-        /// replaced by a Gaussian distance-weighted average of nearby
-        /// high-coherence pixels before the solve. Like `--goldstein-alpha`, the
-        /// fill only INFORMS the MCF: the integer cycle field is applied back to
-        /// the original wrapped phase, so every per-pixel value is preserved.
-        #[arg(long, action = clap::ArgAction::SetTrue)]
-        interpolate: bool,
-        /// Coherence below which a valid pixel is interpolated (only with
-        /// `--interpolate`).
-        #[arg(long, default_value_t = 0.1)]
-        interp_cutoff: f32,
-        /// Number of nearest high-coherence pixels averaged per interpolated
-        /// pixel (only with `--interpolate`).
-        #[arg(long, default_value_t = 20)]
-        interp_num_neighbors: usize,
-        /// Maximum search radius in pixels for the neighbor search (only with
-        /// `--interpolate`).
-        #[arg(long, default_value_t = 51)]
-        interp_max_radius: usize,
-        /// Minimum search radius in pixels; closer neighbors are skipped (only
-        /// with `--interpolate`).
-        #[arg(long, default_value_t = 0)]
-        interp_min_radius: usize,
-        /// Gaussian distance-weighting falloff for the neighbor average (only
-        /// with `--interpolate`).
-        #[arg(long, default_value_t = 0.75)]
-        interp_alpha: f64,
-        /// Goldstein adaptive-filter strength in [0, 1]. Default 0 (off);
-        /// pass e.g. `--goldstein-alpha 0.7` to enable. When > 0, the wrapped
-        /// phase is Goldstein-filtered before MCF (faster on noisy scenes,
-        /// fewer ±2π errors at wrap-line boundaries), then the resulting
-        /// integer cycle field is transferred back to the *original* wrapped
-        /// phase (avoids spurious 2π jumps at fringe boundaries). α≈0.7 is a
-        /// good "on" value for typical InSAR scenes.
-        #[arg(long, default_value_t = 0.0)]
-        goldstein_alpha: f32,
-        /// Goldstein FFT patch size (even, ≥ 4). Larger = stronger spatial
-        /// smoothing in the filter.
-        #[arg(long, default_value_t = 64)]
-        goldstein_psize: usize,
-        /// Connected-components output path. By default, writes next to
-        /// `--out` (`foo.conncomp.tif` for TIFF output, `foo.unw.conncomp`
-        /// for flat `.unw`). TIFF paths write uint16; other paths write one
-        /// byte per pixel (the snaphu / isce2 .conncomp convention; labels
-        /// above 255 are an error). Phase is unwrapped consistently within
-        /// each component, but the relative 2π·k offset between components is
-        /// undefined.
-        #[arg(long)]
-        conncomp: Option<PathBuf>,
-        /// Do not compute or write connected components.
-        #[arg(long, conflicts_with = "conncomp", action = clap::ArgAction::SetTrue)]
-        no_conncomp: bool,
-        /// Drop connected components smaller than this fraction of valid
-        /// pixels. Default 1e-4 (≈ 5000 px on a 50 Mpx scene), small enough
-        /// to keep isolated islands.
-        #[arg(long, default_value_t = 1e-4)]
-        min_component_frac: f32,
-        /// Discard connected components smaller than this many pixels. Absolute
-        /// floor (matches the Python API default); `--min-component-frac` raises
-        /// it on very large frames.
-        #[arg(long, default_value_t = 100)]
-        min_size_px: usize,
-        /// Maximum number of connected components to keep (largest first).
-        #[arg(long, default_value_t = 1024)]
-        max_ncomps: u32,
-        /// Carballo cost threshold for the conncomp cut rule. Pixel edges
-        /// whose min raw forward cost ≤ this are treated as cuts. Lower =
-        /// more cuts = more (smaller) components. Default 50 (SNAPHU-equiv).
-        #[arg(long, default_value_t = 50)]
-        cost_threshold: i32,
-        /// Set `--cost-threshold` from a target per-edge one-cycle-correction
-        /// probability. Lower is stricter (more boundaries); ~2.4e-4 matches the
-        /// default. Takes precedence over `--cost-threshold`.
-        #[arg(long)]
-        conncomp_cycle_prob: Option<f64>,
-        /// Set `--cost-threshold` from a Gaussian-equivalent noise level: an edge
-        /// is cut when its one-cycle probability exceeds 0.5*erfc(sigma/sqrt2).
-        /// Higher is stricter; ~3.5 reproduces the default. Takes precedence over
-        /// both `--cost-threshold` and `--conncomp-cycle-prob`.
-        #[arg(long)]
-        conncomp_sigma: Option<f64>,
-        /// output unwrapped phase; format chosen by --out-format (default:
-        /// by extension)
-        #[arg(long)]
-        out: PathBuf,
-    },
+    /// complex interferogram, flat binary complex64 (interleaved float32
+    /// real/imag pairs). Exactly one of --ifg / --phase is required.
+    #[arg(long, conflicts_with = "phase")]
+    ifg: Option<PathBuf>,
+    /// wrapped phase (float32, radians): TIFF by extension (.tif/.tiff),
+    /// otherwise flat binary (snaphu FLOAT_DATA)
+    #[arg(long)]
+    phase: Option<PathBuf>,
+    /// coherence (float32): TIFF by extension, otherwise flat binary -
+    /// single-band (snaphu FLOAT_DATA, isce2 .cor, GAMMA .cc) or two-band
+    /// amplitude+correlation (snaphu ALT_LINE_DATA, ROI_PAC .cc), told
+    /// apart by file size; see --cor-format
+    #[arg(long)]
+    cor: PathBuf,
+    /// columns per row for flat-binary inputs (snaphu's "line length",
+    /// ROI_PAC WIDTH). Overrides any sidecar
+    #[arg(long, visible_alias = "width")]
+    cols: Option<usize>,
+    /// explicit metadata sidecar for --ifg: ROI_PAC .rsc, isce2 .xml, or
+    /// GAMMA .par/.off/.diff_par (GAMMA implies big-endian). Without it,
+    /// `<ifg>.rsc` / `<ifg>.xml` is used when present
+    #[arg(long, requires = "ifg")]
+    ifg_meta: Option<PathBuf>,
+    /// explicit metadata sidecar for flat-binary --phase. Without it,
+    /// `<phase>.rsc` / `<phase>.xml` is used when present
+    #[arg(long, requires = "phase")]
+    phase_meta: Option<PathBuf>,
+    /// explicit metadata sidecar for flat-binary --cor. Without it,
+    /// `<cor>.rsc` / `<cor>.xml` is used when present
+    #[arg(long)]
+    cor_meta: Option<PathBuf>,
+    /// flat-binary inputs/outputs are big-endian (GAMMA convention)
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    big_endian: bool,
+    /// band layout of a flat-binary --cor file. `auto` picks single- vs
+    /// two-band (line-interleaved, correlation in the second channel)
+    /// from the file size; `alt-sample` forces snaphu's sample-interleaved
+    /// two-band layout, which `auto` cannot distinguish from `alt-line`
+    /// by file size alone. isce2 XML `scheme` selects BIL/BIP/BSQ
+    /// automatically when present
+    #[arg(long, value_enum, default_value_t = CorFormat::Auto)]
+    cor_format: CorFormat,
+    /// format of the unwrapped-phase output. `auto`: TIFF for
+    /// .tif/.tiff, two-band amplitude+phase (snaphu ALT_LINE_DATA / "rmg")
+    /// for .unw, flat float32 otherwise. The amplitude band is |igram|
+    /// (all ones when the input was --phase)
+    #[arg(long, value_enum, default_value_t = OutFormat::Auto)]
+    out_format: OutFormat,
+    /// optional valid-pixel mask (TIFF, u8/u16/i8/i16/f32/f64).
+    /// Any nonzero value = valid (SNAPHU convention). Pre-saturates arcs
+    /// crossing masked pixels so MCF skips them - critical for large
+    /// real scenes with water / shadow / decorrelated regions, where
+    /// the unmasked path treats NoData pixels as real residues and
+    /// can slow down by 10-100x.
+    #[arg(long)]
+    mask: Option<PathBuf>,
+    /// number of looks
+    #[arg(long, default_value_t = 1.0)]
+    nlooks: f32,
+    /// Coarse-solve factor for noisy scenes. When > 1, the complex
+    /// interferogram is coherently averaged into `downsample x downsample`
+    /// blocks and that smaller, smoother frame is unwrapped to decide which
+    /// 2π cycle each block sits on; only the integer cycle is borrowed back
+    /// onto the full-resolution wrapped phase. `--nlooks` stays the effective
+    /// looks of your input coherence (the down-look scaling is internal).
+    /// Use it for noisy/moderate-coherence scenes (e.g. Sentinel-1); leave
+    /// at 1 for clean scenes.
+    #[arg(long, default_value_t = 1)]
+    downsample: usize,
+    /// Disable the integration-component "bridge" post-pass. By default
+    /// (bridge ON, matching the Python API) the relative 2π level of regions
+    /// the valid mask splits apart (e.g. two land slabs separated by a
+    /// low-coherence river) is re-leveled along a minimum spanning tree
+    /// rooted at the largest region. A single coherently-connected frame is
+    /// unchanged either way.
+    #[arg(long = "no-bridge", action = clap::ArgAction::SetTrue)]
+    no_bridge: bool,
+    /// Spiral persistent-scatterer interpolation pre-pass. When set, every
+    /// valid pixel whose coherence is below `--interp-cutoff` has its phase
+    /// replaced by a Gaussian distance-weighted average of nearby
+    /// high-coherence pixels before the solve. Like `--goldstein-alpha`, the
+    /// fill only INFORMS the MCF: the integer cycle field is applied back to
+    /// the original wrapped phase, so every per-pixel value is preserved.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    interpolate: bool,
+    /// Coherence below which a valid pixel is interpolated (only with
+    /// `--interpolate`).
+    #[arg(long, default_value_t = 0.1)]
+    interp_cutoff: f32,
+    /// Number of nearest high-coherence pixels averaged per interpolated
+    /// pixel (only with `--interpolate`).
+    #[arg(long, default_value_t = 20)]
+    interp_num_neighbors: usize,
+    /// Maximum search radius in pixels for the neighbor search (only with
+    /// `--interpolate`).
+    #[arg(long, default_value_t = 51)]
+    interp_max_radius: usize,
+    /// Minimum search radius in pixels; closer neighbors are skipped (only
+    /// with `--interpolate`).
+    #[arg(long, default_value_t = 0)]
+    interp_min_radius: usize,
+    /// Gaussian distance-weighting falloff for the neighbor average (only
+    /// with `--interpolate`).
+    #[arg(long, default_value_t = 0.75)]
+    interp_alpha: f64,
+    /// Goldstein adaptive-filter strength in [0, 1]. Default 0 (off);
+    /// pass e.g. `--goldstein-alpha 0.7` to enable. When > 0, the wrapped
+    /// phase is Goldstein-filtered before MCF (faster on noisy scenes,
+    /// fewer ±2π errors at wrap-line boundaries), then the resulting
+    /// integer cycle field is transferred back to the *original* wrapped
+    /// phase (avoids spurious 2π jumps at fringe boundaries). α≈0.7 is a
+    /// good "on" value for typical InSAR scenes.
+    #[arg(long, default_value_t = 0.0)]
+    goldstein_alpha: f32,
+    /// Goldstein FFT patch size (even, ≥ 4). Larger = stronger spatial
+    /// smoothing in the filter.
+    #[arg(long, default_value_t = 64)]
+    goldstein_psize: usize,
+    /// Connected-components output path. By default, writes next to
+    /// `--out` (`foo.conncomp.tif` for TIFF output, `foo.unw.conncomp`
+    /// for flat `.unw`). TIFF paths write uint16; other paths write one
+    /// byte per pixel (the snaphu / isce2 .conncomp convention; labels
+    /// above 255 are an error). Phase is unwrapped consistently within
+    /// each component, but the relative 2π·k offset between components is
+    /// undefined.
+    #[arg(long)]
+    conncomp: Option<PathBuf>,
+    /// Do not compute or write connected components.
+    #[arg(long, conflicts_with = "conncomp", action = clap::ArgAction::SetTrue)]
+    no_conncomp: bool,
+    /// Drop connected components smaller than this fraction of valid
+    /// pixels. Default 1e-4 (≈ 5000 px on a 50 Mpx scene), small enough
+    /// to keep isolated islands.
+    #[arg(long, default_value_t = 1e-4)]
+    min_component_frac: f32,
+    /// Discard connected components smaller than this many pixels. Absolute
+    /// floor (matches the Python API default); `--min-component-frac` raises
+    /// it on very large frames.
+    #[arg(long, default_value_t = 100)]
+    min_size_px: usize,
+    /// Maximum number of connected components to keep (largest first).
+    #[arg(long, default_value_t = 1024)]
+    max_ncomps: u32,
+    /// Carballo cost threshold for the conncomp cut rule. Pixel edges
+    /// whose min raw forward cost ≤ this are treated as cuts. Lower =
+    /// more cuts = more (smaller) components. Default 50 (SNAPHU-equiv).
+    #[arg(long, default_value_t = 50)]
+    cost_threshold: i32,
+    /// Set `--cost-threshold` from a target per-edge one-cycle-correction
+    /// probability. Lower is stricter (more boundaries); ~2.4e-4 matches the
+    /// default. Takes precedence over `--cost-threshold`.
+    #[arg(long)]
+    conncomp_cycle_prob: Option<f64>,
+    /// Set `--cost-threshold` from a Gaussian-equivalent noise level: an edge
+    /// is cut when its one-cycle probability exceeds 0.5*erfc(sigma/sqrt2).
+    /// Higher is stricter; ~3.5 reproduces the default. Takes precedence over
+    /// both `--cost-threshold` and `--conncomp-cycle-prob`.
+    #[arg(long)]
+    conncomp_sigma: Option<f64>,
+    /// output unwrapped phase; format chosen by --out-format (default:
+    /// by extension)
+    #[arg(long)]
+    out: PathBuf,
 }
 
 /// Run the CLI with an explicit argv (`argv[0]` = program name) and return the
@@ -342,6 +309,27 @@ where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
+    let mut argv: Vec<std::ffi::OsString> = argv.into_iter().map(Into::into).collect();
+    // Compat shims for the old subcommand interface. The CLI takes no
+    // positional arguments, so a bare token right after the program name can
+    // only be a leftover subcommand.
+    match argv.get(1).and_then(|s| s.to_str()) {
+        Some("unwrap") => {
+            eprintln!(
+                "warning: the `unwrap` subcommand is deprecated; \
+                 pass its flags directly (`whirlwind --ifg ... --out ...`)"
+            );
+            argv.remove(1);
+        }
+        Some("simulate") => {
+            eprintln!(
+                "error: the `simulate` subcommand was removed; use the Python API \
+                 (`whirlwind.simulate_ifg`) or scripts/simulate_synth.py"
+            );
+            return 2;
+        }
+        _ => {}
+    }
     let cli = match Cli::try_parse_from(argv) {
         Ok(cli) => cli,
         // --help/--version also land here; print() routes them to stdout and
@@ -351,7 +339,7 @@ where
             return e.exit_code();
         }
     };
-    match dispatch(cli) {
+    match cmd_unwrap(cli) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("Error: {e:?}");
@@ -360,159 +348,8 @@ where
     }
 }
 
-fn dispatch(cli: Cli) -> Result<()> {
-    match cli.cmd {
-        Cmd::Simulate {
-            shape,
-            out,
-            pattern,
-            nlooks,
-            coherence,
-            seed,
-        } => cmd_simulate(shape, out, pattern, nlooks, coherence, seed),
-        Cmd::Unwrap {
-            ifg,
-            phase,
-            cor,
-            cols,
-            ifg_meta,
-            phase_meta,
-            cor_meta,
-            big_endian,
-            cor_format,
-            out_format,
-            mask,
-            nlooks,
-            downsample,
-            no_bridge,
-            interpolate,
-            interp_cutoff,
-            interp_num_neighbors,
-            interp_max_radius,
-            interp_min_radius,
-            interp_alpha,
-            goldstein_alpha,
-            goldstein_psize,
-            conncomp,
-            no_conncomp,
-            min_component_frac,
-            min_size_px,
-            max_ncomps,
-            cost_threshold,
-            conncomp_cycle_prob,
-            conncomp_sigma,
-            out,
-        } => cmd_unwrap(UnwrapArgs {
-            ifg,
-            phase,
-            cor,
-            cols,
-            ifg_meta,
-            phase_meta,
-            cor_meta,
-            big_endian,
-            cor_format,
-            out_format,
-            mask,
-            nlooks,
-            downsample,
-            bridge: !no_bridge,
-            interpolate,
-            interp_cutoff,
-            interp_num_neighbors,
-            interp_max_radius,
-            interp_min_radius,
-            interp_alpha,
-            goldstein_alpha,
-            goldstein_psize,
-            conncomp,
-            no_conncomp,
-            min_component_frac,
-            min_size_px,
-            max_ncomps,
-            cost_threshold,
-            conncomp_cycle_prob,
-            conncomp_sigma,
-            out,
-        }),
-    }
-}
-
-/// Resolved arguments for the `unwrap` subcommand. Mirrors the Python
-/// `whirlwind.unwrap` keyword surface so the CLI is at feature parity.
-struct UnwrapArgs {
-    ifg: Option<PathBuf>,
-    phase: Option<PathBuf>,
-    cor: PathBuf,
-    cols: Option<usize>,
-    ifg_meta: Option<PathBuf>,
-    phase_meta: Option<PathBuf>,
-    cor_meta: Option<PathBuf>,
-    big_endian: bool,
-    cor_format: CorFormat,
-    out_format: OutFormat,
-    mask: Option<PathBuf>,
-    nlooks: f32,
-    downsample: usize,
-    bridge: bool,
-    interpolate: bool,
-    interp_cutoff: f32,
-    interp_num_neighbors: usize,
-    interp_max_radius: usize,
-    interp_min_radius: usize,
-    interp_alpha: f64,
-    goldstein_alpha: f32,
-    goldstein_psize: usize,
-    conncomp: Option<PathBuf>,
-    no_conncomp: bool,
-    min_component_frac: f32,
-    min_size_px: usize,
-    max_ncomps: u32,
-    cost_threshold: i32,
-    conncomp_cycle_prob: Option<f64>,
-    conncomp_sigma: Option<f64>,
-    out: PathBuf,
-}
-
-fn parse_shape(s: &str) -> Result<(usize, usize)> {
-    let (m, n) = s
-        .split_once('x')
-        .ok_or_else(|| anyhow!("shape must be MxN, got {s}"))?;
-    Ok((m.parse()?, n.parse()?))
-}
-
-fn cmd_simulate(
-    shape: String,
-    out: PathBuf,
-    pattern: String,
-    nlooks: usize,
-    coherence: f32,
-    seed: u64,
-) -> Result<()> {
-    use rand::SeedableRng;
-    let (m, n) = parse_shape(&shape)?;
-    let truth = match pattern.as_str() {
-        "ramp" => whirlwind_core::simulate::diagonal_ramp((m, n)),
-        "bump" => whirlwind_core::simulate::gaussian_bump((m, n), 8.0, (n as f32) / 8.0),
-        other => return Err(anyhow!("unknown pattern: {other}")),
-    };
-    let gamma = Array2::<f32>::from_elem((m, n), coherence);
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let (igram, cor) = whirlwind_core::simulate::simulate_ifg(&truth, &gamma, nlooks, &mut rng);
-
-    std::fs::create_dir_all(&out)?;
-    write_f32_tiff(&out.join("wrapped.tif"), igram.mapv(|c| c.arg()).view())?;
-    // The sample coherence |acc| overshoots 1 where noise aligns with the
-    // signal; coherence is [0, 1] by definition and `unwrap` validates its
-    // --cor input, so clamp before writing.
-    write_f32_tiff(&out.join("cor.tif"), cor.mapv(|v| v.clamp(0.0, 1.0)).view())?;
-    write_f32_tiff(&out.join("truth.tif"), truth.view())?;
-    eprintln!("wrote {} (shape {m}x{n}, pattern {pattern})", out.display());
-    Ok(())
-}
-
-fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
-    let UnwrapArgs {
+fn cmd_unwrap(args: Cli) -> Result<()> {
+    let Cli {
         ifg,
         phase,
         cor,
@@ -526,7 +363,7 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
         mask,
         nlooks,
         downsample,
-        bridge,
+        no_bridge,
         interpolate,
         interp_cutoff,
         interp_num_neighbors,
@@ -545,6 +382,7 @@ fn cmd_unwrap(args: UnwrapArgs) -> Result<()> {
         conncomp_sigma,
         out,
     } = args;
+    let bridge = !no_bridge;
 
     let ofmt = resolve_out_format(out_format, &out);
     let conncomp_out = if no_conncomp {

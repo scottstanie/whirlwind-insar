@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Real-data smoke test for the CLI flat-binary formats (ROI_PAC dhaka pair).
 
-Feeds the same Sentinel-1 interferogram to `whirlwind unwrap` twice:
+Feeds the same Sentinel-1 interferogram to the `whirlwind` CLI twice:
   1. flat binary path: --ifg <pair>.int  --cor <pair>.cc   (geometry from the
      auto-discovered .rsc sidecar; .cc is the 2-band rmg amp+cor layout)
   2. TIFF path:        --phase phase.tif --cor cor.tif     (written here with
@@ -73,7 +73,6 @@ def main() -> None:
     run(
         [
             str(BIN),
-            "unwrap",
             "--ifg",
             str(int_file),
             "--cor",
@@ -92,7 +91,6 @@ def main() -> None:
     run(
         [
             str(BIN),
-            "unwrap",
             "--ifg",
             str(int_file),
             "--cor",
@@ -109,7 +107,6 @@ def main() -> None:
     run(
         [
             str(BIN),
-            "unwrap",
             "--phase",
             str(phase_tif),
             "--cor",
