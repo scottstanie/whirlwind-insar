@@ -112,7 +112,6 @@ fn baseline(dir: &Path, ph: &[f32], cor: &[f32]) -> Vec<u8> {
     write_tiff(&ph_tif, ph);
     write_tiff(&cor_tif, cor);
     run(&[
-        "unwrap",
         "--phase",
         ph_tif.to_str().unwrap(),
         "--cor",
@@ -174,8 +173,7 @@ fn flat_complex_and_cor_layouts_match_tiff() {
     for cor_file in [&cor_flat, &cor_rmg, &cor_bip, &cor_bsq] {
         let out = dir.join("out.tif");
         run(&[
-            "unwrap",
-            "--ifg",
+                "--ifg",
             int.to_str().unwrap(),
             "--cols",
             "40",
@@ -206,7 +204,6 @@ fn flat_phase_input_matches_tiff() {
     fs::write(&cor_flat, le(&cor)).unwrap();
     let out = dir.join("out.tif");
     run(&[
-        "unwrap",
         "--phase",
         ph_flat.to_str().unwrap(),
         "--cols",
@@ -228,7 +225,6 @@ fn flat_phase_input_matches_tiff() {
     let no_cc_default = dir.join("out_no_cc.conncomp.tif");
     let _ = fs::remove_file(&no_cc_default);
     run(&[
-        "unwrap",
         "--phase",
         ph_flat.to_str().unwrap(),
         "--cols",
@@ -261,7 +257,6 @@ fn big_endian_gamma_style() {
     // explicit flag
     let out = dir.join("out.tif");
     run(&[
-        "unwrap",
         "--ifg",
         int.to_str().unwrap(),
         "--cols",
@@ -285,7 +280,6 @@ fn big_endian_gamma_style() {
     .unwrap();
     let out2 = dir.join("out2.tif");
     run(&[
-        "unwrap",
         "--ifg",
         int.to_str().unwrap(),
         "--ifg-meta",
@@ -319,7 +313,6 @@ fn cor_meta_is_used_for_flat_correlation() {
 
     let out = dir.join("out.tif");
     run(&[
-        "unwrap",
         "--phase",
         ph_tif.to_str().unwrap(),
         "--cor",
@@ -352,7 +345,6 @@ fn rsc_and_isce_xml_sidecars() {
     fs::write(&cc, le(&altline(&cor, 7.0))).unwrap();
     let out = dir.join("out.tif");
     run(&[
-        "unwrap",
         "--ifg",
         int.to_str().unwrap(),
         "--cor",
@@ -395,7 +387,6 @@ fn rsc_and_isce_xml_sidecars() {
     .unwrap();
     let out2 = dir.join("out2.tif");
     run(&[
-        "unwrap",
         "--ifg",
         int2.to_str().unwrap(),
         "--cor",
@@ -409,7 +400,6 @@ fn rsc_and_isce_xml_sidecars() {
 
     // an isce2 .cor XML handed to --ifg must fail the dtype check
     let stderr = run_expect_fail(&[
-        "unwrap",
         "--ifg",
         cor2.to_str().unwrap(),
         "--cor",
@@ -446,7 +436,6 @@ fn unw_altline_output_and_flat_conncomp() {
     let out = dir.join("out.unw");
     let cc_out = dir.join("out.unw.conncomp");
     run(&[
-        "unwrap",
         "--ifg",
         int.to_str().unwrap(),
         "--cols",
@@ -492,7 +481,6 @@ fn wrong_cols_is_a_clear_error() {
     fs::write(&cor_flat, le(&cor)).unwrap();
 
     let stderr = run_expect_fail(&[
-        "unwrap",
         "--ifg",
         int.to_str().unwrap(),
         "--cols",
@@ -508,7 +496,6 @@ fn wrong_cols_is_a_clear_error() {
 
     // and no geometry at all asks for --cols
     let stderr = run_expect_fail(&[
-        "unwrap",
         "--ifg",
         int.to_str().unwrap(),
         "--cor",
@@ -519,4 +506,40 @@ fn wrong_cols_is_a_clear_error() {
         dir.join("out.tif").to_str().unwrap(),
     ]);
     assert!(stderr.contains("--cols"), "stderr: {stderr}");
+}
+
+/// The pre-flat interface (`whirlwind unwrap ...`) is still accepted: the
+/// leading token is stripped with a deprecation note and the result is
+/// identical to the flat invocation.
+#[test]
+fn deprecated_unwrap_subcommand_still_works() {
+    let dir = tdir("deprecated-unwrap");
+    let (ph, cor) = scene();
+    let reference = baseline(&dir, &ph, &cor);
+
+    let out = dir.join("out.tif");
+    let res = Command::new(env!("CARGO_BIN_EXE_whirlwind"))
+        .args([
+            "unwrap",
+            "--phase",
+            dir.join("ph.tif").to_str().unwrap(),
+            "--cor",
+            dir.join("cor.tif").to_str().unwrap(),
+            "--nlooks",
+            "10",
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&res.stderr);
+    assert!(res.status.success(), "stderr: {stderr}");
+    assert!(stderr.contains("deprecated"), "stderr: {stderr}");
+    assert_eq!(fs::read(&out).unwrap(), reference);
+}
+
+#[test]
+fn simulate_subcommand_removed_with_pointer() {
+    let stderr = run_expect_fail(&["simulate", "--shape", "64x64", "--out", "sim"]);
+    assert!(stderr.contains("simulate_ifg"), "stderr: {stderr}");
 }

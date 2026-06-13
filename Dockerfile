@@ -6,7 +6,7 @@
 #
 #   docker build -t whirlwind .
 #   docker run --rm whirlwind --help
-#   docker run --rm -v "$PWD:/data" whirlwind unwrap \
+#   docker run --rm -v "$PWD:/data" whirlwind \
 #       --phase /data/wrapped.tif --cor /data/cor.tif --nlooks 16 \
 #       --out /data/unw.tif --conncomp /data/conncomp.tif
 #
