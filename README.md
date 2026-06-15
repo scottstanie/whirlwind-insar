@@ -41,7 +41,10 @@ unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask, downsample=8)
 The `whirlwind` CLI is at feature parity with the Python `unwrap`: every knob the
 Python API exposes (`downsample`, the `bridge` post-pass, persistent-scatterer
 `interpolate`, Goldstein filtering, and the connected-component cost controls) is
-available as a flag. Run `whirlwind unwrap --help` for the full list.
+available as a flag. Run `whirlwind --help` for the full list. There are no subcommands: unwrapping is
+the whole CLI, so all flags go directly to `whirlwind` (earlier releases used a
+`whirlwind unwrap ...` subcommand, which is still accepted with a deprecation
+note).
 
 ### Install
 
@@ -50,7 +53,7 @@ Pick whichever is simplest for you:
 1. **Prebuilt binary (no Python or toolchain).** Download the archive for your
    platform from the [latest release][releases], unpack it, and run the
    `whirlwind` executable. A single self-contained binary - handy for MATLAB
-   users driving it via `system('whirlwind unwrap ...')`.
+   users driving it via `system('whirlwind ...')`.
 2. **With the Python package.** The wheel ships a `whirlwind` console script
    (the same Rust CLI, entered in-process):
 
@@ -72,7 +75,7 @@ Pick whichever is simplest for you:
 ### Run
 
 ```bash
-whirlwind unwrap \
+whirlwind \
     --phase wrapped_phase.tif \
     --cor coherence.tif \
     --mask valid_mask.tif \
@@ -95,18 +98,18 @@ GDAL conversion needed:
 
 ```bash
 # snaphu-style: complex64 .int + amp/cor .cc; width ("line length") on the CLI
-whirlwind unwrap --ifg pair.int --cor pair.cc --cols 1024 --nlooks 10 --out pair.unw
+whirlwind --ifg pair.int --cor pair.cc --cols 1024 --nlooks 10 --out pair.unw
 
 # ROI_PAC / Stanford: geometry read from the <file>.rsc sidecar automatically
-whirlwind unwrap --ifg 20150902_20150914.int --cor 20150902_20150914.cc \
+whirlwind --ifg 20150902_20150914.int --cor 20150902_20150914.cc \
     --nlooks 10 --out 20150902_20150914.unw
 
 # isce2 stripmapStack / topsStack: the <file>.xml sidecars provide everything
-whirlwind unwrap --ifg filt_fine.int --cor filt_fine.cor --nlooks 10 \
+whirlwind --ifg filt_fine.int --cor filt_fine.cor --nlooks 10 \
     --out filt_fine.unw
 
 # GAMMA: big-endian; width from a .par/.off (or --cols + --big-endian)
-whirlwind unwrap --ifg pair.diff --ifg-meta pair.off \
+whirlwind --ifg pair.diff --ifg-meta pair.off \
     --cor pair.cc --cor-meta pair.off --nlooks 10 --out-format float --out pair.unw
 ```
 
@@ -135,7 +138,7 @@ For noisy scenes, coarsen the solve with `--downsample` (as in the Python API);
 the integration-component `--no-bridge`-able re-leveling pass runs by default:
 
 ```bash
-whirlwind unwrap --phase wrapped_phase.tif --cor coherence.tif \
+whirlwind --phase wrapped_phase.tif --cor coherence.tif \
     --mask valid_mask.tif --nlooks 10 --downsample 8 \
     --out unwrapped_phase.tif
 ```
@@ -148,7 +151,7 @@ locally:
 docker pull ghcr.io/scottstanie/whirlwind-insar:main   # prebuilt, or:
 docker build -t ghcr.io/scottstanie/whirlwind-insar .  # build locally
 
-docker run --rm -v "$PWD:/data" ghcr.io/scottstanie/whirlwind-insar unwrap \
+docker run --rm -v "$PWD:/data" ghcr.io/scottstanie/whirlwind-insar \
     --phase /data/wrapped.tif --cor /data/cor.tif --nlooks 10 \
     --out /data/unw.tif
 ```

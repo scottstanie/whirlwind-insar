@@ -527,7 +527,7 @@ Whirlwind is implemented in **Rust**, with a small Python binding layer:
 - **`crates/whirlwind-core`** (Rust): all algorithms - residue computation,
   cost build, MCF solver, integration, tiling/robustness, connected components,
   synthetic-ifg simulator. Parallelism via `rayon`.
-- **`crates/whirlwind-cli`** (Rust): `whirlwind` binary (`simulate`, `unwrap`).
+- **`crates/whirlwind-cli`** (Rust): `whirlwind` binary (a flat unwrap-only CLI).
 - **`crates/whirlwind-py`** (`pyo3`/`maturin`): Python bindings, importable as
   `whirlwind`. The top-level `unwrap` returns `(phase, conncomp)`.
 
