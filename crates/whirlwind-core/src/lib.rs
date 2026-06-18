@@ -39,7 +39,7 @@ pub mod tile;
 pub mod triangulated;
 
 pub use bridge::bridge_components;
-pub use conncomp::ConnCompParams;
+pub use conncomp::{ConnCompParams, SnaphuConnCompParams};
 pub use residual_graph::ResidualGraph;
 pub use triangulated::TriangulatedGraph;
 
@@ -162,6 +162,45 @@ pub fn components_only(
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
     Ok(conncomp::grow_components(&graph, &net, mask, &params))
+}
+
+/// **Alternate, SNAPHU-faithful connected components** grown from the convex
+/// (quadratic) cost's *ambiguity-wiggle* reliability test.
+///
+/// Where [`components_only`] cuts an edge by its raw linear Carballo cost, this
+/// reproduces SNAPHU's `GrowConnCompsMask`: it takes the already-`unwrapped`
+/// phase, recovers each edge's achieved integer ambiguity, and perturbs it by
+/// ±1 against the convex smooth cost `c(k) = w·(k·100 − O)²` (offsets/weights
+/// from [`cost::compute_snaphu_smooth_costs`]). The reliability
+/// `min(c(k+1)−c(k), c(k−1)−c(k))` is large where the unwrap sits deep in a
+/// cost well (confident) and small/negative near a half-cycle tie or a
+/// wrong-direction slip (unreliable → boundary).
+///
+/// Like [`components_only`], it needs only correlation + output (not the solved
+/// MCF network), so it composes with any phase path. It is the convex-cost
+/// counterpart of that function; the threshold lives in convex-cost units (see
+/// [`SnaphuConnCompParams`]).
+pub fn components_snaphu(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    unwrapped: ArrayView2<f32>,
+    mask: Option<ArrayView2<bool>>,
+    params: SnaphuConnCompParams,
+) -> Result<Array2<u32>, UnwrapError> {
+    let (m, n) = igram.dim();
+    if (m, n) != corr.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
+    }
+    if (m, n) != unwrapped.dim() {
+        return Err(UnwrapError::ShapeMismatch((m, n), unwrapped.dim()));
+    }
+    if m < 2 || n < 2 {
+        return Err(UnwrapError::TooSmall((m, n)));
+    }
+    Ok(conncomp::grow_components_snaphu(
+        igram, corr, nlooks, unwrapped, mask, &params,
+    ))
 }
 
 /// Robust coherence-cost unwrap returning `(phase, conn_components)` - the
