@@ -1,72 +1,66 @@
 # Bridging disconnected regions
 
-When a low-coherence feature (a river, a water body, a subswath seam) splits the
-valid area into pieces, a minimum-cost-flow unwrapper cannot observe the relative
-2π level between those pieces. The integrator seeds each disconnected region at
-an arbitrary cycle, so each region is internally correct but may sit a whole
-number of cycles above or below its neighbours. **Bridging** estimates and
-removes those inter-region offsets. In whirlwind it is the default-on `bridge`
-post-pass of [`unwrap`](ALGORITHM.md), and is also available standalone as
-`whirlwind.bridge_components`.
+When a river, water body, subswath seam, or other low-coherence gap splits the
+valid mask, the MCF solve unwraps each side independently. The wrapped phase does
+not contain the integer 2π offset between disconnected regions. After
+integration, each region is internally consistent, but may be one or more cycles
+above or below another.
 
-## Why it is easy to miss
+Bridging estimates one integer-cycle shift per region and applies it after
+unwrap. In Whirlwind it is enabled by default in [`unwrap`](ALGORITHM.md), and
+can also be run directly with `whirlwind.bridge_components`.
 
-The natural agreement metric — per-connected-component cycle match — **cannot
-see a bridging error**. It aligns each production component independently before
-scoring, which deliberately removes any constant per-region offset. A frame can
-therefore read 100 % per-component agreement while two regions sit at the wrong
-relative level.
+## Why component scores miss it
 
-To measure bridging you need an *absolute* metric: remove a single global offset
-(the median cycle of the largest region) and then count the fraction of valid
-pixels on the same integer cycle as the reference unwrap. The diagnostic
-`scripts/diag_bridge_isce3_compare.py` reports both, and the difference between
-them is exactly the bridging error.
+Per-connected-component cycle agreement aligns each production component before
+scoring. That checks whether each component is internally correct, but also
+removes the constant offsets that bridging fixes. A frame can score 100 %
+per-component agreement while two regions are still at the wrong relative level.
+
+Use an absolute metric instead: remove one global offset, taken as the median
+cycle of the largest region, then count valid pixels on the same integer cycle
+as the reference unwrap. `scripts/diag_bridge_isce3_compare.py` reports both
+metrics; their difference is the bridge error.
 
 ## The model
 
 Let the valid mask split into integration regions $R_1, \dots, R_K$ (the
-4-connected components of the mask — the partition the integrator seeds
-independently). Within a region the relative 2π level is already pinned by the
-MCF flow; *between* regions it is a free gauge. Bridging chooses one integer
-shift $s_i$ per region,
+4-connected components of the mask, which the integrator seeds independently).
+Within a region, the MCF flow fixes the relative 2π level. Between regions, the
+integer level is unobserved. Bridging chooses one integer shift $s_i$ per region,
 
 $$ u'(p) = u(p) + 2\pi\, s_i \quad \text{for } p \in R_i, $$
 
-to make the regions mutually consistent, fixing the largest region as the
-reference ($s_\text{ref} = 0$).
+and fixes the largest region as the reference ($s_\text{ref} = 0$).
 
 ## Algorithm
 
-whirlwind uses a pure-numpy port of the algorithm in isce3's NISAR GUNW workflow
+Whirlwind uses a pure-NumPy port of the algorithm in isce3's NISAR GUNW workflow
 (`isce3.unwrap.bridge_phase.bridge_unwrapped_phase`):
 
-1. **Label** the integration regions (the native `label_components`, a 4-connected
+1. Label the integration regions (the native `label_components`, a 4-connected
    BFS — no scipy). Keep regions of at least `min_px` pixels.
-2. **Adjacency.** For every pair of regions, find the closest pair of boundary
-   pixels (the natural place to bridge — where the true phase gap across the
-   void is smallest). Boundary-pixel sets are strided to at most `max_boundary`
-   points for the nearest-pair search.
-3. **Spanning tree.** Build a minimum spanning tree over those closest-pair
-   distances, rooted at the largest region. Each region is thus referenced
-   through its nearest neighbour rather than directly to one global anchor — the
-   shifts compose along the tree.
-4. **Offsets.** Walking the tree outward from the root, for each edge take the
-   median unwrapped phase in a local box (half-width `radius`, clamped to a
-   scene-relative size) around each of the two bridge endpoints, round the
-   parent-to-child difference to an integer number of cycles, and add that shift
-   to the child region. Because the tree is walked from the root, a region's
-   parent is already corrected when the region itself is processed, so offsets
-   propagate transitively.
+2. For every pair of regions, find the closest pair of boundary pixels.
+   Boundary-pixel sets are strided to at most `max_boundary` points for the
+   nearest-pair search.
+3. Build a minimum spanning tree over those closest-pair distances, rooted at
+   the largest region. Each region is referenced through a nearby neighbour
+   rather than directly to a single global anchor; the shifts compose along the
+   tree.
+4. Walk the tree outward from the root. For each edge, take the median unwrapped
+   phase in a local box around each bridge endpoint (half-width `radius`, clamped
+   to a scene-relative size), round the parent-to-child difference to integer
+   cycles, and add that shift to the child region. The parent is already
+   corrected when the child is processed, so corrections propagate through the
+   tree.
 
 A single-region (or coherently connected) frame produces no bridges and is
 returned byte-identical.
 
-The key choices are using the phase **locally at the region boundaries** (where
-the true cross-void phase difference is sub-cycle) and propagating along a
-**spanning tree** (so far regions chain through near neighbours). Comparing
-whole-region medians instead is less robust: a residual within-region ramp
-biases the median and the offset rounds to the wrong integer.
+The method reads phase locally at the region boundaries, where the cross-gap
+phase difference is smallest, and propagates offsets along a spanning tree, so
+distant regions chain through nearby neighbours. Whole-region medians can be
+biased by residual ramps and round to the wrong integer offset.
 
 ## Results
 
@@ -75,22 +69,22 @@ Absolute inter-region agreement with the production NISAR GUNW unwrap on the
 
 | Frame | no bridge | whirlwind bridge | isce3 bridge |
 |---|---:|---:|---:|
-| A_016 | 93.5 | **99.9** | 99.9 |
-| A_018 | 99.5 | **99.9** | 99.9 |
-| A_025 | 46.2 | **99.9** | 70.3 |
-| A_030 | 98.3 | **99.9** | 98.3 |
+| A_016 | 93.5 | 99.9 | 99.9 |
+| A_018 | 99.5 | 99.9 | 99.9 |
+| A_025 | 46.2 | 99.9 | 70.3 |
+| A_030 | 98.3 | 99.9 | 98.3 |
 
-The other nine frames are single-region (bridging is a structural no-op) or
-already consistent. whirlwind matches isce3 on A_016 / A_018 and is more robust
-on A_025 (a low-coherence river) and A_030, where isce3's settings leave large
-regions mis-levelled. whirlwind needs no scipy and no coherence input for the
-post-pass — only the unwrapped phase and the mask.
+The other nine frames are single-region (bridging is a no-op) or already
+consistent. Whirlwind matches isce3 on A_016 / A_018. On A_025 (a low-coherence
+river) and A_030, Whirlwind corrects regions that remain mis-levelled with the
+isce3 settings used here. The post-pass needs only the unwrapped phase and mask;
+it does not need scipy or a coherence raster.
 
 ![A_016 bridging](figures/bridge_compare_A_016.png)
 
-The bottom row paints each region by its integer cycle error versus production
-(0 = correct). Without bridging the two large regions are −3 cycles off (deep
-red); the whirlwind and isce3 bridges both flatten them to zero.
+The bottom row colors each region by integer cycle error versus production
+(0 = correct). Without bridging, the two large regions are −3 cycles off; the
+Whirlwind and isce3 bridges both bring them to zero.
 
 ## Reproduce
 
