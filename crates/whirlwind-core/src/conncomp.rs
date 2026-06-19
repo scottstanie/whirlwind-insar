@@ -541,7 +541,11 @@ mod tests {
         assert!(first > 0, "clean ramp should be labeled");
         for i in 0..m {
             for j in 0..n {
-                assert_eq!(labels[(i, j)], first, "clean ramp must be a single component");
+                assert_eq!(
+                    labels[(i, j)],
+                    first,
+                    "clean ramp must be a single component"
+                );
             }
         }
     }
@@ -575,7 +579,10 @@ mod tests {
         let left = labels[(m / 2, n / 4)];
         let right = labels[(m / 2, 3 * n / 4)];
         assert!(left > 0 && right > 0, "both halves should be labeled");
-        assert_ne!(left, right, "spurious 2π output slip must separate components");
+        assert_ne!(
+            left, right,
+            "spurious 2π output slip must separate components"
+        );
     }
 
     /// Mask stripe straight down the middle isolates the two halves: edges
