@@ -5,12 +5,14 @@ neighbors, while the amplitude (here unit) is preserved.
 
 Usage: python scripts/plot_interp_river.py [FRAMES...] [--cutoff 0.1]
 """
+
 import sys
 import glob
 
 import numpy as np
 import h5py
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -26,7 +28,9 @@ frames = args or ["A_025", "A_016"]
 OUT = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_final"
 
 for frame in frames:
-    h5 = glob.glob(f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5")[0]
+    h5 = glob.glob(
+        f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
+    )[0]
     with h5py.File(h5, "r") as h:
         pol, prod, coh, pcc, marr = gunw_layers(h)
     mask = water_only_mask(marr, prod.shape) & np.isfinite(prod) & np.isfinite(coh)
@@ -45,13 +49,22 @@ for frame in frames:
     fig, ax = plt.subplots(1, 3, figsize=(17, 6))
     for a, arr, title, cmap, vmm in [
         (ax[0], before, "wrapped phase (before)", "twilight", (-np.pi, np.pi)),
-        (ax[1], after, f"after interp (coh<{cutoff}: {n_interp/max(mask.sum(),1)*100:.0f}% of valid)", "twilight", (-np.pi, np.pi)),
+        (
+            ax[1],
+            after,
+            f"after interp (coh<{cutoff}: {n_interp/max(mask.sum(),1)*100:.0f}% of valid)",
+            "twilight",
+            (-np.pi, np.pi),
+        ),
         (ax[2], lowcoh, f"interpolated pixels (coh<{cutoff})", "Reds", (0, 1)),
     ]:
         im = a.imshow(arr, cmap=cmap, vmin=vmm[0], vmax=vmm[1])
-        a.set_title(title, fontsize=11); a.axis("off")
+        a.set_title(title, fontsize=11)
+        a.axis("off")
         fig.colorbar(im, ax=a, fraction=0.046, pad=0.02)
-    fig.suptitle(f"{frame}: spiral PS interpolation of low-coherence pixels", fontsize=13)
+    fig.suptitle(
+        f"{frame}: spiral PS interpolation of low-coherence pixels", fontsize=13
+    )
     fig.tight_layout()
     out = f"{OUT}/{frame}_interp.png"
     fig.savefig(out, dpi=110, bbox_inches="tight")

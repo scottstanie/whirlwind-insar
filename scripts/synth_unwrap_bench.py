@@ -46,7 +46,9 @@ def read_band(path):
 def multilook(arr, looks):
     m, n = arr.shape
     m2, n2 = m // looks * looks, n // looks * looks
-    return arr[:m2, :n2].reshape(m2 // looks, looks, n2 // looks, looks).mean(axis=(1, 3))
+    return (
+        arr[:m2, :n2].reshape(m2 // looks, looks, n2 // looks, looks).mean(axis=(1, 3))
+    )
 
 
 def form_igram(slc_a, slc_b, looks):
@@ -72,8 +74,11 @@ def make_engine(name):
         def run(ig, coh, nlooks):
             t0 = time.perf_counter()
             unw, cc = ww.unwrap(ig, coh, nlooks)
-            return (np.asarray(unw, np.float32), np.asarray(cc, np.int32),
-                    time.perf_counter() - t0)
+            return (
+                np.asarray(unw, np.float32),
+                np.asarray(cc, np.int32),
+                time.perf_counter() - t0,
+            )
 
         return run
 
@@ -85,10 +90,12 @@ def make_engine(name):
 
         def run(ig, coh, nlooks):
             t0 = time.perf_counter()
-            unw, cc = snaphu.unwrap(ig, coh, nlooks=nlooks, cost="smooth",
-                                    init="mcf")
-            return (np.asarray(unw, np.float32), np.asarray(cc, np.int32),
-                    time.perf_counter() - t0)
+            unw, cc = snaphu.unwrap(ig, coh, nlooks=nlooks, cost="smooth", init="mcf")
+            return (
+                np.asarray(unw, np.float32),
+                np.asarray(cc, np.int32),
+                time.perf_counter() - t0,
+            )
 
         return run
 
@@ -105,8 +112,11 @@ def make_engine(name):
         with tempfile.TemporaryDirectory() as sd:
             t0 = time.perf_counter()
             unw, cc = cb(ig, coh, nlooks, Path(sd))
-            return (np.asarray(unw, np.float32), np.asarray(cc, np.int32),
-                    time.perf_counter() - t0)
+            return (
+                np.asarray(unw, np.float32),
+                np.asarray(cc, np.int32),
+                time.perf_counter() - t0,
+            )
 
     return run
 
@@ -116,8 +126,9 @@ def main():
     p.add_argument("simdir", type=Path)
     p.add_argument("outdir", type=Path)
     p.add_argument("--looks", type=int, default=3)
-    p.add_argument("--engines", nargs="+",
-                   default=["whirlwind", "snaphu", "phass", "icu"])
+    p.add_argument(
+        "--engines", nargs="+", default=["whirlwind", "snaphu", "phass", "icu"]
+    )
     args = p.parse_args()
     args.outdir.mkdir(parents=True, exist_ok=True)
 
@@ -125,19 +136,24 @@ def main():
     dates = [f.name.split(".")[0] for f in slc_files]
     truth_dir = args.simdir / "input_layers" / "truth_unwrapped_diffs"
 
-    pairs = sorted(set(
-        [(dates[0], d) for d in dates[1:]]
-        + list(pairwise(dates))
-        + [(dates[i], dates[i + 2]) for i in range(len(dates) - 2)]
-    ))
+    pairs = sorted(
+        set(
+            [(dates[0], d) for d in dates[1:]]
+            + list(pairwise(dates))
+            + [(dates[i], dates[i + 2]) for i in range(len(dates) - 2)]
+        )
+    )
 
     # Pre-form igrams once (shared across engines); truth multilooked to match.
-    print(f"forming {len(pairs)} igrams at {args.looks}x{args.looks} looks ...",
-          flush=True)
+    print(
+        f"forming {len(pairs)} igrams at {args.looks}x{args.looks} looks ...",
+        flush=True,
+    )
     slcs = {d: read_band(f) for d, f in zip(dates, slc_files)}
-    truth0 = {d: multilook(read_band(truth_dir / f"{dates[0]}_{d}.int.tif"),
-                           args.looks)
-              for d in dates[1:]}
+    truth0 = {
+        d: multilook(read_band(truth_dir / f"{dates[0]}_{d}.int.tif"), args.looks)
+        for d in dates[1:]
+    }
     truth0[dates[0]] = np.zeros_like(truth0[dates[1]])
     igs, cohs, truths = {}, {}, {}
     for a, b in pairs:
@@ -167,33 +183,48 @@ def main():
             rmse = float(np.sqrt(np.mean((resid - resid.mean()) ** 2)))
             np.savez_compressed(npz, unw=unw, cc=cc)
             with res_csv.open("a") as f:
-                f.write(f"{eng},{a}_{b},{cohs[(a, b)].mean():.3f},"
-                        f"{pct_ok:.2f},{rmse:.3f},{dt:.1f}\n")
-            print(f"{eng:10s} {a}_{b}  coh={cohs[(a, b)].mean():.2f} "
-                  f"%K0={pct_ok:6.2f}  rmse={rmse:5.2f}  {dt:6.1f}s", flush=True)
+                f.write(
+                    f"{eng},{a}_{b},{cohs[(a, b)].mean():.3f},"
+                    f"{pct_ok:.2f},{rmse:.3f},{dt:.1f}\n"
+                )
+            print(
+                f"{eng:10s} {a}_{b}  coh={cohs[(a, b)].mean():.2f} "
+                f"%K0={pct_ok:6.2f}  rmse={rmse:5.2f}  {dt:6.1f}s",
+                flush=True,
+            )
 
     # --- closure, both triplet families, per engine -------------------------
     clo_csv = args.outdir / "closure.csv"
     with clo_csv.open("w") as f:
-        f.write("engine,family,triplet,pct_k_closure,pct_true_any,"
-                "wrapped_closure_p95\n")
+        f.write(
+            "engine,family,triplet,pct_k_closure,pct_true_any," "wrapped_closure_p95\n"
+        )
         for eng in args.engines:
             fams = {
-                "long": [(dates[0], dates[i], dates[i + 1])
-                         for i in range(1, len(dates) - 1)],
-                "short": [(dates[i], dates[i + 1], dates[i + 2])
-                          for i in range(len(dates) - 2)],
+                "long": [
+                    (dates[0], dates[i], dates[i + 1]) for i in range(1, len(dates) - 1)
+                ],
+                "short": [
+                    (dates[i], dates[i + 1], dates[i + 2])
+                    for i in range(len(dates) - 2)
+                ],
             }
             for fam, triplets in fams.items():
                 for ta, tb, tc in triplets:
                     u1 = unws[(eng, (ta, tb))]
                     u2 = unws[(eng, (tb, tc))]
                     u3 = unws[(eng, (ta, tc))]
-                    valid = (np.isfinite(u1) & np.isfinite(u2)
-                             & np.isfinite(u3))
-                    wrapped_mis = np.angle(np.exp(
-                        1j * (np.angle(igs[(ta, tb)]) + np.angle(igs[(tb, tc)])
-                              - np.angle(igs[(ta, tc)]))))
+                    valid = np.isfinite(u1) & np.isfinite(u2) & np.isfinite(u3)
+                    wrapped_mis = np.angle(
+                        np.exp(
+                            1j
+                            * (
+                                np.angle(igs[(ta, tb)])
+                                + np.angle(igs[(tb, tc)])
+                                - np.angle(igs[(ta, tc)])
+                            )
+                        )
+                    )
                     mis = u1 + u2 - u3
                     k_clo = np.round((mis - wrapped_mis) / TAU)
                     clo = 100.0 * np.mean(k_clo[valid] != 0)
@@ -201,21 +232,25 @@ def main():
                     k2 = k_error(u2, truths[(tb, tc)], valid)
                     k3 = k_error(u3, truths[(ta, tc)], valid)
                     true_any = 100.0 * np.mean(
-                        ((k1 != 0) | (k2 != 0) | (k3 != 0))[valid])
+                        ((k1 != 0) | (k2 != 0) | (k3 != 0))[valid]
+                    )
                     p95 = float(np.percentile(np.abs(wrapped_mis[valid]), 95))
-                    f.write(f"{eng},{fam},{ta}_{tb}_{tc},{clo:.2f},"
-                            f"{true_any:.2f},{p95:.2f}\n")
+                    f.write(
+                        f"{eng},{fam},{ta}_{tb}_{tc},{clo:.2f},"
+                        f"{true_any:.2f},{p95:.2f}\n"
+                    )
     print(f"\nwrote {res_csv}\nwrote {clo_csv}")
 
     # --- per-engine figure on the hardest single-reference pair -------------
-    hard = min(((a, b) for (a, b) in pairs if a == dates[0]),
-               key=lambda pr: cohs[pr].mean())
+    hard = min(
+        ((a, b) for (a, b) in pairs if a == dates[0]), key=lambda pr: cohs[pr].mean()
+    )
     n_eng = len(args.engines)
     fig, axes = plt.subplots(1, n_eng + 2, figsize=(4 * (n_eng + 2), 4.2))
-    im = axes[0].imshow(np.angle(igs[hard]), cmap="twilight",
-                        vmin=-np.pi, vmax=np.pi)
-    axes[0].set_title(f"wrapped {hard[0]}_{hard[1]}\n"
-                      f"(coh {cohs[hard].mean():.2f})", fontsize=9)
+    im = axes[0].imshow(np.angle(igs[hard]), cmap="twilight", vmin=-np.pi, vmax=np.pi)
+    axes[0].set_title(
+        f"wrapped {hard[0]}_{hard[1]}\n" f"(coh {cohs[hard].mean():.2f})", fontsize=9
+    )
     fig.colorbar(im, ax=axes[0], shrink=0.75)
     t = truths[hard]
     im = axes[1].imshow(t, cmap="viridis")
@@ -226,12 +261,14 @@ def main():
         valid = np.isfinite(unw)
         k = k_error(unw, t, valid)
         pct = 100.0 * np.mean(k[valid] == 0)
-        im = ax.imshow(np.where(valid, k, np.nan).astype(float),
-                       cmap="coolwarm", vmin=-2, vmax=2)
+        im = ax.imshow(
+            np.where(valid, k, np.nan).astype(float), cmap="coolwarm", vmin=-2, vmax=2
+        )
         ax.set_title(f"{eng} K-error ({pct:.1f}% K=0)", fontsize=9)
         fig.colorbar(im, ax=ax, shrink=0.75)
     for ax in axes:
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
     fig.tight_layout()
     fpath = args.outdir / "bench_hardest_pair.png"
     fig.savefig(fpath, dpi=110)

@@ -9,6 +9,7 @@ unwrap at a time (concurrency rule).
 
 Usage (base miniforge3 env): python scripts/cache_bridge_arrays.py [FRAMES...]
 """
+
 import sys
 import glob
 import os
@@ -33,10 +34,16 @@ def block_mean(a, L):
 
 
 for frame in frames:
-    h5path = glob.glob(f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5")[0]
+    h5path = glob.glob(
+        f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
+    )[0]
     with h5py.File(h5path, "r") as h:
         pol, prod_unw, coh, prod_cc, mask_arr = gunw_layers(h)
-    mask = water_only_mask(mask_arr, prod_unw.shape) & np.isfinite(prod_unw) & np.isfinite(coh)
+    mask = (
+        water_only_mask(mask_arr, prod_unw.shape)
+        & np.isfinite(prod_unw)
+        & np.isfinite(coh)
+    )
     wrapped = np.where(mask, wrap_phase(prod_unw), 0.0).astype(np.float32)
     ig = np.exp(1j * wrapped).astype(np.complex64)
     coh_in = np.where(mask, np.clip(np.nan_to_num(coh), 0, 1), 0.0).astype(np.float32)
@@ -65,8 +72,18 @@ for frame in frames:
 
     np.savez_compressed(
         npz_path,
-        unw=unw, cc=cc, coh=coh_in, prod=prod_unw.astype(np.float32),
-        prod_cc=prod_cc.astype(np.int32), mask=mask, wrapped=wrapped,
-        cunw=cunw, ccoh=ccoh, cmask=cmask, L=L,
+        unw=unw,
+        cc=cc,
+        coh=coh_in,
+        prod=prod_unw.astype(np.float32),
+        prod_cc=prod_cc.astype(np.int32),
+        mask=mask,
+        wrapped=wrapped,
+        cunw=cunw,
+        ccoh=ccoh,
+        cmask=cmask,
+        L=L,
     )
-    print(f"{frame}: cached fine+coarse -> {npz_path}  (coarse {cunw.shape})", flush=True)
+    print(
+        f"{frame}: cached fine+coarse -> {npz_path}  (coarse {cunw.shape})", flush=True
+    )

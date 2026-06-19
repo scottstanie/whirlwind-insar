@@ -5,6 +5,7 @@ ATBD's hypothesis); if slower, PD dominates. One heavy unwrap at a time.
 
 Usage (base miniforge3 env): python scripts/prof_pdssp.py [FRAME=D_077] [PD_ITERS...]
 """
+
 import glob
 import time
 import os
@@ -19,7 +20,9 @@ import whirlwind as ww
 
 frame = sys.argv[1] if len(sys.argv) > 1 else "D_077"
 pd_iters = sys.argv[2:] or ["8", "64", "256"]
-h5 = glob.glob(f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5")[0]
+h5 = glob.glob(
+    f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
+)[0]
 with h5py.File(h5, "r") as h:
     pol, prod, coh, pcc, marr = gunw_layers(h)
 mask = water_only_mask(marr, prod.shape) & np.isfinite(prod) & np.isfinite(coh)

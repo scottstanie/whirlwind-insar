@@ -36,7 +36,9 @@ def read_band(path):
 def multilook(arr, looks):
     m, n = arr.shape
     m2, n2 = m // looks * looks, n // looks * looks
-    return arr[:m2, :n2].reshape(m2 // looks, looks, n2 // looks, looks).mean(axis=(1, 3))
+    return (
+        arr[:m2, :n2].reshape(m2 // looks, looks, n2 // looks, looks).mean(axis=(1, 3))
+    )
 
 
 def form_igram(slc_a, slc_b, looks):
@@ -70,22 +72,27 @@ def main():
     p.add_argument("benchdir", type=Path)
     p.add_argument("--looks", type=int, default=3)
     p.add_argument("--coh-threshold", type=float, default=0.4)
-    p.add_argument("--engines", nargs="+",
-                   default=["whirlwind", "snaphu", "phass", "icu"])
+    p.add_argument(
+        "--engines", nargs="+", default=["whirlwind", "snaphu", "phass", "icu"]
+    )
     args = p.parse_args()
 
     slc_files = sorted((args.simdir / "slcs").glob("2*.slc.tif"))
     dates = [f.name.split(".")[0] for f in slc_files]
     truth_dir = args.simdir / "input_layers" / "truth_unwrapped_diffs"
-    pairs = sorted(set(
-        [(dates[0], d) for d in dates[1:]]
-        + list(pairwise(dates))
-        + [(dates[i], dates[i + 2]) for i in range(len(dates) - 2)]
-    ))
+    pairs = sorted(
+        set(
+            [(dates[0], d) for d in dates[1:]]
+            + list(pairwise(dates))
+            + [(dates[i], dates[i + 2]) for i in range(len(dates) - 2)]
+        )
+    )
 
     slcs = {d: read_band(f) for d, f in zip(dates, slc_files)}
-    truth0 = {d: multilook(read_band(truth_dir / f"{dates[0]}_{d}.int.tif"),
-                           args.looks) for d in dates[1:]}
+    truth0 = {
+        d: multilook(read_band(truth_dir / f"{dates[0]}_{d}.int.tif"), args.looks)
+        for d in dates[1:]
+    }
     truth0[dates[0]] = np.zeros_like(truth0[dates[1]])
 
     import whirlwind  # label_components for the blob filter
@@ -102,8 +109,9 @@ def main():
         noise = np.angle(np.exp(1j * (np.angle(ig) - truth)))
         recoverable = np.abs(noise) < (np.pi / 2)
 
-        engines_done = [e for e in args.engines
-                        if (args.benchdir / f"{e}_{a}_{b}.npz").exists()]
+        engines_done = [
+            e for e in args.engines if (args.benchdir / f"{e}_{a}_{b}.npz").exists()
+        ]
         # 'zero' = the do-nothing baseline (output == wrapped input, K_est = 0
         # everywhere). Any engine scoring near it on a metric did NOT earn its
         # number - guards against trivial/degenerate winners.
@@ -158,18 +166,36 @@ def main():
             sizes = np.bincount(labels.ravel())
             big = np.isin(labels, np.nonzero(sizes >= 100)[0][1:])
             pct_region = 100.0 * big[valid].mean()
-            rows.append((eng, f"{a}_{b}", float(coh.mean()), pct_all, pct_coh,
-                         pct_rec, pct_region, pct_hit, pct_fa, pct_prec,
-                         pct_cov))
+            rows.append(
+                (
+                    eng,
+                    f"{a}_{b}",
+                    float(coh.mean()),
+                    pct_all,
+                    pct_coh,
+                    pct_rec,
+                    pct_region,
+                    pct_hit,
+                    pct_fa,
+                    pct_prec,
+                    pct_cov,
+                )
+            )
 
         # ---- per-pair failure-inspection panel -----------------------------
         n_eng = len(engines_done)
         fig, axes = plt.subplots(1, n_eng + 3, figsize=(3.4 * (n_eng + 3), 3.7))
         panels = [
-            (np.angle(ig), dict(cmap="twilight", vmin=-np.pi, vmax=np.pi),
-             f"wrapped {a}_{b}"),
-            (coh, dict(cmap="gray", vmin=0, vmax=1),
-             f"coherence (mean {coh.mean():.2f})"),
+            (
+                np.angle(ig),
+                dict(cmap="twilight", vmin=-np.pi, vmax=np.pi),
+                f"wrapped {a}_{b}",
+            ),
+            (
+                coh,
+                dict(cmap="gray", vmin=0, vmax=1),
+                f"coherence (mean {coh.mean():.2f})",
+            ),
             (truth, dict(cmap="viridis"), "truth"),
         ]
         for ax, (arr, kw, title) in zip(axes, panels):
@@ -181,36 +207,51 @@ def main():
             pct_all = 100.0 * np.mean(k[valid] == 0)
             sel = valid & coh_ok
             pct_coh = 100.0 * np.mean(k[sel] == 0) if sel.any() else np.nan
-            im = ax.imshow(np.where(valid, k, np.nan).astype(float),
-                           cmap="coolwarm", vmin=-2, vmax=2)
-            ax.set_title(f"{eng}\nK=0: {pct_all:.0f}% all | {pct_coh:.0f}% coh",
-                         fontsize=9)
+            im = ax.imshow(
+                np.where(valid, k, np.nan).astype(float),
+                cmap="coolwarm",
+                vmin=-2,
+                vmax=2,
+            )
+            ax.set_title(
+                f"{eng}\nK=0: {pct_all:.0f}% all | {pct_coh:.0f}% coh", fontsize=9
+            )
             fig.colorbar(im, ax=ax, shrink=0.7)
         for ax in axes:
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
         fig.tight_layout()
         fig.savefig(args.benchdir / f"pair_{a}_{b}.png", dpi=100)
         plt.close(fig)
 
     with sum_csv.open("w") as f:
-        f.write("engine,pair,mean_coh,pct_k0_all,pct_k0_coh,pct_k0_recoverable,"
-                "pct_region_err,pct_hit,pct_false_alarm,pct_precision,"
-                "pct_coverage\n")
+        f.write(
+            "engine,pair,mean_coh,pct_k0_all,pct_k0_coh,pct_k0_recoverable,"
+            "pct_region_err,pct_hit,pct_false_alarm,pct_precision,"
+            "pct_coverage\n"
+        )
         for r in rows:
             f.write(",".join(str(x) for x in r) + "\n")
 
     # ---- summary figure: per-engine curves across pairs ---------------------
-    engs = sorted({r[0] for r in rows},
-                  key=lambda e: (args.engines + ["zero"]).index(e))
+    engs = sorted(
+        {r[0] for r in rows}, key=lambda e: (args.engines + ["zero"]).index(e)
+    )
     pair_names = sorted({r[1] for r in rows})
     fig, axes = plt.subplots(2, 1, figsize=(13, 8), sharex=True)
-    for metric_i, (col, label) in enumerate([(3, "% K=0 (all px)"),
-                                             (5, "% K=0 (recoverable px)")]):
+    for metric_i, (col, label) in enumerate(
+        [(3, "% K=0 (all px)"), (5, "% K=0 (recoverable px)")]
+    ):
         ax = axes[metric_i]
         for eng in engs:
             vals = {r[1]: r[col] for r in rows if r[0] == eng}
-            ax.plot(pair_names, [vals.get(p, np.nan) for p in pair_names],
-                    marker="o", ms=4, label=eng)
+            ax.plot(
+                pair_names,
+                [vals.get(p, np.nan) for p in pair_names],
+                marker="o",
+                ms=4,
+                label=eng,
+            )
         ax.set_ylabel(label)
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
@@ -220,20 +261,26 @@ def main():
     fig.savefig(args.benchdir / "summary.png", dpi=120)
 
     # ---- console table -------------------------------------------------------
-    print(f"{'engine':10s} {'%K0 all':>8s} {'%K0 rec':>8s} "
-          f"{'%region-err':>12s} {'%HIT':>7s} {'%FA':>7s} "
-          f"{'%PRECISION':>11s} {'%COVERAGE':>10s}")
+    print(
+        f"{'engine':10s} {'%K0 all':>8s} {'%K0 rec':>8s} "
+        f"{'%region-err':>12s} {'%HIT':>7s} {'%FA':>7s} "
+        f"{'%PRECISION':>11s} {'%COVERAGE':>10s}"
+    )
     for eng in engs:
         sel = [r for r in rows if r[0] == eng]
-        print(f"{eng:10s} {np.mean([r[3] for r in sel]):8.1f} "
-              f"{np.nanmean([r[5] for r in sel]):8.1f} "
-              f"{np.mean([r[6] for r in sel]):12.1f} "
-              f"{np.nanmean([r[7] for r in sel]):7.1f} "
-              f"{np.nanmean([r[8] for r in sel]):7.1f} "
-              f"{np.nanmean([r[9] for r in sel]):11.1f} "
-              f"{np.nanmean([r[10] for r in sel]):10.1f}")
-    print(f"\nwrote {sum_csv}\nfigures: {args.benchdir}/pair_*.png, "
-          f"{args.benchdir}/summary.png")
+        print(
+            f"{eng:10s} {np.mean([r[3] for r in sel]):8.1f} "
+            f"{np.nanmean([r[5] for r in sel]):8.1f} "
+            f"{np.mean([r[6] for r in sel]):12.1f} "
+            f"{np.nanmean([r[7] for r in sel]):7.1f} "
+            f"{np.nanmean([r[8] for r in sel]):7.1f} "
+            f"{np.nanmean([r[9] for r in sel]):11.1f} "
+            f"{np.nanmean([r[10] for r in sel]):10.1f}"
+        )
+    print(
+        f"\nwrote {sum_csv}\nfigures: {args.benchdir}/pair_*.png, "
+        f"{args.benchdir}/summary.png"
+    )
 
 
 if __name__ == "__main__":

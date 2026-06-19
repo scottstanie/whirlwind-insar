@@ -16,6 +16,7 @@ note). Resume-friendly: a frame whose PNG already exists is skipped unless
 
 Usage: python scripts/plot_nisar_per_frame.py [FRAMES...] [--force]
 """
+
 import glob
 import sys
 import time
@@ -38,8 +39,19 @@ OUT = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_final"
 NLOOKS = 16.0
 
 ALL_FRAMES = [
-    "A_013", "A_016", "A_018", "A_020", "A_022", "A_025", "A_028",
-    "A_030", "A_035", "D_074", "D_075", "D_077", "D_078",
+    "A_013",
+    "A_016",
+    "A_018",
+    "A_020",
+    "A_022",
+    "A_025",
+    "A_028",
+    "A_030",
+    "A_035",
+    "D_074",
+    "D_075",
+    "D_077",
+    "D_078",
 ]
 
 
@@ -111,12 +123,21 @@ def plot_frame(frame, force=False):
         (m(wrapped), "1. wrapped phase (rad)", "twilight", -np.pi, np.pi),
         (m(coh_in), "2. coherence", "gray", 0.0, 1.0),
         (m(prod_unw), "3. NISAR GUNW unwrapped (rad)", "viridis", lo, hi),
-        (labels_for_show(np.where(valid, prod_cc, 0)),
-         f"4. NISAR conncomps (n={int(np.unique(prod_cc[prod_cc>0]).size)})",
-         "tab20", 0, 20),
+        (
+            labels_for_show(np.where(valid, prod_cc, 0)),
+            f"4. NISAR conncomps (n={int(np.unique(prod_cc[prod_cc>0]).size)})",
+            "tab20",
+            0,
+            20,
+        ),
         (m(unw_aligned), "5. whirlwind unwrapped (rad)", "viridis", lo, hi),
-        (labels_for_show(np.where(valid, cc, 0)),
-         f"6. whirlwind conncomps (n={int(cc.max())})", "tab20", 0, 20),
+        (
+            labels_for_show(np.where(valid, cc, 0)),
+            f"6. whirlwind conncomps (n={int(cc.max())})",
+            "tab20",
+            0,
+            20,
+        ),
     ]
 
     fig, axes = plt.subplots(2, 3, figsize=(16, 9), constrained_layout=True)
@@ -133,8 +154,10 @@ def plot_frame(frame, force=False):
     )
     fig.savefig(out_png, dpi=130, bbox_inches="tight")
     plt.close(fig)
-    print(f"{frame}: {dt:.1f}s  per-comp={pc * 100:.1f}%  ncc={int(cc.max())} -> {out_png}",
-          flush=True)
+    print(
+        f"{frame}: {dt:.1f}s  per-comp={pc * 100:.1f}%  ncc={int(cc.max())} -> {out_png}",
+        flush=True,
+    )
 
 
 def main():

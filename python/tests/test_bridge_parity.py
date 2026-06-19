@@ -82,9 +82,7 @@ def test_parity_strided_boundary_subsample(seed):
     got = np.asarray(
         ww.bridge_components(unw, mask, radius=20, min_px=30, max_boundary=17)
     )
-    want = bridge_components_reference(
-        unw, mask, radius=20, min_px=30, max_boundary=17
-    )
+    want = bridge_components_reference(unw, mask, radius=20, min_px=30, max_boundary=17)
     assert np.array_equal(got, want, equal_nan=True)
 
 

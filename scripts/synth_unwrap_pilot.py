@@ -42,7 +42,9 @@ def read_band(path):
 def multilook(arr, looks):
     m, n = arr.shape
     m2, n2 = m // looks * looks, n // looks * looks
-    return arr[:m2, :n2].reshape(m2 // looks, looks, n2 // looks, looks).mean(axis=(1, 3))
+    return (
+        arr[:m2, :n2].reshape(m2 // looks, looks, n2 // looks, looks).mean(axis=(1, 3))
+    )
 
 
 def form_igram(slc_a, slc_b, looks):
@@ -76,8 +78,10 @@ def main():
     slcs = {d: read_band(f) for d, f in zip(dates, slc_files)}
     truth_dir = simdir / "input_layers" / "truth_unwrapped_diffs"
     # truth(d0_dN), multilooked with the same box as the igrams.
-    truth = {d: multilook(read_band(truth_dir / f"{dates[0]}_{d}.int.tif"), looks)
-             for d in dates[1:]}
+    truth = {
+        d: multilook(read_band(truth_dir / f"{dates[0]}_{d}.int.tif"), looks)
+        for d in dates[1:]
+    }
     truth[dates[0]] = np.zeros_like(truth[dates[1]])
 
     nlooks = float(looks * looks)
@@ -104,8 +108,9 @@ def main():
         pct_ok = 100.0 * np.mean(k[valid] == 0)
         resid = (unw - t)[valid]
         rmse = float(np.sqrt(np.mean((resid - resid.mean()) ** 2)))
-        results[(a, b)] = dict(unw=unw, coh=coh, ig=ig, truth=t, k=k,
-                               pct_ok=pct_ok, rmse=rmse)
+        results[(a, b)] = dict(
+            unw=unw, coh=coh, ig=ig, truth=t, k=k, pct_ok=pct_ok, rmse=rmse
+        )
         print(f"{a}_{b}  {coh.mean():5.2f} {pct_ok:7.2f} {rmse:10.3f}")
 
     # --- closure triplets: long-pair family + production-like short family --
@@ -115,8 +120,9 @@ def main():
         mis = r1["unw"] + r2["unw"] - r3["unw"]
         # Wrapped-closure floor: multilooking breaks exact closure; the
         # integer rounding below is only trustworthy where this is << pi.
-        wrapped_mis = np.angle(np.exp(1j * (np.angle(r1["ig"]) + np.angle(r2["ig"])
-                                            - np.angle(r3["ig"]))))
+        wrapped_mis = np.angle(
+            np.exp(1j * (np.angle(r1["ig"]) + np.angle(r2["ig"]) - np.angle(r3["ig"])))
+        )
         k_clo = np.round((mis - wrapped_mis) / TAU).astype(int)
         clo_rate = 100.0 * np.mean(k_clo != 0)
         # Truth: a (pixel, triplet) is truly wrong if ANY of its 3 IGs is wrong.
@@ -125,38 +131,58 @@ def main():
         print(f"{ta}_{tb}_{tc}    {clo_rate:14.2f} {true_any:11.2f} {p95:26.2f}")
         return clo_rate, true_any
 
-    print(f"\nLONG-pair triplets (d0,di)(di,di+1)(d0,di+1) - systematic errors "
-          f"shared by the two long pairs cancel:")
-    print(f"{'triplet':32s} {'%K_closure!=0':>14s} {'true-err %':>11s} "
-          f"{'wrapped-closure rad (p95)':>26s}")
+    print(
+        f"\nLONG-pair triplets (d0,di)(di,di+1)(d0,di+1) - systematic errors "
+        f"shared by the two long pairs cancel:"
+    )
+    print(
+        f"{'triplet':32s} {'%K_closure!=0':>14s} {'true-err %':>11s} "
+        f"{'wrapped-closure rad (p95)':>26s}"
+    )
     cal = []
     for i in range(1, len(dates) - 1):
         cal.append(closure_row(dates[0], dates[i], dates[i + 1]))
 
-    print(f"\nSHORT-pair triplets (di,di+1)(di+1,di+2)(di,di+2) - the "
-          f"production (nearest-k) graph:")
-    print(f"{'triplet':32s} {'%K_closure!=0':>14s} {'true-err %':>11s} "
-          f"{'wrapped-closure rad (p95)':>26s}")
+    print(
+        f"\nSHORT-pair triplets (di,di+1)(di+1,di+2)(di,di+2) - the "
+        f"production (nearest-k) graph:"
+    )
+    print(
+        f"{'triplet':32s} {'%K_closure!=0':>14s} {'true-err %':>11s} "
+        f"{'wrapped-closure rad (p95)':>26s}"
+    )
     cal_short = []
     for i in range(len(dates) - 2):
         cal_short.append(closure_row(dates[i], dates[i + 1], dates[i + 2]))
 
     # --- figure: hardest single-reference pair + calibration scatter --------
-    hard = min(((a, b) for (a, b) in results if a == dates[0]),
-               key=lambda p: results[p]["coh"].mean())
+    hard = min(
+        ((a, b) for (a, b) in results if a == dates[0]),
+        key=lambda p: results[p]["coh"].mean(),
+    )
     r = results[hard]
     fig, axes = plt.subplots(1, 4, figsize=(18, 4.2))
-    for ax, (arr, title, kw) in zip(axes, [
-        (np.angle(r["ig"]), f"wrapped {hard[0]}_{hard[1]}",
-         dict(cmap="twilight", vmin=-np.pi, vmax=np.pi)),
-        (r["truth"], "truth", dict(cmap="viridis")),
-        (r["unw"], f"whirlwind ({r['pct_ok']:.1f}% K=0)", dict(cmap="viridis")),
-        (r["k"].astype(float), "integer-cycle error",
-         dict(cmap="coolwarm", vmin=-2, vmax=2)),
-    ]):
+    for ax, (arr, title, kw) in zip(
+        axes,
+        [
+            (
+                np.angle(r["ig"]),
+                f"wrapped {hard[0]}_{hard[1]}",
+                dict(cmap="twilight", vmin=-np.pi, vmax=np.pi),
+            ),
+            (r["truth"], "truth", dict(cmap="viridis")),
+            (r["unw"], f"whirlwind ({r['pct_ok']:.1f}% K=0)", dict(cmap="viridis")),
+            (
+                r["k"].astype(float),
+                "integer-cycle error",
+                dict(cmap="coolwarm", vmin=-2, vmax=2),
+            ),
+        ],
+    ):
         im = ax.imshow(arr, **kw)
         ax.set_title(title, fontsize=10)
-        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xticks([])
+        ax.set_yticks([])
         fig.colorbar(im, ax=ax, shrink=0.8)
     fig.tight_layout()
     f1 = outdir / "pilot_hardest_pair.png"

@@ -79,8 +79,9 @@ def main():
     igram, corr, mask, phase = build()
     wrapped = np.angle(np.exp(1j * phase)).astype(np.float32)
 
-    unw_lin = ww.unwrap(igram.copy(), corr.copy(), nlooks=1.0, mask=mask,
-                        goldstein_alpha=0)[0]
+    unw_lin = ww.unwrap(
+        igram.copy(), corr.copy(), nlooks=1.0, mask=mask, goldstein_alpha=0
+    )[0]
     cyc_lin = aligned_cycle_err(unw_lin, phase, mask)
 
     pmin = float(np.nanmin(np.where(mask, phase, np.nan)))
@@ -89,35 +90,61 @@ def main():
     fig, axes = plt.subplots(2, 3, figsize=(13.5, 9))
 
     # Top row: the inputs / what unwrapping has to do.
-    im_w = show(axes[0, 0], wrapped, mask, mask_it=False,
-                title="WRAPPED phase (what the solver sees)\n"
-                      "steep ramp -> many diagonal fringes",
-                cmap="twilight", vmin=-np.pi, vmax=np.pi)
+    im_w = show(
+        axes[0, 0],
+        wrapped,
+        mask,
+        mask_it=False,
+        title="WRAPPED phase (what the solver sees)\n"
+        "steep ramp -> many diagonal fringes",
+        cmap="twilight",
+        vmin=-np.pi,
+        vmax=np.pi,
+    )
     fig.colorbar(im_w, ax=axes[0, 0], shrink=0.6, label="rad")
 
-    im_t = show(axes[0, 1], phase, mask,
-                "TRUTH unwrapped (masked to band)\n= add the right # of cycles",
-                cmap="viridis", vmin=pmin, vmax=pmax)
+    im_t = show(
+        axes[0, 1],
+        phase,
+        mask,
+        "TRUTH unwrapped (masked to band)\n= add the right # of cycles",
+        cmap="viridis",
+        vmin=pmin,
+        vmax=pmax,
+    )
     fig.colorbar(im_t, ax=axes[0, 1], shrink=0.6, label="rad")
 
-    im_l = show(axes[0, 2], unw_lin, mask,
-                "DEFAULT (linear) unwrap -> EXACT\n"
-                "(multi-unit gutter ring fix)",
-                cmap="viridis", vmin=pmin, vmax=pmax)
+    im_l = show(
+        axes[0, 2],
+        unw_lin,
+        mask,
+        "DEFAULT (linear) unwrap -> EXACT\n" "(multi-unit gutter ring fix)",
+        cmap="viridis",
+        vmin=pmin,
+        vmax=pmax,
+    )
     fig.colorbar(im_l, ax=axes[0, 2], shrink=0.6, label="rad")
 
     # Bottom row: the error map and the explanation.
-    im_e = show(axes[1, 0], cyc_lin, mask,
-                "integer-cycle ERROR (linear)\nall zero post-fix",
-                cmap="coolwarm", vmin=-1.5, vmax=1.5)
+    im_e = show(
+        axes[1, 0],
+        cyc_lin,
+        mask,
+        "integer-cycle ERROR (linear)\nall zero post-fix",
+        cmap="coolwarm",
+        vmin=-1.5,
+        vmax=1.5,
+    )
     fig.colorbar(im_e, ax=axes[1, 0], shrink=0.6, label="cycles")
 
     # the formerly-torn region in the band
     z = cyc_lin[64:192, 110:190]
-    axes[1, 1].imshow(z, origin="lower", cmap="coolwarm", vmin=-1.5, vmax=1.5,
-                      aspect="auto")
-    axes[1, 1].set_title("formerly-torn region\n(pre-fix: 0 | -1 cut line)",
-                         fontsize=10.5)
+    axes[1, 1].imshow(
+        z, origin="lower", cmap="coolwarm", vmin=-1.5, vmax=1.5, aspect="auto"
+    )
+    axes[1, 1].set_title(
+        "formerly-torn region\n(pre-fix: 0 | -1 cut line)", fontsize=10.5
+    )
     axes[1, 1].set_xticks([])
     axes[1, 1].set_yticks([])
 
@@ -126,7 +153,8 @@ def main():
     n_tear = int(np.nansum(np.abs(np.nan_to_num(cyc_lin)) > 0))
     n_valid = int(mask.sum())
     ax.text(
-        0.0, 1.0,
+        0.0,
+        1.0,
         "Why the default solver tore it\n"
         "------------------------------\n"
         "* The full-width band disconnects\n"
@@ -148,7 +176,10 @@ def main():
         "13-frame NISAR bench: identical\n"
         "per-component match - the fix is\n"
         "gauge-only on real frames.",
-        va="top", ha="left", fontsize=10, family="monospace",
+        va="top",
+        ha="left",
+        fontsize=10,
+        family="monospace",
     )
 
     fig.suptitle(

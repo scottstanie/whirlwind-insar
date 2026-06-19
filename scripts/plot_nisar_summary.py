@@ -55,8 +55,11 @@ with open(CSV) as f:
 try:
     tiled_file = open(TILED_CSV)
 except FileNotFoundError:
-    print(f"WARNING: tiled recheck CSV not found ({TILED_CSV}); "
-          "3x3 tiled SNAPHU will be absent from the figure.", flush=True)
+    print(
+        f"WARNING: tiled recheck CSV not found ({TILED_CSV}); "
+        "3x3 tiled SNAPHU will be absent from the figure.",
+        flush=True,
+    )
 else:
     with tiled_file as f:
         for row in csv.DictReader(f):

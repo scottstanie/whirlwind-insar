@@ -19,6 +19,7 @@ Usage (base miniforge3 env): python scripts/sweep_conncomp_knobs.py [FRAME=A_018
 Output: docs/figures/conncomp_knobs_<frame>.png + a printed table.
 One HEAVY unwrap per config (sequential; ~5 configs).
 """
+
 import glob
 import sys
 
@@ -43,8 +44,10 @@ CONFIGS = [
     ("default\n(cost_threshold=50, min_size_px=100)", {}),
     ("looser boundaries\n(conncomp_sigma=2.5)", {"conncomp_sigma": 2.5}),
     ("stricter boundaries\n(conncomp_sigma=4.5)", {"conncomp_sigma": 4.5}),
-    ("looser via cycle_prob\n(conncomp_cycle_prob=1e-2)",
-     {"conncomp_cycle_prob": 1e-2}),
+    (
+        "looser via cycle_prob\n(conncomp_cycle_prob=1e-2)",
+        {"conncomp_cycle_prob": 1e-2},
+    ),
     ("drop small comps\n(min_size_px=2000)", {"min_size_px": 2000}),
     ("keep 5 largest\n(max_ncomps=5)", {"max_ncomps": 5}),
 ]
@@ -65,7 +68,9 @@ def show_labels(ax, cc, valid, title):
     """Render conncomp labels: background grey, each label a cycled tab20 color."""
     arr = np.asarray(cc).astype(float)
     arr = np.where((arr > 0) & valid, ((arr - 1) % 20) + 1, np.nan)
-    ax.imshow(np.where(valid, 0.0, np.nan), cmap="gray", vmin=-1, vmax=1)  # valid extent
+    ax.imshow(
+        np.where(valid, 0.0, np.nan), cmap="gray", vmin=-1, vmax=1
+    )  # valid extent
     ax.imshow(arr, cmap="tab20", vmin=0, vmax=20, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.set_xticks([])
@@ -92,11 +97,16 @@ def main():
     # Panel 0: coherence (where the decorrelated area is).
     im = ax[0].imshow(np.where(valid, coh_in, np.nan), cmap="gray", vmin=0, vmax=1)
     ax[0].set_title("coherence", fontsize=10)
-    ax[0].set_xticks([]); ax[0].set_yticks([])
+    ax[0].set_xticks([])
+    ax[0].set_yticks([])
     fig.colorbar(im, ax=ax[0], shrink=0.7)
     # Panel 1: production conncomps (reference).
-    show_labels(ax[1], prod_cc, valid,
-                f"NISAR GUNW conncomps\n(n={int(np.unique(prod_cc[prod_cc>0]).size)})")
+    show_labels(
+        ax[1],
+        prod_cc,
+        valid,
+        f"NISAR GUNW conncomps\n(n={int(np.unique(prod_cc[prod_cc>0]).size)})",
+    )
 
     rows = []
     for k, (title, kw) in enumerate(CONFIGS):
@@ -104,12 +114,17 @@ def main():
         st = cc_stats(cc, valid)
         rows.append((title.replace("\n", " "), kw, st))
         show_labels(
-            ax[2 + k], cc, valid,
+            ax[2 + k],
+            cc,
+            valid,
             f"{title}\nncc={st['ncc']}, labeled={st['labeled_frac']*100:.0f}%",
         )
-        print(f"{title.splitlines()[0]:22s} {str(kw):55s} ncc={st['ncc']:4d} "
-              f"labeled={st['labeled_frac']*100:5.1f}% small(<2k)={st['n_small_2k']:3d} "
-              f"smallest={st['smallest']}", flush=True)
+        print(
+            f"{title.splitlines()[0]:22s} {str(kw):55s} ncc={st['ncc']:4d} "
+            f"labeled={st['labeled_frac']*100:5.1f}% small(<2k)={st['n_small_2k']:3d} "
+            f"smallest={st['smallest']}",
+            flush=True,
+        )
 
     fig.suptitle(
         f"{frame}: whirlwind connected-component tuning knobs (pol={pol}, nlooks=16)",
@@ -122,6 +137,7 @@ def main():
     # Also drop a copy next to the other sweep outputs for convenience.
     fig_alt = f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_final/conncomp_knobs_{frame}.png"
     import shutil
+
     shutil.copy(out, fig_alt)
     print(f"copy   -> {fig_alt}", flush=True)
 

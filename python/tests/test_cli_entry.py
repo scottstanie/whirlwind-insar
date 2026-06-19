@@ -42,9 +42,16 @@ def test_removed_simulate_subcommand_points_to_replacement(capfd):
 
 def test_runtime_error_exit_code(tmp_path, capfd):
     code = cli_main(
-        ["--phase", str(tmp_path / "missing.tif"), "--cor",
-         str(tmp_path / "missing2.tif"), "--nlooks", "10", "--out",
-         str(tmp_path / "out.tif")]
+        [
+            "--phase",
+            str(tmp_path / "missing.tif"),
+            "--cor",
+            str(tmp_path / "missing2.tif"),
+            "--nlooks",
+            "10",
+            "--out",
+            str(tmp_path / "out.tif"),
+        ]
     )
     assert code == 1
     assert "Error" in capfd.readouterr().err
@@ -72,9 +79,18 @@ def test_simulate_unwrap_roundtrip(tmp_path, capfd):
 
     assert (
         cli_main(
-            ["--phase", str(tmp_path / "wrapped.f32"), "--cols", "64", "--cor",
-             str(tmp_path / "cor.f32"), "--nlooks", "10", "--out",
-             str(tmp_path / "unw.f32")]
+            [
+                "--phase",
+                str(tmp_path / "wrapped.f32"),
+                "--cols",
+                "64",
+                "--cor",
+                str(tmp_path / "cor.f32"),
+                "--nlooks",
+                "10",
+                "--out",
+                str(tmp_path / "unw.f32"),
+            ]
         )
         == 0
     )

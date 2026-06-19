@@ -7,6 +7,7 @@ agreement metric hides.
 
 Usage: python scripts/plot_bridge_compare.py [FRAME=A_016]
 """
+
 import sys
 
 import numpy as np
@@ -36,15 +37,20 @@ def region_cycle_error(u, prod_unw, region, ref_lab, valid):
 def main():
     frame = sys.argv[1] if len(sys.argv) > 1 else "A_016"
     d = np.load(f"{BASE}/{frame}_bridge_compare.npz")
-    prod_unw = d["prod_unw"]; mask = d["mask"]; coh = d["coh"]
-    region = d["region"]; valid = mask & np.isfinite(prod_unw)
+    prod_unw = d["prod_unw"]
+    mask = d["mask"]
+    coh = d["coh"]
+    region = d["region"]
+    valid = mask & np.isfinite(prod_unw)
     sizes = np.bincount(region.ravel())
     ref_lab = int(np.argmax(sizes[1:]) + 1)
 
     lo, hi = np.nanpercentile(prod_unw[valid], [2, 98])
     fig, ax = plt.subplots(2, 3, figsize=(17, 9), constrained_layout=True)
 
-    im = ax[0, 0].imshow(np.where(valid, prod_unw, np.nan), cmap="viridis", vmin=lo, vmax=hi)
+    im = ax[0, 0].imshow(
+        np.where(valid, prod_unw, np.nan), cmap="viridis", vmin=lo, vmax=hi
+    )
     ax[0, 0].set_title("NISAR GUNW unwrapped (rad)")
     fig.colorbar(im, ax=ax[0, 0], shrink=0.7)
     im = ax[0, 1].imshow(np.where(valid, coh, np.nan), cmap="gray", vmin=0, vmax=1)
@@ -63,18 +69,23 @@ def main():
         g = np.rint(np.median(amb[valid & (region == ref_lab)]))
         absagree = float(np.mean((amb[valid] - g) == 0)) * 100
         im = a.imshow(err, cmap="RdBu", vmin=-3, vmax=3, interpolation="nearest")
-        a.set_title(f"{name}\nregion cycle error vs production "
-                    f"(absolute agreement {absagree:.1f}%)")
+        a.set_title(
+            f"{name}\nregion cycle error vs production "
+            f"(absolute agreement {absagree:.1f}%)"
+        )
         fig.colorbar(im, ax=a, shrink=0.7, label="cycles off")
     for a in ax.ravel():
-        a.set_xticks([]); a.set_yticks([])
+        a.set_xticks([])
+        a.set_yticks([])
 
-    fig.suptitle(f"{frame}: inter-region gauge bridging - raw vs whirlwind vs isce3",
-                 fontsize=14)
+    fig.suptitle(
+        f"{frame}: inter-region gauge bridging - raw vs whirlwind vs isce3", fontsize=14
+    )
     out = f"docs/figures/bridge_compare_{frame}.png"
     fig.savefig(out, dpi=120, bbox_inches="tight")
     print(f"figure -> {out}", flush=True)
     import shutil
+
     shutil.copy(out, f"{BASE}/bridge_compare_{frame}.png")
 
 

@@ -11,6 +11,7 @@ read from the already-written icu_scratch/<frame>.unw rasters (no recompute).
 Usage (base miniforge3 env -- has whirlwind + matplotlib):
     /Users/staniewi/miniforge3/bin/python scripts/plot_unwrap_compare.py [A_025 A_016 D_074 D_077]
 """
+
 import sys
 import glob
 import os
@@ -18,6 +19,7 @@ import os
 import numpy as np
 import h5py
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -50,10 +52,16 @@ def amb_diff(u, prod, valid):
 
 
 for frame in frames:
-    h5path = glob.glob(f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5")[0]
+    h5path = glob.glob(
+        f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
+    )[0]
     with h5py.File(h5path, "r") as h:
         pol, prod_unw, coh, prod_cc, mask_arr = gunw_layers(h)
-    mask = water_only_mask(mask_arr, prod_unw.shape) & np.isfinite(prod_unw) & np.isfinite(coh)
+    mask = (
+        water_only_mask(mask_arr, prod_unw.shape)
+        & np.isfinite(prod_unw)
+        & np.isfinite(coh)
+    )
     wrapped = np.where(mask, wrap_phase(prod_unw), 0.0).astype(np.float32)
     ig = np.exp(1j * wrapped).astype(np.complex64)
     coh_in = np.where(mask, np.clip(np.nan_to_num(coh), 0, 1), 0.0).astype(np.float32)
@@ -65,8 +73,13 @@ for frame in frames:
     cc = np.asarray(cc).astype(np.int32)
     np.savez_compressed(
         f"{CACHE_DIR}/{frame}.npz",
-        unw=unw, cc=cc, coh=coh_in, prod=prod_unw.astype(np.float32),
-        prod_cc=prod_cc.astype(np.int32), mask=mask, wrapped=wrapped,
+        unw=unw,
+        cc=cc,
+        coh=coh_in,
+        prod=prod_unw.astype(np.float32),
+        prod_cc=prod_cc.astype(np.int32),
+        mask=mask,
+        wrapped=wrapped,
     )
 
     # ICU phase from the already-written raster (BIL 2-band: band1 = phase).
@@ -95,19 +108,67 @@ for frame in frames:
 
     def show(a, arr, title, valid=None, **kw):
         d = np.where(valid if valid is not None else mask, arr, np.nan)
-        im = a.imshow(d, **kw); a.set_title(title, fontsize=11); a.axis("off")
+        im = a.imshow(d, **kw)
+        a.set_title(title, fontsize=11)
+        a.axis("off")
         fig.colorbar(im, ax=a, fraction=0.046, pad=0.02)
 
     show(ax[0, 0], coh_in, "coherence", cmap="gray", vmin=0, vmax=1)
-    show(ax[0, 1], pu, f"production unwrap ({int(prod_cc.max())} cc)", valid=mask, cmap="viridis", vmin=vlo, vmax=vhi)
-    show(ax[0, 2], ww_a, f"whirlwind  per-comp={pc_ww*100:.1f}%", valid=v_ww, cmap="viridis", vmin=vlo, vmax=vhi)
-    show(ax[1, 0], icu_a, f"isce2 ICU  per-comp={pc_icu*100:.1f}%  cov={cov_icu*100:.0f}%", valid=v_icu, cmap="viridis", vmin=vlo, vmax=vhi)
-    show(ax[1, 1], amb_diff(unw, prod_unw, v_ww), "whirlwind ambiguity diff (cyc)", valid=v_ww, cmap="RdBu", vmin=-2, vmax=2)
-    show(ax[1, 2], amb_diff(icu_unw, prod_unw, v_icu), "ICU ambiguity diff (cyc)", valid=v_icu, cmap="RdBu", vmin=-2, vmax=2)
+    show(
+        ax[0, 1],
+        pu,
+        f"production unwrap ({int(prod_cc.max())} cc)",
+        valid=mask,
+        cmap="viridis",
+        vmin=vlo,
+        vmax=vhi,
+    )
+    show(
+        ax[0, 2],
+        ww_a,
+        f"whirlwind  per-comp={pc_ww*100:.1f}%",
+        valid=v_ww,
+        cmap="viridis",
+        vmin=vlo,
+        vmax=vhi,
+    )
+    show(
+        ax[1, 0],
+        icu_a,
+        f"isce2 ICU  per-comp={pc_icu*100:.1f}%  cov={cov_icu*100:.0f}%",
+        valid=v_icu,
+        cmap="viridis",
+        vmin=vlo,
+        vmax=vhi,
+    )
+    show(
+        ax[1, 1],
+        amb_diff(unw, prod_unw, v_ww),
+        "whirlwind ambiguity diff (cyc)",
+        valid=v_ww,
+        cmap="RdBu",
+        vmin=-2,
+        vmax=2,
+    )
+    show(
+        ax[1, 2],
+        amb_diff(icu_unw, prod_unw, v_icu),
+        "ICU ambiguity diff (cyc)",
+        valid=v_icu,
+        cmap="RdBu",
+        vmin=-2,
+        vmax=2,
+    )
 
-    fig.suptitle(f"{frame}: production vs whirlwind ({pc_ww*100:.1f}%) vs isce2-ICU ({pc_icu*100:.1f}%)  -- shape {prod_unw.shape}", fontsize=13)
+    fig.suptitle(
+        f"{frame}: production vs whirlwind ({pc_ww*100:.1f}%) vs isce2-ICU ({pc_icu*100:.1f}%)  -- shape {prod_unw.shape}",
+        fontsize=13,
+    )
     fig.tight_layout()
     out = f"{OUT_DIR}/{frame}_icu_vs_ww.png"
     fig.savefig(out, dpi=110, bbox_inches="tight")
     plt.close(fig)
-    print(f"{frame}: ww={pc_ww*100:.1f}%  icu={pc_icu*100:.1f}% (cov {cov_icu*100:.0f}%)  -> {out}", flush=True)
+    print(
+        f"{frame}: ww={pc_ww*100:.1f}%  icu={pc_icu*100:.1f}% (cov {cov_icu*100:.0f}%)  -> {out}",
+        flush=True,
+    )

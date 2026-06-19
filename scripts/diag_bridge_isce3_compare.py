@@ -18,6 +18,7 @@ Runs ONE whirlwind solve (bridge=False) and then applies, in Python:
 Usage: python scripts/diag_bridge_isce3_compare.py [FRAME=A_016]
 Run in the mapping-312 env (has isce3 + whirlwind).
 """
+
 import glob
 import sys
 
@@ -35,8 +36,11 @@ TWOPI = 2.0 * np.pi
 H5DIR = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw"
 # NISAR GUNW defaults (nisar/workflows/defaults/insar.yaml -> unwrap.bridge).
 ISCE3_BRIDGE = dict(
-    radius=500, min_num_pixel=14, erosion_size=2,
-    ramp_type=None, deramp_max_num_sample=int(1e6),
+    radius=500,
+    min_num_pixel=14,
+    erosion_size=2,
+    ramp_type=None,
+    deramp_max_num_sample=int(1e6),
 )
 
 
@@ -67,8 +71,19 @@ def region_offsets(u, prod_unw, region, ref_lab, valid, min_px=500):
 
 
 ALL_FRAMES = [
-    "A_013", "A_016", "A_018", "A_020", "A_022", "A_025", "A_028",
-    "A_030", "A_035", "D_074", "D_075", "D_077", "D_078",
+    "A_013",
+    "A_016",
+    "A_018",
+    "A_020",
+    "A_022",
+    "A_025",
+    "A_028",
+    "A_030",
+    "A_035",
+    "D_074",
+    "D_075",
+    "D_077",
+    "D_078",
 ]
 
 
@@ -94,37 +109,49 @@ def run_frame(frame):
 
     # isce3's MST bridge on the same raw output (zero outside mask = its cluster mask).
     raw_z = np.where(mask, raw, 0.0).astype(np.float32)
-    isce3_b = np.asarray(
-        bridge_unwrapped_phase(raw_z, **ISCE3_BRIDGE), np.float32
-    )
+    isce3_b = np.asarray(bridge_unwrapped_phase(raw_z, **ISCE3_BRIDGE), np.float32)
 
     region, n_region = ww.label_components(np.ascontiguousarray(mask))
     sizes = np.bincount(region.ravel())
     ref_lab = int(np.argmax(sizes[1:]) + 1)
     valid = mask & np.isfinite(prod_unw)
 
-    print(f"{frame}: pol={pol} shape={mask.shape} integration-regions={n_region} "
-          f"(>=500px: {int((sizes[1:] >= 500).sum())})", flush=True)
-    print(f"{'method':12s} {'per-comp%':>9s} {'absolute%':>9s}  wrong-region-offsets",
-          flush=True)
+    print(
+        f"{frame}: pol={pol} shape={mask.shape} integration-regions={n_region} "
+        f"(>=500px: {int((sizes[1:] >= 500).sum())})",
+        flush=True,
+    )
+    print(
+        f"{'method':12s} {'per-comp%':>9s} {'absolute%':>9s}  wrong-region-offsets",
+        flush=True,
+    )
     for name, u in [("raw", raw), ("ww-bridge", ww_b), ("isce3-bridge", isce3_b)]:
         pc = percomp_match(u, prod_unw, wrapped, prod_cc, valid) * 100
         ab = absolute_agreement(u, prod_unw, region, ref_lab, valid) * 100
         offs = region_offsets(u, prod_unw, region, ref_lab, valid)
         wrong = [(lab, npx, o) for (lab, npx, o) in offs if o != 0]
         wrong_px = sum(npx for _, npx, _ in wrong)
-        wrong_str = (
-            f"{len(wrong)}/{len(offs)} regions, {wrong_px} px"
-            + ("" if not wrong else "  " + ", ".join(
-                f"L{lab}:{o:+d}({npx})" for lab, npx, o in sorted(
-                    wrong, key=lambda t: -t[1])[:6]))
+        wrong_str = f"{len(wrong)}/{len(offs)} regions, {wrong_px} px" + (
+            ""
+            if not wrong
+            else "  "
+            + ", ".join(
+                f"L{lab}:{o:+d}({npx})"
+                for lab, npx, o in sorted(wrong, key=lambda t: -t[1])[:6]
+            )
         )
         print(f"{name:12s} {pc:9.2f} {ab:9.2f}  {wrong_str}", flush=True)
 
     np.savez_compressed(
         f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_final/{frame}_bridge_compare.npz",
-        wrapped=wrapped, coh=coh_in, mask=mask, prod_unw=prod_unw.astype(np.float32),
-        prod_cc=prod_cc.astype(np.int64), raw=raw, ww_bridge=ww_b, isce3_bridge=isce3_b,
+        wrapped=wrapped,
+        coh=coh_in,
+        mask=mask,
+        prod_unw=prod_unw.astype(np.float32),
+        prod_cc=prod_cc.astype(np.int64),
+        raw=raw,
+        ww_bridge=ww_b,
+        isce3_bridge=isce3_b,
         region=region.astype(np.int32),
     )
     print(f"{frame}: saved arrays for plotting", flush=True)

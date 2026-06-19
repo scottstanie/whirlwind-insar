@@ -64,6 +64,7 @@ Requires a whirlwind build with `components_snaphu` (this branch):
       cargo build --release -p whirlwind-py
   cp target/release/lib_native.dylib python/whirlwind/_native.abi3.so
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -98,8 +99,19 @@ MIN_SIZE_PX = 100
 MAX_NCOMPS = 4096
 
 ALL_FRAMES = [
-    "A_013", "A_016", "A_018", "A_020", "A_022", "A_025", "A_028",
-    "A_030", "A_035", "D_074", "D_075", "D_077", "D_078",
+    "A_013",
+    "A_016",
+    "A_018",
+    "A_020",
+    "A_022",
+    "A_025",
+    "A_028",
+    "A_030",
+    "A_035",
+    "D_074",
+    "D_075",
+    "D_077",
+    "D_078",
 ]
 
 
@@ -204,8 +216,14 @@ def plot_frame(
     ig = np.exp(1j * wrapped).astype(np.complex64)
     corr = np.clip(np.nan_to_num(coh), 0, 1).astype(np.float32)
     ww_cc_new = ww._native.components_snaphu(
-        ig, corr, NLOOKS, ww_unw, mask,
-        RELIABILITY_THRESHOLD, MIN_SIZE_PX, MAX_NCOMPS,
+        ig,
+        corr,
+        NLOOKS,
+        ww_unw,
+        mask,
+        RELIABILITY_THRESHOLD,
+        MIN_SIZE_PX,
+        MAX_NCOMPS,
     ).astype(np.int64)
 
     # Headline metric + ambiguity-diff panel (relative to the shared wrapped input).
@@ -215,26 +233,40 @@ def plot_frame(
 
     # Shared unwrapped-phase color scale from the production layer.
     pv = prod_unw[valid]
-    lo, hi = (np.nanpercentile(pv, [2, 98]) if pv.size else (-np.pi, np.pi))
+    lo, hi = np.nanpercentile(pv, [2, 98]) if pv.size else (-np.pi, np.pi)
 
     def m(x):
         return np.where(valid, x, np.nan)
 
-    amax = float(max(np.nanpercentile(np.abs(amb), 99) if np.isfinite(amb).any() else 1.0, 1.0))
+    amax = float(
+        max(np.nanpercentile(np.abs(amb), 99) if np.isfinite(amb).any() else 1.0, 1.0)
+    )
     panels = [
         (m(wrapped), "1. wrapped phase (rad)", "twilight", -np.pi, np.pi),
         (m(coh), "2. coherence", "gray", 0.0, 1.0),
         (m(prod_unw), "3. NISAR GUNW unwrapped (rad)", "viridis", lo, hi),
-        (labels_for_show(np.where(valid, prod_cc, 0)),
-         f"4. NISAR GUNW conncomps = production SNAPHU (n={ncc(prod_cc, valid)})",
-         "tab20", 0, 20),
+        (
+            labels_for_show(np.where(valid, prod_cc, 0)),
+            f"4. NISAR GUNW conncomps = production SNAPHU (n={ncc(prod_cc, valid)})",
+            "tab20",
+            0,
+            20,
+        ),
         (m(ww_unw), "5. whirlwind unwrapped (rad)", "viridis", lo, hi),
-        (labels_for_show(np.where(valid, ww_cc_old, 0)),
-         f"6. whirlwind conncomps OLD linear (n={ncc(ww_cc_old, valid)})",
-         "tab20", 0, 20),
-        (labels_for_show(np.where(valid, ww_cc_new, 0)),
-         f"7. whirlwind conncomps NEW SNAPHU-wiggle (n={ncc(ww_cc_new, valid)})",
-         "tab20", 0, 20),
+        (
+            labels_for_show(np.where(valid, ww_cc_old, 0)),
+            f"6. whirlwind conncomps OLD linear (n={ncc(ww_cc_old, valid)})",
+            "tab20",
+            0,
+            20,
+        ),
+        (
+            labels_for_show(np.where(valid, ww_cc_new, 0)),
+            f"7. whirlwind conncomps NEW SNAPHU-wiggle (n={ncc(ww_cc_new, valid)})",
+            "tab20",
+            0,
+            20,
+        ),
         (amb, "8. ambiguity diff ww-prod (cycles)", "RdBu", -amax, amax),
     ]
 

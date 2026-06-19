@@ -47,7 +47,7 @@ def build(cycles: float, corridor: bool):
     full width - the top and bottom seas become connected.
     """
     n = 256
-    y, x = np.ogrid[-0.5:0.5:complex(n), -0.5:0.5:complex(n)]
+    y, x = np.ogrid[-0.5 : 0.5 : complex(n), -0.5 : 0.5 : complex(n)]
     phase = (TAU * cycles * (x + y)).astype(np.float32)
     igram = np.exp(1j * phase).astype(np.complex64)
     corr = np.ones(igram.shape, np.float32) * 0.999

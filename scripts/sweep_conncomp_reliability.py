@@ -20,6 +20,7 @@ a set of target coherences and writes, into `./nisar-pngs/<date>/`:
 
 Usage: .venv/bin/python scripts/sweep_conncomp_reliability.py [FRAMES...]
 """
+
 from __future__ import annotations
 
 import csv
@@ -99,7 +100,9 @@ def line_plots(per_frame: dict, frames: list[str], out_dir: Path):
         axR.plot(GAMMAS, pf["ncomps"], "o-", label=fr)
     axL.set_xlabel("target minimum coherence  (--conncomp-min-coherence)")
     axL.set_ylabel("labeled fraction (%)")
-    axL.set_title("Coverage vs the knob\n(dashed = that frame's production-SNAPHU labeled %)")
+    axL.set_title(
+        "Coverage vs the knob\n(dashed = that frame's production-SNAPHU labeled %)"
+    )
     axL.legend(fontsize=9)
     axL.grid(True, alpha=0.25)
     axT = axL.secondary_xaxis("top")
@@ -156,7 +159,9 @@ def image_grid(a: dict, fr: str, out_dir: Path):
         )
     ncols = 4
     nrows = (len(panels) + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4.6 * ncols, 4.4 * nrows), constrained_layout=True)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(4.6 * ncols, 4.4 * nrows), constrained_layout=True
+    )
     for ax, (arr, title, cmap, vmin, vmax) in zip(axes.ravel(), panels, strict=False):
         im = ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest")
         ax.set_title(title, fontsize=10)
@@ -164,7 +169,7 @@ def image_grid(a: dict, fr: str, out_dir: Path):
         ax.set_yticks([])
         if cmap == "gray":
             fig.colorbar(im, ax=ax, shrink=0.75)
-    for ax in axes.ravel()[len(panels):]:
+    for ax in axes.ravel()[len(panels) :]:
         ax.axis("off")
     fig.suptitle(
         f"{fr}: connected components as `conncomp_reliability` rises "
@@ -202,7 +207,10 @@ def main():
                 }
             )
         per_frame[fr] = dict(labeled=labeled, ncomps=ncomps, prod_lab=prod_lab * 100)
-        print(f"{fr}: prod labeled%={prod_lab*100:.1f}; swept {len(GAMMAS)} coherences", flush=True)
+        print(
+            f"{fr}: prod labeled%={prod_lab*100:.1f}; swept {len(GAMMAS)} coherences",
+            flush=True,
+        )
         if fr in IMAGE_FRAMES:
             image_grid(a, fr, out_dir)
 

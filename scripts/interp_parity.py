@@ -4,6 +4,7 @@ that has BOTH the new whirlwind wheel AND dolphin+numba.
 
 Usage: python scripts/interp_parity.py
 """
+
 import sys
 
 import numpy as np
@@ -28,6 +29,10 @@ valid = ifg != 0
 dphase = np.angle(out_rs[valid] * np.conj(out_np[valid]))  # wrapped phase diff
 damp = np.abs(np.abs(out_rs[valid]) - np.abs(out_np[valid]))
 print(f"valid px: {valid.sum()}")
-print(f"max |Δphase| = {np.abs(dphase).max():.2e} rad   mean = {np.abs(dphase).mean():.2e}")
+print(
+    f"max |Δphase| = {np.abs(dphase).max():.2e} rad   mean = {np.abs(dphase).mean():.2e}"
+)
 print(f"max |Δamp|   = {damp.max():.2e}")
-print(f"PARITY (phase<1e-3, amp<1e-4): {np.abs(dphase).max() < 1e-3 and damp.max() < 1e-4}")
+print(
+    f"PARITY (phase<1e-3, amp<1e-4): {np.abs(dphase).max() < 1e-3 and damp.max() < 1e-4}"
+)

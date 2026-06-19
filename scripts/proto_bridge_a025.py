@@ -20,12 +20,14 @@ v2 fixes both:
 Modes per frame: baseline | open-gated-veto | closed-gated-veto | oracle.
 Usage: python scripts/proto_bridge_a025.py [FRAMES...]
 """
+
 import sys
 import os
 
 import numpy as np
 from scipy import ndimage
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -49,7 +51,9 @@ def block_mean(a, L):
 
 def kron_up(a, L, m, n):
     up = np.kron(a, np.ones((L, L), a.dtype))
-    return np.pad(up, ((0, max(0, m - up.shape[0])), (0, max(0, n - up.shape[1]))), mode="edge")[:m, :n]
+    return np.pad(
+        up, ((0, max(0, m - up.shape[0])), (0, max(0, n - up.shape[1]))), mode="edge"
+    )[:m, :n]
 
 
 def coarse_anchor(wrapped, coh_in, mask, L, close_iters, m, n):
@@ -62,7 +66,9 @@ def coarse_anchor(wrapped, coh_in, mask, L, close_iters, m, n):
     cmask = block_mean(mask.astype(np.float32), L) > 0.4
     if close_iters > 0:
         cmask = ndimage.binary_closing(cmask, iterations=close_iters)
-        ccoh = np.where(cmask, np.maximum(ccoh, 0.05), 0.0).astype(np.float32)  # keep river barely valid
+        ccoh = np.where(cmask, np.maximum(ccoh, 0.05), 0.0).astype(
+            np.float32
+        )  # keep river barely valid
     cunw, _ = ww.unwrap(cig, ccoh, 16.0 * L * L, cmask)
     cunw = np.asarray(cunw, np.float32)
     cR, ncR = ndimage.label(cmask, structure=S4)
@@ -112,7 +118,9 @@ for frame in frames:
                 continue
             if gated and np.mean(cR_up[reg] == ref_cR) < GATE_FRAC:
                 continue
-            rel = np.median((anchor[reg] - unw[reg]) / tau) - med_ref  # RELATIVE to reference
+            rel = (
+                np.median((anchor[reg] - unw[reg]) / tau) - med_ref
+            )  # RELATIVE to reference
             s = int(np.rint(rel))
             if veto and abs(rel - s) > AMB_BAND:
                 nconv += 1
@@ -152,7 +160,10 @@ for frame in frames:
         as_ = int(np.rint(np.median((anchor_o[reg] - unw[reg]) / tau) - aref))
         cohm = float(np.median(coh[(R == l) & mask]))
         diag.append((l, int(Rsizes[l]), os_, as_, round(cohm, 2)))
-    print(f"  [{frame}] big comps (lab,size,ORACLE_shift,ANCHOR_shift,medcoh) ref={ref_lab}: {diag}", flush=True)
+    print(
+        f"  [{frame}] big comps (lab,size,ORACLE_shift,ANCHOR_shift,medcoh) ref={ref_lab}: {diag}",
+        flush=True,
+    )
 
     base = percomp(unw)
     # PRIMARY = open x8 anchor (the closed variant fabricated a micro-bridge that
@@ -167,8 +178,11 @@ for frame in frames:
         flag = f"  <-- REGRESSION {(pc_o-base)*100:+.3f}"
     elif frame == "A_025" and pc_o > base + 1e-9:
         flag = f"  <-- FIXED {(pc_o-base)*100:+.1f}"
-    print(f"{frame}: nR={nR} ncR={ncR_o}  base={base*100:.1f}%  "
-          f"bridged={pc_o*100:.2f}%(n{no},conv{ncv})  oracle={pc_or*100:.1f}%{flag}", flush=True)
+    print(
+        f"{frame}: nR={nR} ncR={ncR_o}  base={base*100:.1f}%  "
+        f"bridged={pc_o*100:.2f}%(n{no},conv{ncv})  oracle={pc_or*100:.1f}%{flag}",
+        flush=True,
+    )
 
     pu = np.where(mask, prod, np.nan)
     vlo, vhi = np.nanpercentile(pu, [2, 98])
@@ -180,9 +194,20 @@ for frame in frames:
 
     fig, ax = plt.subplots(2, 3, figsize=(17, 9))
     v_all = mask & np.isfinite(unw)
-    ambc = np.where(mask, np.rint((u_c - prod) / tau) - np.rint(np.nanmedian(np.rint((u_c[v_all] - prod[v_all]) / tau))), np.nan)
+    ambc = np.where(
+        mask,
+        np.rint((u_c - prod) / tau)
+        - np.rint(np.nanmedian(np.rint((u_c[v_all] - prod[v_all]) / tau))),
+        np.nan,
+    )
     panels = [
-        (np.where(mask, np.log1p(R.astype(float)), np.nan), f"integration comps (nR={nR})", "tab20", None, None),
+        (
+            np.where(mask, np.log1p(R.astype(float)), np.nan),
+            f"integration comps (nR={nR})",
+            "tab20",
+            None,
+            None,
+        ),
         (pu, f"production ({int(prod_cc.max())} cc)", "viridis", vlo, vhi),
         (galign(unw), f"whirlwind baseline {base*100:.1f}%", "viridis", vlo, vhi),
         (galign(anchor_o), f"coarse x{L} anchor (ncR={ncR_o})", "viridis", vlo, vhi),
@@ -191,9 +216,13 @@ for frame in frames:
     ]
     for a, (arr, title, cmap, lo, hi) in zip(ax.ravel(), panels):
         im = a.imshow(arr, cmap=cmap, vmin=lo, vmax=hi)
-        a.set_title(title, fontsize=10); a.axis("off")
+        a.set_title(title, fontsize=10)
+        a.axis("off")
         fig.colorbar(im, ax=a, fraction=0.046, pad=0.02)
-    fig.suptitle(f"{frame}: solver-aware bridging (integration gauge + x{L} anchor + veto)  base {base*100:.1f}% -> {pc_o*100:.2f}% (oracle {pc_or*100:.1f}%)", fontsize=13)
+    fig.suptitle(
+        f"{frame}: solver-aware bridging (integration gauge + x{L} anchor + veto)  base {base*100:.1f}% -> {pc_o*100:.2f}% (oracle {pc_or*100:.1f}%)",
+        fontsize=13,
+    )
     fig.tight_layout()
     out = f"{CACHE}/{frame}_bridge.png"
     fig.savefig(out, dpi=110, bbox_inches="tight")

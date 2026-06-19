@@ -9,6 +9,7 @@ DIFFERENT integration components (river masked -> genuine free gauge to bridge)?
 
 Usage: python scripts/diag_bridge_partition.py [A_025 D_077 A_016 D_074]
 """
+
 import sys
 
 import numpy as np
@@ -73,10 +74,30 @@ for frame in frames:
     err_coh_med = float(np.median(coh[err])) if err.any() else float("nan")
     lowcoh_valid = (mask & (coh < 0.3)).sum() / max(nvalid, 1)
 
-    print(f"\n=== {frame}  shape=({m},{n}) valid={nvalid/(m*n)*100:.1f}% ===", flush=True)
-    print(f"  conncomps ncc={ncc}   integration comps nR={nR}   (cc-within-R max={max_R_per_cc} -> {'OK coarser' if max_R_per_cc==1 else 'VIOLATION'})", flush=True)
-    print(f"  top integration comps (label,size,frac valid): {[(l, s, round(f,3)) for l,s,f in top]}", flush=True)
-    print(f"  error slab: {err_frac*100:.1f}% of valid; dominant in integration comp {dom_err_R} ({dom_err_R_share*100:.0f}% of error); main comp={main_R}", flush=True)
-    print(f"    -> error is {'WITHIN the main integration comp (flow error, NOT a mask-gap gauge)' if dom_err_R==main_R else 'in a SEPARATE integration comp (mask-gap gauge -> formulation applies)'}", flush=True)
-    print(f"  error-region median coherence={err_coh_med:.3f}; valid px coh<0.3 = {lowcoh_valid*100:.1f}%", flush=True)
-    print(f"  production: {n_prod} comps, {straddle} STRADDLE >1 integration comp", flush=True)
+    print(
+        f"\n=== {frame}  shape=({m},{n}) valid={nvalid/(m*n)*100:.1f}% ===", flush=True
+    )
+    print(
+        f"  conncomps ncc={ncc}   integration comps nR={nR}   (cc-within-R max={max_R_per_cc} -> {'OK coarser' if max_R_per_cc==1 else 'VIOLATION'})",
+        flush=True,
+    )
+    print(
+        f"  top integration comps (label,size,frac valid): {[(l, s, round(f,3)) for l,s,f in top]}",
+        flush=True,
+    )
+    print(
+        f"  error slab: {err_frac*100:.1f}% of valid; dominant in integration comp {dom_err_R} ({dom_err_R_share*100:.0f}% of error); main comp={main_R}",
+        flush=True,
+    )
+    print(
+        f"    -> error is {'WITHIN the main integration comp (flow error, NOT a mask-gap gauge)' if dom_err_R==main_R else 'in a SEPARATE integration comp (mask-gap gauge -> formulation applies)'}",
+        flush=True,
+    )
+    print(
+        f"  error-region median coherence={err_coh_med:.3f}; valid px coh<0.3 = {lowcoh_valid*100:.1f}%",
+        flush=True,
+    )
+    print(
+        f"  production: {n_prod} comps, {straddle} STRADDLE >1 integration comp",
+        flush=True,
+    )

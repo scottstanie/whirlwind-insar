@@ -50,4 +50,6 @@ ax.legend()
 fig.tight_layout()
 fig.savefig(OUT, dpi=120, bbox_inches="tight")
 print(f"speed-vs-original figure -> {OUT}")
-print(f"median speedup {np.median(speedup):.1f}x, range {speedup.min():.1f}-{speedup.max():.1f}x")
+print(
+    f"median speedup {np.median(speedup):.1f}x, range {speedup.min():.1f}-{speedup.max():.1f}x"
+)

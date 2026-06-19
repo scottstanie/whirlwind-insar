@@ -97,13 +97,9 @@ def lee_phase_pdf(
 
     term1 = np.empty_like(phi, dtype=np.float64)
     direct = b2 < 0.5
-    term1[direct] = (
-        one_minus_g2**n / TAU * hyp2f1(n, 1.0, 0.5, b2[direct])
-    )
+    term1[direct] = one_minus_g2**n / TAU * hyp2f1(n, 1.0, 0.5, b2[direct])
 
-    log_pref = n * math.log(one_minus_g2) - (n + 0.5) * np.log(
-        one_minus_b2[~direct]
-    )
+    log_pref = n * math.log(one_minus_g2) - (n + 0.5) * np.log(one_minus_b2[~direct])
     term1[~direct] = (
         np.exp(np.clip(log_pref, -745.0, 700.0))
         / TAU
@@ -210,9 +206,7 @@ def slope_error_sigma(sample_corr: float, window_pixels: int) -> float:
         rho += ((-1.0) ** k) * math.exp(min(log_abs, 700.0))
     rho = float(np.clip(rho / nwin, 0.0, 1.0))
 
-    var = rho * PI * PI / 3.0 + (1.0 - rho) * 6.0 / (
-        gamma * nwin * (nwin - 1.0)
-    )
+    var = rho * PI * PI / 3.0 + (1.0 - rho) * 6.0 / (gamma * nwin * (nwin - 1.0))
     return math.sqrt(max(var, 0.0))
 
 
@@ -258,9 +252,9 @@ def default_axes(
     return phase, corr, nlooks
 
 
-def generate_tables(args: argparse.Namespace) -> tuple[
-    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
-]:
+def generate_tables(
+    args: argparse.Namespace,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     phase, corr, nlooks = default_axes(
         args.phase_count, args.corr_count, args.nlooks_count, args.nlooks_max
     )
@@ -352,7 +346,9 @@ def write_rust_bins(
         (out_dir / name).write_bytes(np.ascontiguousarray(arr, dtype="<f4").tobytes())
 
 
-def load_old_tables(compare_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def load_old_tables(
+    compare_dir: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     p0_file = compare_dir / "carballo-pdf-0-spline.npz"
     p1_file = compare_dir / "carballo-pdf-1-spline.npz"
     old0 = np.load(p0_file, allow_pickle=False)

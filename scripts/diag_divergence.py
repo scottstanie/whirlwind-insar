@@ -24,6 +24,7 @@ heavy run, so a layout bug can't masquerade as a solver divergence.
 
 Usage: python scripts/diag_divergence.py D_074
 """
+
 import sys
 import glob
 import time
@@ -47,9 +48,9 @@ def py_costs_to_rust(py_cost, m_phase, n_phase):
     n_h = (m_phase + 1) * n_phase
     assert py_cost.size == 2 * n_v + 2 * n_h, (py_cost.size, 2 * n_v + 2 * n_h)
     up = py_cost[0:n_v]
-    lt = py_cost[n_v:n_v + n_h]
-    dn = py_cost[n_v + n_h:2 * n_v + n_h]
-    rt = py_cost[2 * n_v + n_h:]
+    lt = py_cost[n_v : n_v + n_h]
+    dn = py_cost[n_v + n_h : 2 * n_v + n_h]
+    rt = py_cost[2 * n_v + n_h :]
     return np.ascontiguousarray(np.concatenate([dn, up, rt, lt]).astype(np.int32))
 
 
@@ -58,11 +59,11 @@ def self_test_conversion():
     If the layout conversion were transposed/misordered, a smooth ramp fails."""
     m = n = 48
     yy, xx = np.mgrid[0:m, 0:n]
-    truth = 0.35 * (yy + xx)            # gentle ramp, no residues
+    truth = 0.35 * (yy + xx)  # gentle ramp, no residues
     ig = np.exp(1j * wrap(truth)).astype(np.complex64)
     corr = np.full((m, n), 0.95, np.float32)
     valid = np.ones((m, n), bool)
-    pc = orig_costs(ig, corr, 16.0, ~valid)            # orig wants INVALID mask
+    pc = orig_costs(ig, corr, 16.0, ~valid)  # orig wants INVALID mask
     rc = py_costs_to_rust(np.asarray(pc), m, n)
     u = np.asarray(ww._native.unwrap_linear_ext_costs(ig, valid, rc))
     off = np.round((u - truth) / tau).astype(int)
@@ -75,17 +76,27 @@ def self_test_conversion():
 frame = sys.argv[1]
 self_test_conversion()
 
-h5 = glob.glob(f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5")[0]
+h5 = glob.glob(
+    f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
+)[0]
 base = "/science/LSAR/GUNW/grids/frequencyA/unwrappedInterferogram"
 with h5py.File(h5, "r") as h:
     grp = h[base]
-    pol = sorted(k for k, v in grp.items() if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"})[0]
+    pol = sorted(
+        k
+        for k, v in grp.items()
+        if isinstance(v, h5py.Group) and k.upper() not in {"MASK", "METADATA"}
+    )[0]
     prod_unw = h[f"{base}/{pol}/unwrappedPhase"][()].astype(np.float32)
     coh = h[f"{base}/{pol}/coherenceMagnitude"][()].astype(np.float32)
     prod_cc = h[f"{base}/{pol}/connectedComponents"][()].astype(np.int32)
     mask_arr = h[f"{base}/mask"][()] if "mask" in grp else None
 
-mask = (mask_arr != 255) & ((mask_arr // 100) % 10 == 0) if mask_arr is not None else np.ones(prod_unw.shape, bool)
+mask = (
+    (mask_arr != 255) & ((mask_arr // 100) % 10 == 0)
+    if mask_arr is not None
+    else np.ones(prod_unw.shape, bool)
+)
 mask &= np.isfinite(prod_unw) & np.isfinite(coh)
 wrapped = np.where(mask, wrap(prod_unw), 0.0).astype(np.float32)
 ig = np.exp(1j * wrapped).astype(np.complex64)
@@ -119,8 +130,12 @@ def dcyc(a, b):
 # ----- STAGE 0: residues (boundary-zeroed, as both unwrap()s do) -----
 def bz(r):
     r = r.copy()
-    r[0, :] = 0; r[-1, :] = 0; r[:, 0] = 0; r[:, -1] = 0
+    r[0, :] = 0
+    r[-1, :] = 0
+    r[:, 0] = 0
+    r[:, -1] = 0
     return r
+
 
 # Use the SAME phase array for both so STAGE 0 isolates the residue *algorithm*,
 # not a float wrap difference. `unwrap_linear` internally does `igram.arg()`, so
@@ -129,33 +144,60 @@ phase = np.angle(ig).astype(np.float32)
 r_rust = bz(np.asarray(ww._native.compute_residues(phase)))
 r_orig = bz(np.asarray(orig_residue(phase)))
 res_mism = int((r_rust != r_orig).sum())
-print(f"{frame}: STAGE0 residues  rust_nnz={int((r_rust!=0).sum())} "
-      f"orig_nnz={int((r_orig!=0).sum())}  mismatches={res_mism}", flush=True)
+print(
+    f"{frame}: STAGE0 residues  rust_nnz={int((r_rust!=0).sum())} "
+    f"orig_nnz={int((r_orig!=0).sum())}  mismatches={res_mism}",
+    flush=True,
+)
 
 # ----- build ORIG costs once, convert to Rust layout -----
 t = time.time()
 pc = orig_costs(ig, coh_in, 16.0, ~mask)
 rc = py_costs_to_rust(np.asarray(pc), m_phase, n_phase)
-print(f"{frame}: orig costs built+converted ({time.time()-t:.0f}s) "
-      f"nnz={int((rc!=0).sum())} min={rc.min()} max={rc.max()}", flush=True)
+print(
+    f"{frame}: orig costs built+converted ({time.time()-t:.0f}s) "
+    f"nnz={int((rc!=0).sum())} min={rc.min()} max={rc.max()}",
+    flush=True,
+)
 
 # ----- heavy solves, SEQUENTIAL -----
 results = {}
-t = time.time(); results["ww_orig"] = np.asarray(ww_orig_unwrap(ig, coh_in, 16.0, mask=~mask)); to = time.time()-t
-print(f"{frame}: ww_orig            percomp={percomp(results['ww_orig']):.3f}  ({to:.0f}s)", flush=True)
+t = time.time()
+results["ww_orig"] = np.asarray(ww_orig_unwrap(ig, coh_in, 16.0, mask=~mask))
+to = time.time() - t
+print(
+    f"{frame}: ww_orig            percomp={percomp(results['ww_orig']):.3f}  ({to:.0f}s)",
+    flush=True,
+)
 
-t = time.time(); results["linear"] = np.asarray(ww._native.unwrap_linear(ig, coh_in, 16.0, mask)); tl = time.time()-t
-print(f"{frame}: unwrap_linear      percomp={percomp(results['linear']):.3f}  ({tl:.0f}s)", flush=True)
+t = time.time()
+results["linear"] = np.asarray(ww._native.unwrap_linear(ig, coh_in, 16.0, mask))
+tl = time.time() - t
+print(
+    f"{frame}: unwrap_linear      percomp={percomp(results['linear']):.3f}  ({tl:.0f}s)",
+    flush=True,
+)
 
-t = time.time(); results["ext_orig"] = np.asarray(ww._native.unwrap_linear_ext_costs(ig, mask, rc)); te = time.time()-t
-print(f"{frame}: ext_costs(orig)    percomp={percomp(results['ext_orig']):.3f}  ({te:.0f}s)  "
-      f"<- ORIG cost + RUST solver", flush=True)
+t = time.time()
+results["ext_orig"] = np.asarray(ww._native.unwrap_linear_ext_costs(ig, mask, rc))
+te = time.time() - t
+print(
+    f"{frame}: ext_costs(orig)    percomp={percomp(results['ext_orig']):.3f}  ({te:.0f}s)  "
+    f"<- ORIG cost + RUST solver",
+    flush=True,
+)
 
 # ----- pairwise integer-cycle diffs -----
 print(f"{frame}: --- integer-cycle diffs (nonzero_frac, range) ---", flush=True)
 for a, b in [("linear", "ww_orig"), ("ext_orig", "ww_orig"), ("ext_orig", "linear")]:
     nz, lo, hi = dcyc(results[a], results[b])
-    print(f"{frame}:   {a:9s} vs {b:9s}: nonzero_frac={nz:.3f} range=[{lo:.0f},{hi:.0f}]", flush=True)
+    print(
+        f"{frame}:   {a:9s} vs {b:9s}: nonzero_frac={nz:.3f} range=[{lo:.0f},{hi:.0f}]",
+        flush=True,
+    )
 
-print(f"{frame}: VERDICT GUIDE: ext_orig~=ww_orig => COST differs (rust-parity LUT); "
-      f"ext_orig~=linear => SOLVER differs (tie/SSP/integration)", flush=True)
+print(
+    f"{frame}: VERDICT GUIDE: ext_orig~=ww_orig => COST differs (rust-parity LUT); "
+    f"ext_orig~=linear => SOLVER differs (tie/SSP/integration)",
+    flush=True,
+)

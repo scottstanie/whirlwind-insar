@@ -91,3 +91,14 @@ default-groups = ["test", "bench"]
 
 [tool.uv.sources]
 whirlwind-orig = { path = "../whirlwind" }
+
+[tool.ruff.lint.per-file-ignores]
+# The package initializer intentionally re-exports native symbols after resolving
+# its installed version. The stub mirrors the public `interpolate=` keyword.
+"python/whirlwind/__init__.py" = ["E402", "F401"]
+"python/whirlwind/__init__.pyi" = ["F811"]
+
+# Diagnostic and prototype scripts favor compact, interactive code. Keep Ruff's
+# syntax and undefined-name checks, but do not enforce package-style structure.
+"scripts/**/*.py" = ["E401", "E402", "E731", "E741", "F401", "F541"]
+"experiments/**/*.py" = ["E741"]

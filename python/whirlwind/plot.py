@@ -19,12 +19,20 @@ def save_wrapped_unwrapped_png(
     import matplotlib.pyplot as plt
 
     n_panels = 2 + (cor is not None)
-    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 5), constrained_layout=True)
+    fig, axes = plt.subplots(
+        1, n_panels, figsize=(5 * n_panels, 5), constrained_layout=True
+    )
     if title:
         fig.suptitle(title)
 
     ax = axes[0]
-    im = ax.imshow(wrapped, cmap="twilight_shifted", vmin=-np.pi, vmax=np.pi, interpolation="nearest")
+    im = ax.imshow(
+        wrapped,
+        cmap="twilight_shifted",
+        vmin=-np.pi,
+        vmax=np.pi,
+        interpolation="nearest",
+    )
     ax.set_title("wrapped phase")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
