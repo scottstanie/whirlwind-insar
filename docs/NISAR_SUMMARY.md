@@ -95,6 +95,18 @@ components across thin masked gaps; matching that bridging of *labels* (so
 water-separated slabs share a component id, as on A_016) is the remaining gap and
 is tracked as future work.
 
+**Tuning coverage.** `components_snaphu` is the default in `ww.unwrap`
+(`conncomp_algorithm="snaphu"`) and in the CLI (`--conncomp-algorithm snaphu`).
+By default it labels essentially every reliably unwrapped pixel; production
+SNAPHU leaves more low-coherence pixels as background (label 0). To match that,
+raise `conncomp_reliability` (CLI `--conncomp-reliability`): an edge's reliability
+is about `1e6 / σ²(coherence)`, so the threshold is large and coherence-dependent.
+The guessable way to set it is by a target minimum coherence —
+`whirlwind.conncomp_reliability_from_coherence(γ, nlooks)` (CLI
+`--conncomp-min-coherence`), e.g. `γ=0.3 → ~3e6`. `scripts/sweep_conncomp_reliability.py`
+sweeps the knob and plots labeled fraction and component count against it, with a
+coherence-equivalent top axis (figure + CSV under `nisar-pngs/<date>/`).
+
 ## Runtime and memory
 
 | Engine                         |    Runtime | Peak memory | Notes                                        |

@@ -149,6 +149,29 @@ def cost_threshold_from_cycle_prob(cycle_prob: float) -> int:
     return round(CONNCOMP_COST_SCALE * math.log((1.0 - p) / p))
 
 
+def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> int:
+    """``conncomp_reliability`` threshold that cuts edges below a target coherence.
+
+    The ``conncomp_reliability`` knob is a threshold on each edge's convex-cost
+    reliability, whose units are large and coherence-dependent, so a raw value is
+    hard to guess. This converts a *target minimum coherence* into the equivalent
+    threshold: passing the result as ``conncomp_reliability`` keeps edges whose
+    coherence is roughly above ``coherence`` and drops (labels ``0``) those below.
+
+    A clean edge at coherence ``gamma`` and ``L=nlooks`` looks has reliability
+    about ``COST_SCALE * nshortcycle**2 / sigma2 = 1e6 / sigma2`` with the
+    Just/Bamler phase variance ``sigma2 = (1 - gamma**2) / (2 * L * gamma**2)``,
+    so this returns ``round(1e6 / sigma2(coherence))``. It is an estimate (an edge
+    near a wrap line is less reliable than a clean one at the same coherence), so
+    treat it as a starting point and check the result. ``coherence`` near 0
+    returns a tiny threshold (cut almost nothing); near 1, a huge one (cut almost
+    everything).
+    """
+    g = min(max(coherence, 1e-3), 0.999)
+    sigma2 = (1.0 - g * g) / (2.0 * nlooks * g * g)
+    return round(1.0e6 / sigma2)
+
+
 def unwrap(
     igram: "NDArray[np.complex64]",
     corr: "NDArray[np.float32]",
@@ -273,8 +296,10 @@ def unwrap(
         essentially every reliably unwrapped pixel. Raise it to be more
         conservative: more low-coherence interior edges are cut, so those pixels
         drop to label ``0`` (background). The units scale with coherence, so
-        meaningful values are large (of order 1e6); higher is stricter. Only used
-        when ``conncomp_algorithm="snaphu"``.
+        meaningful values are large (of order 1e6); higher is stricter. To pick a
+        value from a target minimum coherence instead of guessing, use
+        :func:`conncomp_reliability_from_coherence` (e.g. ``coherence=0.3`` ->
+        about 3e6). Only used when ``conncomp_algorithm="snaphu"``.
     cost_threshold : int, default 50
         Connected-component boundary threshold in raw cost units, for the
         ``"linear"`` algorithm only. An edge becomes a boundary when its
@@ -443,6 +468,7 @@ def unwrap(
 __all__ = [
     "bridge_components",
     "compute_residues",
+    "conncomp_reliability_from_coherence",
     "cost_threshold_from_cycle_prob",
     "goldstein",
     "interpolate",

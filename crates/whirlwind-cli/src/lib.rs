@@ -41,6 +41,17 @@ enum OutFormat {
     AltLine,
 }
 
+/// Which connected-component grow to use.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
+enum ConnCompAlgorithm {
+    /// SNAPHU-faithful ambiguity-wiggle on the unwrapped output (tuned by
+    /// `--conncomp-reliability` / `--conncomp-min-coherence`).
+    Snaphu,
+    /// Legacy global coherence-cost grow (tuned by `--cost-threshold` /
+    /// `--conncomp-sigma` / `--conncomp-cycle-prob`).
+    Linear,
+}
+
 fn is_tiff(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -294,6 +305,22 @@ struct Cli {
     /// both `--cost-threshold` and `--conncomp-cycle-prob`.
     #[arg(long)]
     conncomp_sigma: Option<f64>,
+    /// Connected-component algorithm. `snaphu` (default) is the SNAPHU-faithful
+    /// ambiguity-wiggle on the unwrapped output; `linear` is the legacy
+    /// coherence-cost grow (uses --cost-threshold/--conncomp-sigma/-cycle-prob).
+    #[arg(long, value_enum, default_value_t = ConnCompAlgorithm::Snaphu)]
+    conncomp_algorithm: ConnCompAlgorithm,
+    /// Conservativeness of the `snaphu` conncomp: cut an edge when a one-cycle
+    /// flip is no costlier than the achieved flow, i.e. reliability <= this.
+    /// Raise to label fewer (lower-coherence) pixels. Units scale with coherence
+    /// so useful values are large (~1e6); prefer --conncomp-min-coherence.
+    #[arg(long, default_value_t = 0)]
+    conncomp_reliability: i64,
+    /// Set `--conncomp-reliability` from a target minimum coherence (cut edges
+    /// roughly below this coherence). E.g. 0.3 -> ~3e6. Takes precedence over
+    /// `--conncomp-reliability`. Only used by the `snaphu` algorithm.
+    #[arg(long)]
+    conncomp_min_coherence: Option<f64>,
     /// output unwrapped phase; format chosen by --out-format (default:
     /// by extension)
     #[arg(long)]
@@ -380,6 +407,9 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         cost_threshold,
         conncomp_cycle_prob,
         conncomp_sigma,
+        conncomp_algorithm,
+        conncomp_reliability,
+        conncomp_min_coherence,
         out,
     } = args;
     let bridge = !no_bridge;
@@ -569,43 +599,19 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         }
     }
 
-    // Unwrap. Unless --no-conncomp is set, use the variant that also grows
-    // components.
-    // `downsample` routes through the coherent-downlook-first path (multilook).
-    let (unw_solve, cc_raster) = if conncomp_out.is_some() {
-        let params = whirlwind_core::ConnCompParams {
-            cost_threshold,
-            min_size_px,
-            // `--min-component-frac` only raises the absolute px floor on very
-            // large frames.
-            min_size_frac: min_component_frac,
-            max_ncomps,
-        };
-        // Single-tile linear MCF phase + global (solve-free) conncomp;
-        // tile_size=0 means whole-image single-tile (does NOT auto-tile).
-        let (u, c) = whirlwind_core::unwrap_coherence_with_components(
-            ig_solve.view(),
-            co.view(),
-            nlooks,
-            mk.as_ref().map(|m| m.view()),
-            0,
-            0,
-            downsample,
-            params,
-        )?;
-        (u, Some(c))
-    } else {
-        let u = whirlwind_core::unwrap_coherence(
-            ig_solve.view(),
-            co.view(),
-            nlooks,
-            mk.as_ref().map(|m| m.view()),
-            0,
-            0,
-            downsample,
-        )?;
-        (u, None)
-    };
+    // Unwrap (phase only). `downsample` routes through the coherent-downlook-
+    // first path (multilook); tile_size=0 is whole-image single-tile (does NOT
+    // auto-tile). Connected components are grown AFTER the K-transfer + bridge
+    // below, on the FINAL phase, so they reflect the written output.
+    let unw_solve = whirlwind_core::unwrap_coherence(
+        ig_solve.view(),
+        co.view(),
+        nlooks,
+        mk.as_ref().map(|m| m.view()),
+        0,
+        0,
+        downsample,
+    )?;
 
     // K-transfer to original wrapped phase (dolphin PR #364 convention).
     // Rounding against `ph` (the original, *unfiltered* phase) avoids the
@@ -644,6 +650,61 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
             whirlwind_core::bridge::DEFAULT_MAX_BOUNDARY,
         );
     }
+
+    // Connected components on the FINAL phase (unless --no-conncomp). The
+    // default `snaphu` grow is the convex-cost ambiguity wiggle on the
+    // unwrapped output; `linear` is the legacy global coherence-cost grow.
+    let cc_raster = if conncomp_out.is_some() {
+        let c = match conncomp_algorithm {
+            ConnCompAlgorithm::Snaphu => {
+                // `--conncomp-min-coherence` (cut edges below that coherence)
+                // wins over the raw `--conncomp-reliability`. The conversion
+                // mirrors whirlwind.conncomp_reliability_from_coherence:
+                // reliability = COST_SCALE * NSHORTCYCLE^2 / sigma2 = 1e6 / sigma2
+                // with the Just/Bamler variance sigma2 = (1-g^2)/(2 L g^2).
+                let reliability = if let Some(gamma) = conncomp_min_coherence {
+                    let g = (gamma as f32).clamp(1e-3, 0.999);
+                    let sigma2 = (1.0 - g * g) / (2.0 * nlooks * g * g);
+                    (1.0e6_f64 / sigma2 as f64).round() as i64
+                } else {
+                    conncomp_reliability
+                };
+                let params = whirlwind_core::SnaphuConnCompParams {
+                    reliability_threshold: reliability,
+                    min_size_px,
+                    min_size_frac: min_component_frac,
+                    max_ncomps,
+                };
+                whirlwind_core::components_snaphu(
+                    igram_orig.view(),
+                    co.view(),
+                    nlooks,
+                    unw.view(),
+                    mk.as_ref().map(|m| m.view()),
+                    params,
+                )?
+            }
+            ConnCompAlgorithm::Linear => {
+                let params = whirlwind_core::ConnCompParams {
+                    cost_threshold,
+                    min_size_px,
+                    // `--min-component-frac` only raises the absolute px floor.
+                    min_size_frac: min_component_frac,
+                    max_ncomps,
+                };
+                whirlwind_core::components_only(
+                    igram_orig.view(),
+                    co.view(),
+                    nlooks,
+                    mk.as_ref().map(|m| m.view()),
+                    params,
+                )?
+            }
+        };
+        Some(c)
+    } else {
+        None
+    };
 
     // ---- outputs --------------------------------------------------------
     match ofmt {
