@@ -1,0 +1,8 @@
+# Pin the Rust toolchain so local builds, the pre-commit hook, and CI all use
+# the SAME rustfmt/clippy. CI uses dtolnay/rust-toolchain, but every `cargo`
+# invocation goes through rustup, which reads this file and uses the pinned
+# version (auto-installing it if missing) -- so formatting can't drift between
+# whoever last ran `cargo fmt` and what CI checks. Bump deliberately.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

@@ -99,13 +99,15 @@ is tracked as future work.
 (`conncomp_algorithm="snaphu"`) and in the CLI (`--conncomp-algorithm snaphu`).
 By default it labels essentially every reliably unwrapped pixel; production
 SNAPHU leaves more low-coherence pixels as background (label 0). To match that,
-raise `conncomp_reliability` (CLI `--conncomp-reliability`): an edge's reliability
-is about `1e6 / σ²(coherence)`, so the threshold is large and coherence-dependent.
-The guessable way to set it is by a target minimum coherence —
-`whirlwind.conncomp_reliability_from_coherence(γ, nlooks)` (CLI
-`--conncomp-min-coherence`), e.g. `γ=0.3 → ~3e6`. `scripts/sweep_conncomp_reliability.py`
-sweeps the knob and plots labeled fraction and component count against it, with a
-coherence-equivalent top axis (figure + CSV under `nisar-pngs/<date>/`).
+raise `conncomp_reliability` (CLI `--conncomp-reliability`). It is in
+inverse-variance (`1/σ²`) units, so values are small: an edge of coherence γ is
+cut roughly when the value exceeds `1/σ²(γ)`. The guessable way to set it is by a
+target minimum coherence — `whirlwind.conncomp_reliability_from_coherence(γ, nlooks)`
+(CLI `--conncomp-min-coherence`), e.g. `γ=0.3 → ~3.2`.
+`scripts/sweep_conncomp_reliability.py` sweeps the knob and plots labeled fraction
+and component count against it (with a coherence-equivalent top axis), and writes
+per-frame conncomp label images across the sweep (figures + CSV under
+`nisar-pngs/<date>/`).
 
 ## Runtime and memory
 

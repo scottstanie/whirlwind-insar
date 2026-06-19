@@ -1,0 +1,37 @@
+# Pre-commit hooks. One-time setup:
+#   pipx install pre-commit   (or: uv tool install pre-commit / pip install)
+#   pre-commit install
+# After that, `git commit` auto-runs these. Run on everything once with:
+#   pre-commit run --all-files
+#
+# The cargo-fmt hook is the one that would have caught the CI failure: it formats
+# Rust with the rust-toolchain.toml-pinned rustfmt before each commit.
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff           # lint Python (scripts/, python/)
+      - id: ruff-format    # format Python
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files

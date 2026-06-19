@@ -27,10 +27,10 @@ from ._native import (
 )
 
 def cost_threshold_from_cycle_prob(cycle_prob: float) -> int: ...
-def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> int:
-    """``conncomp_reliability`` threshold that cuts conncomp edges below a target
-    coherence (``round(1e6 / sigma2(coherence))``). A guessable way to set the
-    knob; see the full docstring in ``whirlwind/__init__.py``."""
+def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> float:
+    """``conncomp_reliability`` value (in 1/sigma2 units) that cuts conncomp edges
+    below a target coherence (``1 / sigma2(coherence)``). A guessable way to set
+    the knob; see the full docstring in ``whirlwind/__init__.py``."""
 
 def unwrap(
     igram: NDArray[np.complex64],
@@ -47,7 +47,7 @@ def unwrap(
     interp_min_radius: int = ...,
     interp_alpha: float = ...,
     conncomp_algorithm: str = ...,
-    conncomp_reliability: int = ...,
+    conncomp_reliability: float = ...,
     cost_threshold: int = ...,
     conncomp_cycle_prob: float | None = ...,
     conncomp_sigma: float | None = ...,

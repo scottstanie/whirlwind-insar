@@ -152,20 +152,21 @@ class TestUnwrap:
         igram = np.exp(1j * phase).astype(np.complex64)
         corr = np.ones(igram.shape, dtype=np.float32) * 0.95
 
-        _u, cc0 = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=0)
-        _u, cc_hi = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=10**18)
+        _u, cc0 = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=0.0)
+        _u, cc_hi = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=1e12)
         assert cc0.max() >= 1  # default labels the coherent ramp
         assert cc_hi.max() == 0  # everything cut -> nothing survives the floor
 
     def test_conncomp_reliability_from_coherence(self):
         """The coherence->reliability helper is monotonic and matches the
-        documented `1e6 / sigma2(gamma)` mapping (so a user can pick a value)."""
+        documented `1 / sigma2(gamma)` mapping (so a user can pick a value)."""
         f = ww.conncomp_reliability_from_coherence
-        # Higher coherence -> larger threshold (stricter): monotone increasing.
+        # Higher coherence -> larger value (stricter): monotone increasing.
         vals = [f(g, 16.0) for g in (0.1, 0.2, 0.3, 0.5, 0.7)]
         assert vals == sorted(vals)
-        # gamma=0.3, L=16: sigma2=(1-0.09)/(2*16*0.09)=0.31597 -> ~3.165e6.
-        assert f(0.3, 16.0) == round(1.0e6 / ((1 - 0.3**2) / (2 * 16.0 * 0.3**2)))
+        # gamma=0.3, L=16: sigma2=(1-0.09)/(2*16*0.09)=0.31597 -> 1/sigma2 ~= 3.16.
+        assert f(0.3, 16.0) == 1.0 / ((1 - 0.3**2) / (2 * 16.0 * 0.3**2))
+        assert abs(f(0.3, 16.0) - 3.165) < 0.01
 
 
 def _k_correct(unw, truth):

@@ -149,27 +149,34 @@ def cost_threshold_from_cycle_prob(cycle_prob: float) -> int:
     return round(CONNCOMP_COST_SCALE * math.log((1.0 - p) / p))
 
 
-def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> int:
-    """``conncomp_reliability`` threshold that cuts edges below a target coherence.
+# Internal scale relating the user-facing ``conncomp_reliability`` (in
+# inverse-variance ``1 / sigma2`` units, so values are small and easy to type) to
+# the native solver's raw reliability threshold. A clean edge's raw reliability is
+# ``COST_SCALE * nshortcycle**2 / sigma2`` (= this constant / sigma2), so dividing
+# by it puts the knob in ``1 / sigma2`` units.
+CONNCOMP_RELIABILITY_UNIT = 100 * 100**2  # COST_SCALE * nshortcycle**2 = 1_000_000
 
-    The ``conncomp_reliability`` knob is a threshold on each edge's convex-cost
-    reliability, whose units are large and coherence-dependent, so a raw value is
-    hard to guess. This converts a *target minimum coherence* into the equivalent
-    threshold: passing the result as ``conncomp_reliability`` keeps edges whose
-    coherence is roughly above ``coherence`` and drops (labels ``0``) those below.
 
-    A clean edge at coherence ``gamma`` and ``L=nlooks`` looks has reliability
-    about ``COST_SCALE * nshortcycle**2 / sigma2 = 1e6 / sigma2`` with the
-    Just/Bamler phase variance ``sigma2 = (1 - gamma**2) / (2 * L * gamma**2)``,
-    so this returns ``round(1e6 / sigma2(coherence))``. It is an estimate (an edge
-    near a wrap line is less reliable than a clean one at the same coherence), so
-    treat it as a starting point and check the result. ``coherence`` near 0
-    returns a tiny threshold (cut almost nothing); near 1, a huge one (cut almost
-    everything).
+def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> float:
+    """``conncomp_reliability`` value that cuts conncomp edges below a target coherence.
+
+    A guessable way to set ``conncomp_reliability``: pass a *target minimum
+    coherence* and use the result, and the connected components keep edges whose
+    coherence is roughly above ``coherence`` and drop (label ``0``) those below.
+
+    ``conncomp_reliability`` is in inverse-variance (``1 / sigma2``) units, and a
+    clean edge at coherence ``gamma`` and ``L=nlooks`` looks has reliability
+    ``1 / sigma2(gamma)`` with the Just/Bamler phase variance
+    ``sigma2 = (1 - gamma**2) / (2 * L * gamma**2)`` -- so this returns
+    ``1 / sigma2(coherence)``. It is an estimate (an edge near a wrap line is less
+    reliable than a clean one at the same coherence), so treat it as a starting
+    point and check the result. ``coherence`` near 0 returns a tiny value (cut
+    almost nothing); near 1, a large one (cut almost everything). Typical values
+    are small, e.g. ``gamma=0.3 -> ~3.2``, ``gamma=0.5 -> ~11``.
     """
     g = min(max(coherence, 1e-3), 0.999)
     sigma2 = (1.0 - g * g) / (2.0 * nlooks * g * g)
-    return round(1.0e6 / sigma2)
+    return 1.0 / sigma2
 
 
 def unwrap(
@@ -187,7 +194,7 @@ def unwrap(
     interp_min_radius: int = 0,
     interp_alpha: float = 0.75,
     conncomp_algorithm: str = "snaphu",
-    conncomp_reliability: int = 0,
+    conncomp_reliability: float = 0.0,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -287,19 +294,18 @@ def unwrap(
         ``conncomp_reliability``. ``"linear"`` is the older global
         coherence-cost grow, tuned by ``cost_threshold`` / ``conncomp_sigma`` /
         ``conncomp_cycle_prob``.
-    conncomp_reliability : int, default 0
-        Conservativeness knob for the default ("snaphu") connected components. An
-        edge becomes a component boundary when a one-cycle ambiguity flip across
-        it is no more expensive than the achieved flow, i.e. when
-        ``min(poscost, negcost) <= conncomp_reliability`` in the convex smooth
-        cost's units (``weight·nshortcycle²``). The default of ``0`` labels
-        essentially every reliably unwrapped pixel. Raise it to be more
-        conservative: more low-coherence interior edges are cut, so those pixels
-        drop to label ``0`` (background). The units scale with coherence, so
-        meaningful values are large (of order 1e6); higher is stricter. To pick a
-        value from a target minimum coherence instead of guessing, use
+    conncomp_reliability : float, default 0.0
+        Conservativeness knob for the default ("snaphu") connected components, in
+        inverse-variance (``1 / sigma2``) units, so values are small. An edge
+        becomes a component boundary when a one-cycle ambiguity flip across it is
+        no more expensive than the achieved flow; an edge of coherence ``gamma``
+        is cut roughly when ``conncomp_reliability`` exceeds ``1 / sigma2(gamma)``.
+        The default of ``0`` labels essentially every reliably unwrapped pixel.
+        Raise it to be more conservative: more low-coherence interior edges are
+        cut, so those pixels drop to label ``0`` (background). Typical values are
+        a few to a few tens. To pick one from a target minimum coherence, use
         :func:`conncomp_reliability_from_coherence` (e.g. ``coherence=0.3`` ->
-        about 3e6). Only used when ``conncomp_algorithm="snaphu"``.
+        about 3.2). Only used when ``conncomp_algorithm="snaphu"``.
     cost_threshold : int, default 50
         Connected-component boundary threshold in raw cost units, for the
         ``"linear"`` algorithm only. An edge becomes a boundary when its
@@ -434,13 +440,16 @@ def unwrap(
     # but using the final phase keeps it unambiguous. "linear" returns the legacy
     # coherence-cost grow already computed above.
     if conncomp_algorithm == "snaphu":
+        # The public knob is in 1/sigma2 units; the native grow takes the raw
+        # convex-cost reliability threshold (this * COST_SCALE * nshortcycle**2).
+        reliability_raw = round(conncomp_reliability * CONNCOMP_RELIABILITY_UNIT)
         cc = components_snaphu(
             igram,
             corr,
             nlooks,
             unw,
             mask,
-            conncomp_reliability,
+            reliability_raw,
             min_size_px,
             max_ncomps,
         )

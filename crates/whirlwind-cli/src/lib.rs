@@ -310,14 +310,15 @@ struct Cli {
     /// coherence-cost grow (uses --cost-threshold/--conncomp-sigma/-cycle-prob).
     #[arg(long, value_enum, default_value_t = ConnCompAlgorithm::Snaphu)]
     conncomp_algorithm: ConnCompAlgorithm,
-    /// Conservativeness of the `snaphu` conncomp: cut an edge when a one-cycle
-    /// flip is no costlier than the achieved flow, i.e. reliability <= this.
-    /// Raise to label fewer (lower-coherence) pixels. Units scale with coherence
-    /// so useful values are large (~1e6); prefer --conncomp-min-coherence.
-    #[arg(long, default_value_t = 0)]
-    conncomp_reliability: i64,
+    /// Conservativeness of the `snaphu` conncomp, in inverse-variance
+    /// (1/sigma^2) units so values are small. Raise to label fewer
+    /// (lower-coherence) pixels; an edge of coherence g is cut when this exceeds
+    /// ~1/sigma^2(g). Typical values a few to a few tens; prefer
+    /// --conncomp-min-coherence.
+    #[arg(long, default_value_t = 0.0)]
+    conncomp_reliability: f64,
     /// Set `--conncomp-reliability` from a target minimum coherence (cut edges
-    /// roughly below this coherence). E.g. 0.3 -> ~3e6. Takes precedence over
+    /// roughly below this coherence). E.g. 0.3 -> ~3.2. Takes precedence over
     /// `--conncomp-reliability`. Only used by the `snaphu` algorithm.
     #[arg(long)]
     conncomp_min_coherence: Option<f64>,
@@ -657,18 +658,20 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
     let cc_raster = if conncomp_out.is_some() {
         let c = match conncomp_algorithm {
             ConnCompAlgorithm::Snaphu => {
-                // `--conncomp-min-coherence` (cut edges below that coherence)
-                // wins over the raw `--conncomp-reliability`. The conversion
-                // mirrors whirlwind.conncomp_reliability_from_coherence:
-                // reliability = COST_SCALE * NSHORTCYCLE^2 / sigma2 = 1e6 / sigma2
-                // with the Just/Bamler variance sigma2 = (1-g^2)/(2 L g^2).
-                let reliability = if let Some(gamma) = conncomp_min_coherence {
-                    let g = (gamma as f32).clamp(1e-3, 0.999);
-                    let sigma2 = (1.0 - g * g) / (2.0 * nlooks * g * g);
-                    (1.0e6_f64 / sigma2 as f64).round() as i64
+                // Both knobs are in inverse-variance (1/sigma^2) units, matching
+                // whirlwind.conncomp_reliability_from_coherence. --conncomp-min-
+                // coherence (cut edges below that coherence -> 1/sigma^2(g)) wins
+                // over the raw --conncomp-reliability. The native grow wants the
+                // raw convex-cost threshold, = scaled * COST_SCALE * NSHORTCYCLE^2.
+                const RELIABILITY_UNIT: f64 = 100.0 * 100.0 * 100.0; // 1e6
+                let scaled = if let Some(gamma) = conncomp_min_coherence {
+                    let g = gamma.clamp(1e-3, 0.999);
+                    let sigma2 = (1.0 - g * g) / (2.0 * nlooks as f64 * g * g);
+                    1.0 / sigma2
                 } else {
                     conncomp_reliability
                 };
+                let reliability = (scaled * RELIABILITY_UNIT).round() as i64;
                 let params = whirlwind_core::SnaphuConnCompParams {
                     reliability_threshold: reliability,
                     min_size_px,
