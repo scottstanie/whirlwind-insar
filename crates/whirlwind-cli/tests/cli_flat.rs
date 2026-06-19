@@ -173,7 +173,7 @@ fn flat_complex_and_cor_layouts_match_tiff() {
     for cor_file in [&cor_flat, &cor_rmg, &cor_bip, &cor_bsq] {
         let out = dir.join("out.tif");
         run(&[
-                "--ifg",
+            "--ifg",
             int.to_str().unwrap(),
             "--cols",
             "40",

@@ -118,6 +118,40 @@ def unwrap_sparse(
     edges come back as ``NaN`` in the output.
     """
 
+def components_snaphu(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float,
+    unwrapped: NDArray[np.float32],
+    mask: NDArray[np.bool_] | None = ...,
+    reliability_threshold: int = ...,
+    min_size_px: int = ...,
+    max_ncomps: int = ...,
+) -> NDArray[np.uint32]:
+    """SNAPHU-faithful connected components via the convex-cost ambiguity wiggle.
+
+    Reproduces SNAPHU's ``GrowConnCompsMask``: recovers each pixel edge's achieved
+    2π ambiguity from the ``unwrapped`` output, perturbs it ±1 against the convex
+    smooth cost, and cuts where ``min(poscost, negcost) <= reliability_threshold``.
+    Unlike the linear-cost components returned by :func:`whirlwind.unwrap`, this
+    keys off the unwrapped phase OUTPUT (not the solved network), so it composes
+    with any phase path - call it after :func:`whirlwind.unwrap`.
+
+    Water/invalid pixels (``mask`` False or non-finite ``unwrapped``) are cut and
+    stay label 0. ``reliability_threshold=0`` (default) is the calibration-free
+    half-cycle-tie test; raise it to grow fewer/larger components. uint32 labels,
+    0 = background, renumbered 1..=K by size, capped at ``max_ncomps``.
+    """
+
+def _unwrap_with_costs(
+    igram: NDArray[np.complex64],
+    costs: NDArray[np.int32],
+    mask: NDArray[np.bool_] | None = ...,
+) -> NDArray[np.float32]:
+    """Whole-image MCF unwrap with caller-supplied integer arc costs (testing /
+    research). ``costs`` is packed in the same arc-id order as
+    ``whirlwind_core::cost::compute_carballo_costs`` returns."""
+
 def compute_residues(wrapped_phase: NDArray[np.float32]) -> NDArray[np.int32]:
     """Compute the integer residue grid from a wrapped-phase array."""
 

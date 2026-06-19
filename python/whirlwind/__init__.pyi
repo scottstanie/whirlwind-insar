@@ -26,6 +26,12 @@ from ._native import (
     wrap_phase as wrap_phase,
 )
 
+def cost_threshold_from_cycle_prob(cycle_prob: float) -> int: ...
+def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> float:
+    """``conncomp_reliability`` value (in 1/sigma2 units) that cuts conncomp edges
+    below a target coherence (``1 / sigma2(coherence)``). A guessable way to set
+    the knob; see the full docstring in ``whirlwind/__init__.py``."""
+
 def unwrap(
     igram: NDArray[np.complex64],
     corr: NDArray[np.float32],
@@ -40,6 +46,8 @@ def unwrap(
     interp_max_radius: int = ...,
     interp_min_radius: int = ...,
     interp_alpha: float = ...,
+    conncomp_algorithm: str = ...,
+    conncomp_reliability: float = ...,
     cost_threshold: int = ...,
     conncomp_cycle_prob: float | None = ...,
     conncomp_sigma: float | None = ...,
@@ -52,8 +60,9 @@ def unwrap(
 
     The main entry point: an exact MCF solver (SNAPHU-comparable quality, faster)
     plus a default-on ``bridge`` post-pass that re-levels mask-disconnected
-    regions. See the full docstring in ``whirlwind/__init__.py`` for the
-    connected-component knobs (``cost_threshold`` / ``conncomp_sigma`` /
-    ``conncomp_cycle_prob``) and other parameters.
+    regions. Connected components default to the SNAPHU-faithful
+    ``conncomp_algorithm="snaphu"`` grow, tuned by ``conncomp_reliability``
+    (raise to label fewer, lower-coherence pixels). See the full docstring in
+    ``whirlwind/__init__.py`` for all parameters.
     """
 

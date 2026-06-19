@@ -92,3 +92,32 @@ Reading it:
 ```bash
 python scripts/sweep_conncomp_knobs.py A_018
 ```
+
+## Alternate: SNAPHU "ambiguity wiggle" components (experimental)
+
+The default component grower cuts an edge by its raw **linear** Carballo cost.
+That is the correct collapse of SNAPHU's reliability test only because the
+default cost is linear (no curvature). SNAPHU's `GrowConnCompsMask` actually
+works on the **convex** (quadratic) cost `c_e(k) = w_e·(k·100 − O_e)²` and rates
+each edge by perturbing the achieved integer ambiguity `k` by ±1:
+
+```text
+poscost = c_e(k+1) − c_e(k)    negcost = c_e(k−1) − c_e(k)
+reliability_e = min(poscost, negcost)
+```
+
+An edge whose unwrap sits deep in a cost well (bumping the ambiguity either way
+is expensive) is *reliable*; one sitting near a half-cycle tie — or whose output
+flow is on the wrong side of the cost minimum entirely — has small or negative
+reliability and becomes a boundary.
+
+`whirlwind_core::components_snaphu` / `conncomp::grow_components_snaphu`
+implement this. Like `components_only` they take only **correlation + output**
+(the offsets/weights come from `compute_snaphu_smooth_costs`, the ambiguity `k`
+is recovered from the unwrapped phase), so they need no solved MCF network and
+compose with any phase path. The threshold (`reliability_threshold`,
+[`SnaphuConnCompParams`]) lives in convex-cost units (`weight·nshortcycle²`),
+which scale with coherence; the physical default of `0` cuts an edge iff a ±1
+slip is no more expensive than the achieved flow (the unwrap is at/past a tie),
+and needs no per-scene calibration. This path is still being validated against
+production SNAPHU component maps — treat the threshold as needing a sweep.
