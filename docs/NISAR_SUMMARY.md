@@ -37,6 +37,64 @@ The quality number is per-connected-component 2pi ambiguity agreement with the p
 
 The full per-frame table with runtime and memory is in [nisar_4way_results.csv](nisar_4way_results.csv).
 
+## Connected components
+
+The phase agreement above is the headline; the connected-component (conncomp)
+labels are a separate question that the NISAR team asked us to tighten up. Three
+points, with the per-frame numbers in the table below.
+
+**Provenance of the "SNAPHU" conncomps.** The reference conncomp we plot is the
+GUNW `connectedComponents` dataset read straight out of the product HDF5. NISAR
+production unwrapping *is* SNAPHU (`cost=smooth`, `init=mcf`), so that layer is
+the authoritative SNAPHU result — it is **not** a re-run of SNAPHU on our side.
+(We do have a separate tophu/SNAPHU re-run for the speed/memory comparison, in
+`scripts/tophu_compare.py --save-dir`, but it never feeds the comparison
+figures.)
+
+**Water is masked before the conncomp grows.** The GUNW `mask` water flag is
+folded into the valid mask (`water_only_mask`), every conncomp edge that touches
+a masked pixel is cut, and masked pixels stay label 0. So water never joins or
+splinters a component.
+
+**A SNAPHU-faithful conncomp path that stops the splintering.** whirlwind's
+original conncomp (`components_only`) cuts an edge by its raw linear coherence
+cost, which over-segments low-coherence interiors into many tiny components. The
+new `components_snaphu` reproduces SNAPHU's `GrowConnCompsMask` directly: it
+recovers each edge's achieved 2π ambiguity from the *unwrapped phase output* and
+cuts only where a ±1-cycle "wiggle" against the convex smooth cost is no more
+expensive than the achieved flow (`min(poscost, negcost) <= threshold`). It needs
+only correlation + the unwrapped output, so it composes with any phase path. The
+calibration-free default (`reliability_threshold=0`, `min_size_px=100`) tracks the
+production component count closely; the threshold barely moves the partition from
+0 to 5e4, so no per-scene tuning is needed.
+
+| Frame | Track | per-comp match % | production SNAPHU | whirlwind old (linear) | whirlwind new (SNAPHU-faithful) |
+| ----- | ----: | ---------------: | ----------------: | ---------------------: | ------------------------------: |
+| A_013 |     5 |            100.0 |                 1 |                      1 |                               1 |
+| A_016 |     5 |            100.0 |                 3 |                      8 |                               8 |
+| A_018 |     5 |            100.0 |                 1 |                     69 |                               3 |
+| A_020 |     5 |             99.8 |                 1 |                      1 |                               1 |
+| A_022 |     5 |            100.0 |                 1 |                      2 |                               1 |
+| A_025 |     5 |            100.0 |                 2 |                     41 |                               3 |
+| A_028 |     5 |            100.0 |                 1 |                     36 |                               2 |
+| A_030 |     5 |            100.0 |                 3 |                    230 |                               3 |
+| A_035 |     6 |            100.0 |                 2 |                    119 |                               5 |
+| D_074 |     5 |             98.8 |                 1 |                     45 |                               2 |
+| D_075 |     5 |             88.2 |                 1 |                     64 |                               3 |
+| D_077 |     5 |             99.5 |                 2 |                     46 |                               1 |
+| D_078 |     5 |             99.8 |                 1 |                      4 |                               1 |
+
+The new path collapses the splinter (A_030 230→3, A_035 119→5, A_018 69→3,
+D_075 64→3, D_077 46→1) to component counts close to production SNAPHU, with the
+phase match unchanged. The one residual is A_016, a heavily water-fragmented
+coastal scene where genuinely disconnected islands stay separate components
+(8 vs production's 3); the phase still matches at 100%.
+
+The full SNAPHU `GrowConnCompsMask` would additionally re-level and re-grow
+components across thin masked gaps; matching that bridging of *labels* (so
+water-separated slabs share a component id, as on A_016) is the remaining gap and
+is tracked as future work.
+
 ## Runtime and memory
 
 | Engine                         |    Runtime | Peak memory | Notes                                        |
@@ -51,9 +109,40 @@ Memory note: the SNAPHU tiled numbers are peak RSS summed over the whole process
 
 ## Reproduce
 
-- 4-way sweep: `scripts/sweep_all_unwrappers.sh`
-- Per-frame 6-panel comparisons: `scripts/plot_nisar_per_frame.py`
-- Headline figure: `scripts/plot_nisar_summary.py`
+The NISAR comparison runs in two stages. **Inputs:** the 13 GUNW `.h5` products
+(`H5DIR` in the scripts); **stage-1 cache:** per-frame `<frame>_panels.npz`
+arrays (`CACHE_DIR`); **outputs:** the figures below.
+
+1. **Stage 1 — unwrap each frame (heavy, once).** `scripts/plot_nisar_per_frame.py`
+   runs the default `ww.unwrap` on every GUNW frame, scores per-component match,
+   writes a 6-panel figure, and caches `<frame>_panels.npz`
+   (`wrapped, coh, mask, prod_unw, prod_cc, ww_unw, ww_cc`) for reuse. Heavy
+   unwraps run strictly one at a time (laptop memory limit).
+2. **Stage 2 — conncomp comparison (fast, re-runnable).**
+   `scripts/nisar_conncomp_compare.py` is the entry point for the figures the
+   NISAR team reviews. It reads the stage-1 cache, computes the new
+   SNAPHU-faithful conncomp (`components_snaphu`), and writes one 8-panel
+   figure per frame plus a `conncomp_summary.csv` into
+   `./nisar-pngs/<YYYY-MM-DD>/`. No re-unwrapping needed; pass `--reunwrap` to
+   force stage 1 for a frame whose cache is missing.
+
+   ```
+   .venv/bin/python scripts/nisar_conncomp_compare.py            # all 13 frames
+   .venv/bin/python scripts/nisar_conncomp_compare.py A_016 D_077 # a subset
+   ```
+
+   Needs a whirlwind build that exports `components_snaphu`:
+   ```
+   RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup" \
+       cargo build --release -p whirlwind-py
+   cp target/release/lib_native.dylib python/whirlwind/_native.abi3.so
+   ```
+
+Other scripts:
+
+- 4-way sweep (whirlwind / SNAPHU / PHASS / ICU, for the speed/memory table):
+  `scripts/sweep_all_unwrappers.sh` (uses `scripts/tophu_compare.py`).
+- Headline summary figure: `scripts/plot_nisar_summary.py`.
 
 See [Algorithm notes](ALGORITHM.md) for how the unwrapper works,
 [Why SNAPHU/PHASS differ](SNAPHU_PHASS_SPEED.md) for the runtime interpretation,

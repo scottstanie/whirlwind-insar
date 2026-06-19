@@ -32,7 +32,12 @@ from ._native import (
     unwrap_sparse,
     wrap_phase,
 )
-from ._native import _unwrap_native, _unwrap_with_costs, label_components
+from ._native import (
+    _unwrap_native,
+    _unwrap_with_costs,
+    components_snaphu,
+    label_components,
+)
 
 # `interpolate` is re-exported above as the public native binding. Alias it so
 # the `interpolate=` keyword argument inside unwrap() (which shadows the name in
@@ -158,6 +163,8 @@ def unwrap(
     interp_max_radius: int = 51,
     interp_min_radius: int = 0,
     interp_alpha: float = 0.75,
+    conncomp_algorithm: str = "snaphu",
+    conncomp_reliability: int = 0,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -175,7 +182,10 @@ def unwrap(
     The ``conncomp`` output labels regions believed to be unwrapped
     self-consistently, with one positive integer per region and ``0`` for
     background or dropped pixels, analogous to SNAPHU's connected components.
-    They are grown globally from the coherence cost.
+    By default (``conncomp_algorithm="snaphu"``) they are grown by the
+    SNAPHU-faithful ambiguity-wiggle reliability test on the unwrapped phase
+    output (reproducing SNAPHU's ``GrowConnCompsMask``). Pass
+    ``conncomp_algorithm="linear"`` for the older global coherence-cost grow.
 
     A fast default post-pass (``bridge``) repairs the relative 2π level of
     regions that the valid mask splits apart, such as land slabs separated by a
@@ -247,27 +257,46 @@ def unwrap(
         preserved.
     goldstein_psize : int, default 64
         Goldstein FFT patch size (only used when ``goldstein_alpha > 0``).
+    conncomp_algorithm : {"snaphu", "linear"}, default "snaphu"
+        Which connected-component grow to use. ``"snaphu"`` (default) is the
+        SNAPHU-faithful ambiguity-wiggle on the unwrapped output (see
+        :func:`whirlwind._native.components_snaphu`), tuned by
+        ``conncomp_reliability``. ``"linear"`` is the older global
+        coherence-cost grow, tuned by ``cost_threshold`` / ``conncomp_sigma`` /
+        ``conncomp_cycle_prob``.
+    conncomp_reliability : int, default 0
+        Conservativeness knob for the default ("snaphu") connected components. An
+        edge becomes a component boundary when a one-cycle ambiguity flip across
+        it is no more expensive than the achieved flow, i.e. when
+        ``min(poscost, negcost) <= conncomp_reliability`` in the convex smooth
+        cost's units (``weight·nshortcycle²``). The default of ``0`` labels
+        essentially every reliably unwrapped pixel. Raise it to be more
+        conservative: more low-coherence interior edges are cut, so those pixels
+        drop to label ``0`` (background). The units scale with coherence, so
+        meaningful values are large (of order 1e6); higher is stricter. Only used
+        when ``conncomp_algorithm="snaphu"``.
     cost_threshold : int, default 50
-        Connected-component boundary threshold in raw cost units. An edge becomes
-        a component boundary when its statistical cost is ``<= cost_threshold``.
-        A larger value makes more boundaries and so smaller, safer components.
-        Prefer the physical knobs below over tuning this directly.
+        Connected-component boundary threshold in raw cost units, for the
+        ``"linear"`` algorithm only. An edge becomes a boundary when its
+        statistical cost is ``<= cost_threshold``; a larger value makes more
+        boundaries and so smaller, safer components. (No effect under the
+        default ``"snaphu"`` algorithm.)
     conncomp_sigma : float or None, optional
-        Set ``cost_threshold`` from a Gaussian-equivalent noise level: an edge is
-        cut when its one-cycle-correction probability exceeds
-        ``0.5 * erfc(sigma / sqrt(2))``. A higher sigma is stricter and makes
-        more boundaries. ``sigma`` of about 3.5 reproduces the default
+        For ``conncomp_algorithm="linear"``: set ``cost_threshold`` from a
+        Gaussian-equivalent noise level: an edge is cut when its
+        one-cycle-correction probability exceeds ``0.5 * erfc(sigma / sqrt(2))``.
+        A higher sigma is stricter. ``sigma`` of about 3.5 reproduces the default
         ``cost_threshold=50``. Takes precedence over ``cost_threshold`` and
         ``conncomp_cycle_prob`` when given.
     conncomp_cycle_prob : float or None, optional
-        Set ``cost_threshold`` from a target per-edge one-cycle-correction
-        probability (via :func:`cost_threshold_from_cycle_prob`). This is a
-        local edge reliability, not a global residue-pairing probability. A
-        lower ``cycle_prob`` is stricter and makes more boundaries; about 2.4e-4
-        matches the default. Takes precedence over ``cost_threshold``, but
-        ``conncomp_sigma`` wins if both are given.
+        For ``conncomp_algorithm="linear"``: set ``cost_threshold`` from a target
+        per-edge one-cycle-correction probability (via
+        :func:`cost_threshold_from_cycle_prob`). A lower ``cycle_prob`` is
+        stricter; about 2.4e-4 matches the default. Takes precedence over
+        ``cost_threshold``, but ``conncomp_sigma`` wins if both are given.
     min_size_px : int, default 100
-        Discard connected components smaller than this many pixels.
+        Discard connected components smaller than this many pixels (both
+        algorithms).
     max_ncomps : int, default 1024
         Maximum number of connected components to keep (largest first).
 
@@ -334,7 +363,16 @@ def unwrap(
         if mask is not None:
             ig_solve[~mask] = 0
 
-    unw_solve, cc = _unwrap_native(
+    if conncomp_algorithm not in ("snaphu", "linear"):
+        raise ValueError(
+            f"conncomp_algorithm must be 'snaphu' or 'linear', got {conncomp_algorithm!r}"
+        )
+
+    # `_unwrap_native` returns the phase plus the legacy linear-cost conncomp.
+    # The linear grow is cheap (a few % of the solve), so we always take it; it
+    # is the returned conncomp under ``conncomp_algorithm="linear"`` and is
+    # discarded under the default "snaphu" path (replaced below).
+    unw_solve, cc_linear = _unwrap_native(
         ig_solve,
         corr,
         nlooks,
@@ -365,6 +403,24 @@ def unwrap(
 
     if bridge:
         unw = bridge_components(unw, mask)
+
+    # Connected components. The default "snaphu" grow runs on the FINAL (bridged)
+    # unwrapped phase via the convex-cost ambiguity wiggle; it is bridge-invariant
+    # but using the final phase keeps it unambiguous. "linear" returns the legacy
+    # coherence-cost grow already computed above.
+    if conncomp_algorithm == "snaphu":
+        cc = components_snaphu(
+            igram,
+            corr,
+            nlooks,
+            unw,
+            mask,
+            conncomp_reliability,
+            min_size_px,
+            max_ncomps,
+        )
+    else:
+        cc = cc_linear
     return unw, cc
 
 

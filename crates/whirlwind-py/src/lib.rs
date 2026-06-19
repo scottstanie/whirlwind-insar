@@ -513,6 +513,59 @@ fn unwrap_linear_ext_costs<'py>(
     Ok(unw.into_pyarray(py))
 }
 
+/// **SNAPHU-faithful connected components** via the convex-cost ambiguity wiggle.
+///
+/// Reproduces SNAPHU's ``GrowConnCompsMask``: for each pixel edge it recovers the
+/// achieved integer 2π ambiguity directly from the ``unwrapped`` output, then
+/// perturbs it by ±1 against the convex smooth cost and cuts the edge where
+/// ``min(poscost, negcost) <= reliability_threshold``. Unlike the linear-cost
+/// components returned by :func:`unwrap`, this keys off the *unwrapped phase
+/// output* (not the solved network or raw arc cost), so it composes with any
+/// phase path - call it after :func:`unwrap` / :func:`unwrap_linear`.
+///
+/// * ``igram`` - complex64 wrapped interferogram, shape (m, n).
+/// * ``corr`` - float32 coherence in ``[0, 1]``, shape (m, n).
+/// * ``nlooks`` - effective looks for the cost model (NISAR GUNW unwrap ~16).
+/// * ``unwrapped`` - float32 unwrapped phase (rad), shape (m, n); masked pixels
+///   may be ``NaN`` (those pixels are treated as invalid).
+/// * ``mask`` - optional bool valid mask, shape (m, n) (``True`` = valid).
+/// * ``reliability_threshold`` - cut when ``min(poscost, negcost) <= this`` in
+///   convex-cost units (``weight·nshortcycle²``). ``0`` (default) is the
+///   calibration-free half-cycle-tie test; raise it to cut shallow (low-
+///   coherence) wells too, growing fewer/larger components.
+/// * ``min_size_px`` - drop components smaller than this many pixels.
+/// * ``max_ncomps`` - keep at most this many components (largest first).
+#[pyfunction]
+#[pyo3(signature = (
+    igram, corr, nlooks, unwrapped, mask = None,
+    reliability_threshold = 0, min_size_px = 100, max_ncomps = 1024,
+))]
+fn components_snaphu<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    corr: PyReadonlyArray2<'py, f32>,
+    nlooks: f32,
+    unwrapped: PyReadonlyArray2<'py, f32>,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    reliability_threshold: i64,
+    min_size_px: usize,
+    max_ncomps: u32,
+) -> PyResult<Bound<'py, PyArray2<u32>>> {
+    let ig = igram.as_array();
+    let co = corr.as_array();
+    let unw = unwrapped.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let params = whirlwind_core::SnaphuConnCompParams {
+        reliability_threshold,
+        min_size_px,
+        min_size_frac: 0.0001,
+        max_ncomps,
+    };
+    let out = py.detach(|| whirlwind_core::components_snaphu(ig, co, nlooks, unw, m, params));
+    let comps = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(comps.into_pyarray(py))
+}
+
 /// Per-pixel quality from temporal triangles (3-cycles).
 ///
 /// Same idea as `quality_map` but uses only triangles instead of the
@@ -865,6 +918,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_reuse, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_linear, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_linear_ext_costs, m)?)?;
+    m.add_function(wrap_pyfunction!(components_snaphu, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_native, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;

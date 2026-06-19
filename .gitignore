@@ -25,6 +25,9 @@ scripts/out/
 *.npy
 *.npz
 mprofile_*.dat
+# Generated comparison figures (scripts/nisar_conncomp_compare.py, etc.)
+nisar-pngs/
+pngs/
 
 # Research scratch kept off the public repo
 paper/

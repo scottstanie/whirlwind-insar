@@ -122,6 +122,41 @@ class TestUnwrap:
         )
         assert ccg_strict.max() == 0
 
+    def test_conncomp_algorithm_default_and_selector(self):
+        """Default conncomp is the SNAPHU-faithful grow; `linear` opts out; the
+        choice never changes the unwrapped phase; bad values raise."""
+        y, x = np.ogrid[-2:2:128j, -2:2:128j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.ones(igram.shape, dtype=np.float32) * 0.95
+
+        unw_snaphu, cc_snaphu = ww.unwrap(igram, corr, nlooks=5.0)  # default
+        unw_linear, cc_linear = ww.unwrap(
+            igram, corr, nlooks=5.0, conncomp_algorithm="linear"
+        )
+        assert cc_snaphu.dtype == np.uint32 and cc_linear.dtype == np.uint32
+        # A clean coherent ramp is one component under either grow.
+        assert cc_snaphu.max() >= 1 and cc_linear.max() >= 1
+        # The conncomp choice must not perturb the unwrapped phase.
+        np.testing.assert_array_equal(unw_snaphu, unw_linear)
+
+        with pytest.raises(ValueError):
+            ww.unwrap(igram, corr, nlooks=5.0, conncomp_algorithm="bogus")
+
+    def test_conncomp_reliability_raises_to_more_conservative(self):
+        """Raising `conncomp_reliability` cuts more edges (more conservative):
+        an absurdly high threshold cuts every edge, so all pixels are isolated
+        and dropped below the size floor, labeling nothing."""
+        y, x = np.ogrid[-2:2:128j, -2:2:128j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.ones(igram.shape, dtype=np.float32) * 0.95
+
+        _u, cc0 = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=0)
+        _u, cc_hi = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=10**18)
+        assert cc0.max() >= 1  # default labels the coherent ramp
+        assert cc_hi.max() == 0  # everything cut -> nothing survives the floor
+
 
 def _k_correct(unw, truth):
     d = unw - truth
