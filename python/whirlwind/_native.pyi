@@ -29,8 +29,7 @@ def _unwrap_native(
 
     Prefer the Python :func:`whirlwind.unwrap` wrapper - it adds the
     integration-component "bridge" gauge post-pass + the K-transfer back onto the
-    original phase. This bare native call does neither (and no Goldstein, which
-    is OFF by default in the wrapper too).
+    original phase. This bare native call only unwraps.
 
     Phase: ``tile_size=0`` (default) is single-tile linear MCF on the WHOLE frame
     - the verified ww-orig-parity path (Carballo Lee-1994 cost, capacity-1
@@ -43,7 +42,7 @@ def _unwrap_native(
     not production. ``multilook=L`` (L>1) coherently down-looks xL first and
     routes through the opt-in tiled path.
 
-    Components: grown GLOBALLY from the Carballo cost grid, independent of the
+    Components: grown globally from the Carballo cost grid, independent of the
     (tiled) phase solve - a pixel edge is a cut when an underlying arc is
     mask-forbidden or its raw cost is ≤ ``cost_threshold``. uint32, 0 =
     background (cut/masked/below ``min_size_px``), renumbered 1..=K by size,
@@ -128,19 +127,18 @@ def components_snaphu(
     min_size_px: int = ...,
     max_ncomps: int = ...,
 ) -> NDArray[np.uint32]:
-    """SNAPHU-faithful connected components via the convex-cost ambiguity wiggle.
+    """SNAPHU-like connected components via the convex-cost ambiguity wiggle.
 
     Reproduces SNAPHU's ``GrowConnCompsMask``: recovers each pixel edge's achieved
-    2π ambiguity from the ``unwrapped`` output, perturbs it ±1 against the convex
+    2π ambiguity from the ``unwrapped`` output, perturbs it +/-1 against the convex
     smooth cost, and cuts where ``min(poscost, negcost) <= reliability_threshold``.
-    Unlike the linear-cost components returned by :func:`whirlwind.unwrap`, this
-    keys off the unwrapped phase OUTPUT (not the solved network), so it composes
-    with any phase path - call it after :func:`whirlwind.unwrap`.
+    This is the default conncomp grow used by :func:`whirlwind.unwrap`.
 
     Water/invalid pixels (``mask`` False or non-finite ``unwrapped``) are cut and
     stay label 0. ``reliability_threshold=0`` (default) is the calibration-free
-    half-cycle-tie test; raise it to grow fewer/larger components. uint32 labels,
-    0 = background, renumbered 1..=K by size, capped at ``max_ncomps``.
+    half-cycle-tie test; raise it to label fewer low-coherence pixels.
+    Output label type is uint32, where 0 = background.
+    The labels are renumbered 1..=K by size, capped at ``max_ncomps``.
     """
 
 def _unwrap_with_costs(

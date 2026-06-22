@@ -140,8 +140,9 @@ def cost_threshold_from_cycle_prob(cycle_prob: float) -> int:
     residue-pairing probability. A lower ``cycle_prob`` raises the threshold and
     cuts more edges (stricter). The default ``cost_threshold=50`` corresponds to
     a ``cycle_prob`` of about 2.4e-4, roughly a 3.5-sigma Gaussian equivalent.
-    This applies to the Carballo coherence connected components only; the CRLB
-    inverse-variance cost path does not use this scaling.
+    This applies only to the legacy ``conncomp_algorithm="linear"`` Carballo
+    coherence connected components; the default SNAPHU ambiguity-wiggle path and
+    the CRLB inverse-variance cost path do not use this scaling.
     """
     import math
 
@@ -160,8 +161,8 @@ CONNCOMP_RELIABILITY_UNIT = 100 * 100**2  # COST_SCALE * nshortcycle**2 = 1_000_
 def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> float:
     """``conncomp_reliability`` value that cuts conncomp edges below a target coherence.
 
-    A guessable way to set ``conncomp_reliability``: pass a *target minimum
-    coherence* and use the result, and the connected components keep edges whose
+    A guessable way to set ``conncomp_reliability``: pass a target minimum
+    coherence and use the result, and the connected components keep edges whose
     coherence is roughly above ``coherence`` and drop (label ``0``) those below.
 
     ``conncomp_reliability`` is in inverse-variance (``1 / sigma2``) units, and a
@@ -189,8 +190,8 @@ def unwrap(
     downsample: int = 1,
     interpolate: bool = False,
     interp_cutoff: float = 0.1,
-    interp_num_neighbors: int = 20,
-    interp_max_radius: int = 51,
+    interp_num_neighbors: int = 30,
+    interp_max_radius: int = 101,
     interp_min_radius: int = 0,
     interp_alpha: float = 0.75,
     conncomp_algorithm: str = "snaphu",
@@ -213,12 +214,12 @@ def unwrap(
     self-consistently, with one positive integer per region and ``0`` for
     background or dropped pixels, analogous to SNAPHU's connected components.
     By default (``conncomp_algorithm="snaphu"``) they are grown by the
-    SNAPHU-faithful ambiguity-wiggle reliability test on the unwrapped phase
-    output (reproducing SNAPHU's ``GrowConnCompsMask``). Pass
-    ``conncomp_algorithm="linear"`` for the older global coherence-cost grow.
+    SNAPHU-like ambiguity-wiggle reliability test on the unwrapped phase
+    output (reproducing SNAPHU's ``GrowConnCompsMask``).
+    ``conncomp_algorithm="linear"`` uses a global coherence-cost growing algorithm.
 
-    A fast default post-pass (``bridge``) repairs the relative 2π level of
-    regions that the valid mask splits apart, such as land slabs separated by a
+    A fast default post-pass (``bridge``) attmempts to minimize 2π offsets
+    between regions that the valid mask splits apart, such as land slabs separated by a
     low-coherence river.
 
     Parameters
@@ -243,18 +244,16 @@ def unwrap(
         so the relative offset between pieces is under-determined. This pass
         estimates each region's level from the unwrapped phase at the region
         boundaries and snaps it to an integer number of cycles, propagated along
-        a minimum spanning tree rooted at the largest region (a pure-numpy port
-        of isce3's NISAR GUNW bridging; see :func:`bridge_components`). A
-        single-region or coherently-connected frame is left unchanged.
+        a minimum spanning tree rooted at the largest region.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
         interferogram is coherently averaged into ``downsample x downsample``
         blocks and that smaller, smoother frame is unwrapped to decide which 2π
         cycle each block sits on. Only the integer cycle is borrowed back onto
         the full-resolution wrapped phase, so every per-pixel value is kept;
-        detail finer than the block scale aliases under the downlook. Use it for
-        noisy or moderate-coherence scenes (for example Sentinel-1); leave it at
-        1 for clean scenes. Note this coherently averages an existing
+        detail finer than the block scale aliases under the downlook.
+        May be useful for noisy or moderate-coherence scenes, provides little benefit
+        for clean scenes. Note this coherently averages an existing
         interferogram, which is not the same as forming a multilooked
         interferogram from the SLCs.
     interpolate : bool, default False
@@ -263,17 +262,17 @@ def unwrap(
         :func:`interpolate`). When True, every valid pixel whose coherence is
         below ``interp_cutoff`` has its phase replaced by a Gaussian
         distance-weighted average of the nearest high-coherence pixels' unit
-        phasors before the solve. Like ``goldstein_alpha``, the fill only INFORMS
-        the MCF: the integer cycle field it produces is applied back to the
+        phasors before the solve.
+        The integer cycle field after unwrapping is applied back to the
         original wrapped phase, so every per-pixel value the caller passed in is
         preserved. Useful for scenes with isolated low-coherence speckle that
         seeds spurious residues.
     interp_cutoff : float, default 0.1
         Coherence below which a valid pixel is interpolated (only used when
         ``interpolate`` is True). ``corr`` is used as the weight map.
-    interp_num_neighbors : int, default 20
+    interp_num_neighbors : int, default 30
         Number of nearest high-coherence pixels averaged per interpolated pixel.
-    interp_max_radius : int, default 51
+    interp_max_radius : int, default 101
         Maximum search radius in pixels for the concentric-circle neighbor search.
     interp_min_radius : int, default 0
         Minimum search radius in pixels; closer neighbors are skipped.
@@ -463,7 +462,7 @@ def unwrap(
 # unit-magnitude normalisation / Hann-window choices it makes.
 
 
-# NOTE: several natives are imported above but intentionally NOT in ``__all__``.
+# NOTE: several natives are imported above but intentionally not in ``__all__``.
 # They remain importable for internal use, benchmarks, and parity tests, but are
 # kept off the public API:
 #   - the CRLB unwrappers (``unwrap_crlb``, ``unwrap_crlb_grounded``) and the

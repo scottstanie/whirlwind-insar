@@ -1,14 +1,14 @@
-"""Frozen numpy reference for ``whirlwind.bridge_components`` (parity oracle).
+"""Frozen numpy reference for ``whirlwind.bridge_components``.
 
-This is the retired pure-numpy original of the integration-component gauge
-bridging post-pass, itself a port of the algorithm isce3's NISAR GUNW workflow
-uses (``isce3.unwrap.bridge_phase.bridge_unwrapped_phase``). The canonical
-implementation now lives in Rust (``crates/whirlwind-core/src/bridge.rs``,
+A pure-numpy original of the integration-component gauge bridging post-pass,
+from the algorithm isce3's NISAR GUNW workflow.
+(``isce3.unwrap.bridge_phase.bridge_unwrapped_phase``).
+The canonical implementation now lives in Rust (``crates/whirlwind-core/src/bridge.rs``,
 bound as ``whirlwind.bridge_components``); this copy exists only so
 ``test_bridge_parity.py`` can assert the native version reproduces it exactly.
-Do not edit the algorithm here - behaviour changes belong in the Rust
+Do not edit the algorithm here - behavior changes belong in the Rust
 implementation, and this oracle should only ever change in lockstep with an
-intentional, test-acknowledged behaviour change there.
+intentional, test-acknowledged behavior change there.
 
 The algorithm:
 
@@ -16,7 +16,7 @@ The algorithm:
   2. For every pair of regions, find the closest boundary-pixel pair (the
      natural place to bridge - where the true phase gap is smallest).
   3. Build a minimum spanning tree of those distances, rooted at the largest
-     region, so each region is referenced through its nearest neighbour rather
+     region, so each region is referenced through its nearest neighbor rather
      than directly to one global anchor.
   4. Walking the tree outward from the root, compare the median unwrapped phase
      in a local box around the two bridge endpoints, round the difference to an
@@ -26,7 +26,7 @@ The algorithm:
 
 Reading the level locally at the boundary (rather than a whole-region median,
 which a residual within-region ramp would bias) and chaining through nearest
-neighbours along the MST are what keep the integer rounding correct. A
+neighbors along the MST are what keep the integer rounding correct. A
 single-region (or coherently connected) frame yields no bridges and is
 byte-identical.
 """
@@ -50,7 +50,7 @@ def _boundary_coords(
 ) -> "dict[int, NDArray[np.float64]]":
     """Strided boundary-pixel (y, x) coordinates for each region label.
 
-    A boundary pixel is a valid pixel with a 4-neighbour of a different label;
+    A boundary pixel is a valid pixel with a 4-neighbor of a different label;
     these line the gaps between regions, so the nearest boundary pair between two
     regions is the natural bridge endpoint. Each set is strided down to at most
     ``max_boundary`` points - the closest pair then lands within a few pixels of

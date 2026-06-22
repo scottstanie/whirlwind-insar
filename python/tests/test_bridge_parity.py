@@ -6,7 +6,7 @@ the oracle is the retired numpy original it was ported from. Every quantity
 feeding the cycle rounding was matched deliberately (label order, boundary
 subsampling stride, argmin tie order, f32 medians, round-half-even ``rint``,
 the single f64->f32 cast of the 2π·k shift), so the comparison is exact
-equality - any drift is a behaviour change, not float noise.
+equality - any drift is a behavior change, not float noise.
 
 All scenes use explicit ``np.random.default_rng`` seeds, so pytest-randomly
 cannot perturb them.
