@@ -177,8 +177,8 @@ fn bridge_components<'py>(
 /// masked pixels pass through. Returns a complex64 ``(m, n)`` array.
 #[pyfunction]
 #[pyo3(signature = (
-    ifg, weights, weight_cutoff = 0.5, num_neighbors = 20,
-    max_radius = 51, min_radius = 0, alpha = 0.75,
+    ifg, weights, weight_cutoff = 0.5, num_neighbors = 30,
+    max_radius = 101, min_radius = 0, alpha = 0.75,
 ))]
 fn interpolate<'py>(
     py: Python<'py>,
