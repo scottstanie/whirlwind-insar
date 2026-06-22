@@ -14,10 +14,11 @@ What each figure shows (2 rows x 4 columns)
         *** This is read straight from the GUNW HDF5, i.e. it IS the production
         SNAPHU result, NOT a re-run of SNAPHU on our side. ***  (team question 2)
   5. whirlwind unwrapped       - ww.unwrap phase, globally aligned to production
-  6. whirlwind conncomps OLD   - the linear-cost `components_only` labels that
-        ww.unwrap returns today (tends to splinter into many tiny components)
-  7. whirlwind conncomps NEW   - the SNAPHU-faithful `components_snaphu`
-        ambiguity-wiggle labels (few large components, like SNAPHU) (team q 3/4)
+  6. whirlwind conncomps OLD   - the legacy linear-cost `components_only` labels
+        used before 0.3.0 (tends to splinter into many tiny components)
+  7. whirlwind conncomps NEW   - the default 0.3.0 SNAPHU-faithful
+        `components_snaphu` ambiguity-wiggle labels (few large components, like
+        SNAPHU) (team q 3/4)
   8. ambiguity diff (cycles)   - per-pixel 2pi disagreement ww vs production
 
 Where the conncomps come from (provenance, team question 2)

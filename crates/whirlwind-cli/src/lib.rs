@@ -107,7 +107,8 @@ fn default_conncomp_path(out: &Path, out_format: OutFormat) -> PathBuf {
 /// Takes either the complex interferogram (--ifg, flat binary complex64:
 /// snaphu COMPLEX_DATA / ROI_PAC / isce2 .int, GAMMA .int/.diff) or the
 /// wrapped phase (--phase, float32 TIFF or flat binary, radians in
-/// [-pi, pi]).
+/// [-pi, pi]). The --phase path reconstructs a unit-magnitude complex
+/// interferogram, so it does not preserve input amplitude.
 ///
 /// Flat-binary (headerless) inputs need the number of columns: pass
 /// --cols (snaphu's "line length" / ROI_PAC WIDTH), or let it be read
@@ -141,17 +142,19 @@ fn default_conncomp_path(out: &Path, out_format: OutFormat) -> PathBuf {
 ///         --cor pair.cc --cor-meta pair.off \
 ///         --nlooks 10 --out-format float --out pair.unw
 ///
-/// If you have a complex-valued GeoTIFF, extract the phase first via
+/// Complex-valued GeoTIFFs are not read directly; extract the phase first via
 ///   gdal_translate DERIVED_SUBDATASET:PHASE:complex.int.tif wrapped.tif
 #[derive(Parser, Debug)]
 #[command(name = "whirlwind", version, verbatim_doc_comment)]
 struct Cli {
-    /// complex interferogram, flat binary complex64 (interleaved float32
-    /// real/imag pairs). Exactly one of --ifg / --phase is required.
+    /// complex interferogram, flat binary complex64 only (interleaved float32
+    /// real/imag pairs; complex GeoTIFFs are not read directly). Exactly one of
+    /// --ifg / --phase is required.
     #[arg(long, conflicts_with = "phase")]
     ifg: Option<PathBuf>,
     /// wrapped phase (float32, radians): TIFF by extension (.tif/.tiff),
-    /// otherwise flat binary (snaphu FLOAT_DATA)
+    /// otherwise flat binary (snaphu FLOAT_DATA). Complex GeoTIFF users should
+    /// extract GDAL's PHASE derived subdataset and pass it here.
     #[arg(long)]
     phase: Option<PathBuf>,
     /// coherence (float32): TIFF by extension, otherwise flat binary -
@@ -289,20 +292,23 @@ struct Cli {
     /// Maximum number of connected components to keep (largest first).
     #[arg(long, default_value_t = 1024)]
     max_ncomps: u32,
-    /// Carballo cost threshold for the conncomp cut rule. Pixel edges
-    /// whose min raw forward cost ≤ this are treated as cuts. Lower =
-    /// more cuts = more (smaller) components. Default 50 (SNAPHU-equiv).
+    /// Legacy linear conncomp only: Carballo cost threshold for the cut rule.
+    /// Pixel edges whose min raw forward cost ≤ this are treated as cuts. Higher
+    /// = more cuts = more (smaller) components. No effect with default
+    /// --conncomp-algorithm snaphu.
     #[arg(long, default_value_t = 50)]
     cost_threshold: i32,
-    /// Set `--cost-threshold` from a target per-edge one-cycle-correction
-    /// probability. Lower is stricter (more boundaries); ~2.4e-4 matches the
-    /// default. Takes precedence over `--cost-threshold`.
+    /// Legacy linear conncomp only: set `--cost-threshold` from a target
+    /// per-edge one-cycle-correction probability. Lower is stricter (more
+    /// boundaries); ~2.4e-4 maps to cost-threshold=50. Takes precedence over
+    /// `--cost-threshold`.
     #[arg(long)]
     conncomp_cycle_prob: Option<f64>,
-    /// Set `--cost-threshold` from a Gaussian-equivalent noise level: an edge
-    /// is cut when its one-cycle probability exceeds 0.5*erfc(sigma/sqrt2).
-    /// Higher is stricter; ~3.5 reproduces the default. Takes precedence over
-    /// both `--cost-threshold` and `--conncomp-cycle-prob`.
+    /// Legacy linear conncomp only: set `--cost-threshold` from a
+    /// Gaussian-equivalent noise level: an edge is cut when its one-cycle
+    /// probability exceeds 0.5*erfc(sigma/sqrt2). Higher is stricter; ~3.5 maps
+    /// to cost-threshold=50. Takes precedence over both `--cost-threshold` and
+    /// `--conncomp-cycle-prob`.
     #[arg(long)]
     conncomp_sigma: Option<f64>,
     /// Connected-component algorithm. `snaphu` (default) is the SNAPHU-faithful
@@ -310,10 +316,9 @@ struct Cli {
     /// coherence-cost grow (uses --cost-threshold/--conncomp-sigma/-cycle-prob).
     #[arg(long, value_enum, default_value_t = ConnCompAlgorithm::Snaphu)]
     conncomp_algorithm: ConnCompAlgorithm,
-    /// Conservativeness of the `snaphu` conncomp, in inverse-variance
-    /// (1/sigma^2) units so values are small. Raise to label fewer
-    /// (lower-coherence) pixels; an edge of coherence g is cut when this exceeds
-    /// ~1/sigma^2(g). Typical values a few to a few tens; prefer
+    /// Conservativeness of the default `snaphu` conncomp, in inverse-variance
+    /// (1/sigma^2) units. The default 0 is the calibration-free SNAPHU wiggle
+    /// test. Raise to label fewer lower-coherence pixels; prefer
     /// --conncomp-min-coherence.
     #[arg(long, default_value_t = 0.0)]
     conncomp_reliability: f64,
@@ -435,7 +440,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         (Some(p), None) => {
             if is_tiff(p) {
                 bail!(
-                    "--ifg expects a flat-binary complex64 file; complex TIFF is not \
+                    "--ifg expects a flat-binary complex64 file; complex GeoTIFF is not \
                      supported. Extract the phase first (gdal_translate \
                      DERIVED_SUBDATASET:PHASE:{} phase.tif) and pass --phase",
                     p.display()

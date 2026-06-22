@@ -123,7 +123,7 @@ fn cli_main(py: Python<'_>, argv: Vec<String>) -> i32 {
 /// 2. For every pair of regions, find the closest boundary-pixel pair (the
 ///    natural place to bridge - where the true phase gap is smallest).
 /// 3. Build a minimum spanning tree of those distances, rooted at the largest
-///    region, so each region is referenced through its nearest neighbour
+///    region, so each region is referenced through its nearest neighbor
 ///    rather than directly to one global anchor.
 /// 4. Walking the tree outward from the root, compare the median unwrapped
 ///    phase in a local box around the two bridge endpoints, round the

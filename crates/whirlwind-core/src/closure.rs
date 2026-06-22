@@ -320,7 +320,7 @@ pub struct SpanningTree {
 pub fn build_spanning_tree(graph: &TemporalGraph, priority: Option<&[f32]>) -> SpanningTree {
     let d = graph.n_dates;
 
-    // Adjacency: for each date, list of (neighbour_date, edge_index, signed_dir).
+    // Adjacency: for each date, list of (neighbor_date, edge_index, signed_dir).
     let mut adj: Vec<Vec<(u32, usize, f32)>> = vec![Vec::new(); d];
     for (idx, e) in graph.edges.iter().enumerate() {
         adj[e.from as usize].push((e.to, idx, 1.0)); // travelling from→to gives +ψ_e

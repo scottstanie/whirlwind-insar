@@ -101,7 +101,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
 /// One source at a time: a single-source Dial shortest-path that early-exits when
 /// the first deficit (sink) is popped, augment one unit along that path, update
 /// potentials, repeat over a fixed source list. On a small masked region this
-/// early-exits in a tiny neighbourhood (~158 s vs ~1472 s for the
+/// early-exits in a tiny neighborhood (~158 s vs ~1472 s for the
 /// multi-source [`run`] on a large frame); on a heavily-masked frame the
 /// **zero-cost masked sea**
 /// (masked arcs have cost 0, never forbidden) is traversed in O(nodes) via the

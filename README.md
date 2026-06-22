@@ -84,12 +84,15 @@ whirlwind \
 ```
 
 `--phase` is the wrapped phase in radians: a float32 TIFF, or a flat binary
-float32 file (see below). `--mask` is optional; nonzero means valid. When
-`--mask` is omitted the CLI uses `coherence > 0` (and `igram != 0` with
-`--ifg`) as the default valid mask, matching the Python API. The CLI writes a
-connected-component label map by default next to `--out` (`foo.conncomp.tif` for
-TIFF, `foo.unw.conncomp` for flat `.unw`); use `--conncomp PATH` to choose the
-path or `--no-conncomp` to skip it.
+float32 file (see below). If you start from a complex-valued GeoTIFF, extract
+GDAL's PHASE derived subdataset first and pass that as `--phase`; `--ifg` is for
+flat complex64 rasters. The phase path reconstructs a unit-magnitude
+interferogram, so it does not preserve amplitude. `--mask` is optional; nonzero
+means valid. When `--mask` is omitted the CLI uses `coherence > 0` (and
+`igram != 0` with `--ifg`) as the default valid mask, matching the Python API.
+The CLI writes a SNAPHU-faithful connected-component label map by default next to
+`--out` (`foo.conncomp.tif` for TIFF, `foo.unw.conncomp` for flat `.unw`); use
+`--conncomp PATH` to choose the path or `--no-conncomp` to skip it.
 
 ### Flat-binary formats (snaphu / ROI_PAC / isce2 / GAMMA)
 
@@ -113,9 +116,11 @@ whirlwind --ifg pair.diff --ifg-meta pair.off \
     --cor pair.cc --cor-meta pair.off --nlooks 10 --out-format float --out pair.unw
 ```
 
-- `--ifg` is the raw complex64 interferogram (snaphu `COMPLEX_DATA`, i.e.
-  `numpy.tofile()` of a complex64 array); `--phase` also accepts flat float32
-  (snaphu `FLOAT_DATA`). Exactly one of the two is given.
+- `--ifg` is the raw flat complex64 interferogram (snaphu `COMPLEX_DATA`, i.e.
+  `numpy.tofile()` of a complex64 array), preserving amplitude for flat classic
+  pipelines. `--phase` accepts float32 wrapped phase as TIFF or flat binary
+  (snaphu `FLOAT_DATA`) and reconstructs unit-magnitude complex values.
+  Exactly one of the two is given.
 - `--cor` may be single-band float32 (isce2 `.cor`, GAMMA `.cc`) or the
   two-band line-interleaved amplitude+correlation "rmg" layout (snaphu's
   default, ROI_PAC `.cc`): the band count is detected from the file size and
@@ -133,6 +138,13 @@ whirlwind --ifg pair.diff --ifg-meta pair.off \
   outputs (the snaphu/isce2 convention). Flat outputs keep the input's byte
   order.
 - `--mask` also accepts snaphu-style flat byte masks (nonzero = valid).
+
+Connected components default to the SNAPHU-faithful ambiguity-wiggle grow
+(`--conncomp-algorithm snaphu`) with `--conncomp-reliability 0` (the
+calibration-free wiggle test). Raise `--conncomp-reliability` or use
+`--conncomp-min-coherence` when you want a more conservative low-coherence
+coverage mask. The legacy linear grow remains available with
+`--conncomp-algorithm linear`.
 
 For noisy scenes, coarsen the solve with `--downsample` (as in the Python API);
 the integration-component `--no-bridge`-able re-leveling pass runs by default:

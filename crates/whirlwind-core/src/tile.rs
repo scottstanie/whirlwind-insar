@@ -87,7 +87,7 @@ fn axis_starts(total: usize, tile_size: usize, step: usize) -> Vec<usize> {
     }
 }
 
-/// Layout of a tile grid: tiles indexed by (row, col); neighbour relations.
+/// Layout of a tile grid: tiles indexed by (row, col); neighbor relations.
 struct TileGrid {
     tiles: Vec<Tile>,
     /// (rows, cols) of the tile grid (not the pixel image).
@@ -470,7 +470,7 @@ fn wrap_to_pi(d: f32) -> f32 {
 /// Rate of branch cuts that pass through HIGH-coherence pixels, per valid pixel.
 ///
 /// A correct unwrap never tears coherent terrain, so a significant rate is the
-/// signature of a tile-seam artifact or a wrong global winding. For each 4-neighbour
+/// signature of a tile-seam artifact or a wrong global winding. For each 4-neighbor
 /// arc with min endpoint coherence > `coh_thr`, the integer flow is
 /// `round((Δunw − wrap(Δφ)) / 2π)`; we sum `|flow|·coherence` over those arcs and
 /// divide by the valid-pixel count. `φ = arg(igram)`.
@@ -1239,7 +1239,7 @@ pub(crate) fn multilook_complex(
     (cig, ccorr, cmask)
 }
 
-/// Block-replicate a coarse field to `(m, n)` (nearest-neighbour). The trailing
+/// Block-replicate a coarse field to `(m, n)` (nearest-neighbor). The trailing
 /// `< lk` strip (when `m`/`n` aren't divisible by `lk`) has no coarse cell and
 /// stays NaN.
 fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Array2<f32> {
@@ -1612,7 +1612,7 @@ fn coarse_refine(
 /// lines, the column pass horizontal); iterated so adjacent slivers settle,
 /// with fixes computed against the pre-iteration field then applied together.
 ///
-/// `max_w = 1` reduces to the original immediate-neighbour 1-px heal.
+/// `max_w = 1` reduces to the original immediate-neighbor 1-px heal.
 fn heal_thin_slivers(
     unw: &mut Array2<f32>,
     corr: ArrayView2<f32>,
@@ -1642,7 +1642,7 @@ fn heal_thin_slivers(
                 let cl = ((unw[(i, j - 1)] - unw[(i, j)]) / TAU).round() as i64;
                 if cl == 0 {
                     j += 1;
-                    continue; // left neighbour is same level - not a left edge
+                    continue; // left neighbor is same level - not a left edge
                 }
                 let base = unw[(i, j)];
                 let mut e = j; // extend the same-level run rightward, bounded by max_w
@@ -1859,7 +1859,7 @@ mod tests {
         // Actually: from 96, next start = 192, 192+128=320 ≥ 200 → push 200-128=72.
         // But 72 < 96, weird. Let me re-derive.
         // axis_starts(200, 128, 96): start=[0]. last=0, next=96, 96+128=224 ≥ 200,
-        // so push 200-128=72, return. → [0, 72]. Yes that's the behaviour.
+        // so push 200-128=72, return. → [0, 72]. Yes that's the behavior.
         // (72 < 96 is fine - last tile's start moves to overlap more, not less.)
         let starts = axis_starts(200, 128, 96);
         assert_eq!(starts, vec![0, 72]);

@@ -1,9 +1,8 @@
-//! SNAPHU-style connected component growing from a solved MCF network.
+//! Connected component growing for the legacy linear-cost path and the default
+//! SNAPHU ambiguity-wiggle path.
 //!
-//! After [`crate::primal_dual::run`] (or the SSP fallback) returns, every
-//! pixel-edge in the original phase image is backed by two forward residue
-//! arcs (one per Carballo direction). We label each pixel-edge as a *cut*
-//! when at least one of its underlying arcs is unreliable:
+//! The legacy [`grow_components`] path labels each pixel-edge as a *cut* when at
+//! least one of its underlying linear-cost arcs is unreliable:
 //!
 //! 1. The arc is forbidden (both directions saturated - masked-out pixel).
 //! 2. The minimum raw forward cost across the two directions is below
@@ -14,7 +13,7 @@
 //! components. Small components are dropped; the top `max_ncomps` by size are
 //! kept and renumbered 1..=max_ncomps.
 //!
-//! This is the gridded adaptation of `GrowConnCompsMask` in SNAPHU's
+//! This is the gridded linear-cost adaptation of `GrowConnCompsMask` in SNAPHU's
 //! `snaphu_tile.c`. SNAPHU works with convex piecewise costs and tests
 //! `min(negcost, poscost)` - the local cost-function flatness around the
 //! chosen flow. In our linear unit-capacity setting that collapses to the
@@ -32,13 +31,14 @@ use num_complex::Complex32;
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
-/// Parameters for [`grow_components`]. The `cost_threshold` is compared against
-/// the default Carballo coherence cost grid (`CARBALLO_COST_SCALE = 6`); the
-/// default of 50 corresponds to a per-edge one-cycle probability of ~2.4e-4.
+/// Parameters for the legacy linear [`grow_components`] path. The
+/// `cost_threshold` is compared against the Carballo coherence cost grid
+/// (`CARBALLO_COST_SCALE = 6`); the default of 50 corresponds to a per-edge
+/// one-cycle probability of ~2.4e-4.
 #[derive(Debug, Clone)]
 pub struct ConnCompParams {
     /// Cut a pixel edge when min raw forward cost across the two underlying
-    /// arcs is ≤ this. Higher → fewer/larger components.
+    /// arcs is ≤ this. Higher → more boundaries and smaller components.
     pub cost_threshold: i32,
     /// Drop components smaller than this many pixels. This ABSOLUTE floor is the
     /// binding control: at 80 m it is 0.8 km/side, at 30 m 0.3 km - scene-size-
@@ -204,10 +204,10 @@ fn finalize_labels(
 }
 
 // =========================================================================
-// Alternate, SNAPHU-faithful connected components ("ambiguity wiggle")
+// SNAPHU-faithful connected components ("ambiguity wiggle")
 // =========================================================================
 //
-// The `grow_components` path above cuts an edge by its raw *linear* arc cost.
+// The legacy `grow_components` path above cuts an edge by its raw *linear* arc cost.
 // That is the right collapse of SNAPHU's reliability test only because the
 // default Carballo cost is linear (no curvature anywhere). SNAPHU itself works
 // with a *convex* cost `c_e(k) = w_e · (k − k*_e)²` and, in `GrowConnCompsMask`

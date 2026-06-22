@@ -132,7 +132,7 @@ pub fn unwrap_coherence(
     }
 }
 
-/// SNAPHU-style connected components grown from the global Carballo cost grid
+/// Legacy linear connected components grown from the global Carballo cost grid
 /// **without running the MCF solve**.
 ///
 /// Component labels depend only on (a) mask-forbidden arcs and (b) raw arc
@@ -164,8 +164,8 @@ pub fn components_only(
     Ok(conncomp::grow_components(&graph, &net, mask, &params))
 }
 
-/// **Alternate, SNAPHU-faithful connected components** grown from the convex
-/// (quadratic) cost's *ambiguity-wiggle* reliability test.
+/// SNAPHU-faithful connected components grown from the convex (quadratic)
+/// cost's *ambiguity-wiggle* reliability test.
 ///
 /// Where [`components_only`] cuts an edge by its raw linear Carballo cost, this
 /// reproduces SNAPHU's `GrowConnCompsMask`: it takes the already-`unwrapped`
@@ -178,7 +178,8 @@ pub fn components_only(
 ///
 /// Like [`components_only`], it needs only correlation + output (not the solved
 /// MCF network), so it composes with any phase path. It is the convex-cost
-/// counterpart of that function; the threshold lives in convex-cost units (see
+/// counterpart of that function and is the default label grow used by the
+/// Python/CLI wrappers; the threshold lives in convex-cost units (see
 /// [`SnaphuConnCompParams`]).
 pub fn components_snaphu(
     igram: ArrayView2<Complex32>,
@@ -203,14 +204,12 @@ pub fn components_snaphu(
     ))
 }
 
-/// Robust coherence-cost unwrap returning `(phase, conn_components)` - the
-/// engine behind the public `unwrap`.
+/// Robust coherence-cost unwrap returning `(phase, legacy_linear_components)`.
 ///
 /// Phase comes from the robust tiled pipeline ([`unwrap_coherence`]); components
-/// are grown globally and solve-free ([`components_only`]). This replaces the
-/// old whole-image solve-then-grow path: the conncomp path now inherits the
-/// same tiling/robustness as phase, and skips the global solve entirely
-/// (strictly less memory than the old path).
+/// are grown globally and solve-free with the legacy linear grow
+/// ([`components_only`]). The public Python/CLI default replaces these labels
+/// with [`components_snaphu`] after bridge post-processing.
 pub fn unwrap_coherence_with_components(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,

@@ -10,7 +10,7 @@
 //!  1. Label the integration regions (4-connected components of the valid mask).
 //!  2. For every pair of regions, find the closest boundary-pixel pair.
 //!  3. Build a minimum spanning tree of those distances, rooted at the largest
-//!     region, so each region is referenced through its nearest neighbour.
+//!     region, so each region is referenced through its nearest neighbor.
 //!  4. Walking the tree outward from the root, compare the median unwrapped phase
 //!     in a local box around the two bridge endpoints, round the difference to an
 //!     integer number of cycles, and shift the child region (and, transitively,
@@ -194,7 +194,7 @@ pub fn bridge_components(
 
 /// Strided boundary-pixel `(y, x)` coordinates for each region label.
 ///
-/// A boundary pixel is a valid pixel with a 4-neighbour of a different label.
+/// A boundary pixel is a valid pixel with a 4-neighbor of a different label.
 /// Each set is strided down to at most `max_boundary` points (raster order).
 fn boundary_coords(
     region: &Array2<i32>,
