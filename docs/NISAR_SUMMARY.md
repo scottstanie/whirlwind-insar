@@ -17,21 +17,21 @@ The quality number is per-connected-component 2pi ambiguity agreement with the p
 
 ## Results
 
-| Frame | Whirlwind vs production SNAPHU | PHASS vs production SNAPHU | Note                                    |
-| ----- | -----------------------------: | -------------------------: | --------------------------------------- |
-| A_013 |                          100.0 |                       99.3 |                                         |
-| A_016 |                          100.0 |                       99.6 |                                         |
-| A_018 |                          100.0 |                       85.7 |                                         |
-| A_020 |                           99.8 |                       99.4 |                                         |
-| A_022 |                          100.0 |                       99.4 |                                         |
-| A_025 |                          100.0 |                       67.0 | low-coherence river                     |
-| A_028 |                          100.0 |                       92.9 |                                         |
-| A_030 |                          100.0 |                       75.4 |                                         |
-| D_074 |                           98.8 |                       91.2 |                                         |
-| D_075 |                           88.2 |                       48.4 | sweep SNAPHU also scores 88.2           |
-| D_077 |                           99.5 |                       94.7 |                                         |
-| D_078 |                           99.8 |                       96.9 |                                         |
-| A_035 |                          100.0 |                       94.6 |                                         |
+| Frame | Whirlwind vs production SNAPHU | PHASS vs production SNAPHU |
+| ----- | -----------------------------: | -------------------------: |
+| A_013 |                          100.0 |                       99.3 |
+| A_016 |                          100.0 |                       99.6 |
+| A_018 |                          100.0 |                       85.7 |
+| A_020 |                           99.8 |                       99.4 |
+| A_022 |                          100.0 |                       99.4 |
+| A_025 |                          100.0 |                       67.0 |
+| A_028 |                          100.0 |                       92.9 |
+| A_030 |                          100.0 |                       75.4 |
+| D_074 |                           98.8 |                       91.2 |
+| D_075 |                           88.2 |                       48.4 |
+| D_077 |                           99.5 |                       94.7 |
+| D_078 |                           99.8 |                       96.9 |
+| A_035 |                          100.0 |                       94.6 |
 
 ![13-frame NISAR GUNW comparison](figures/nisar_summary.png)
 

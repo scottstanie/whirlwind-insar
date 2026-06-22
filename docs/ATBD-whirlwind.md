@@ -121,8 +121,8 @@ The public 2D coherence-cost path has seven stages:
 [3] Edge costs:         c = carballo_costs(igram, corr, nlooks, mask)
 [4] Min-cost flow:      flow = primal_dual(network(r, c))
 [5] Integration:        unw = integrate(phi, flow, mask)
-[6] Components:         conncomp = components_only(igram, corr, nlooks, mask)
-[7] Bridge post-pass:   set relative 2pi offsets between disconnected valid regions from the unwrapped phase at their boundaries
+[6] Bridge post-pass:   set relative 2pi offsets between disconnected valid regions from the unwrapped phase at their boundaries
+[7] Components:         conncomp = components_snaphu(igram, corr, nlooks, unw, mask)
 ```
 
 The required inputs are a complex interferogram `igram`, coherence or correlation `corr`, effective looks `nlooks`, and optionally a boolean valid-pixel `mask`.
@@ -141,7 +141,7 @@ The flow solve pairs positive and negative residues through low-cost paths. Once
 
 ### 3.4 Integration and components
 
-Integration converts integer cycle corrections into an unwrapped phase image. The Python API also returns SNAPHU-style connected-component labels grown from the same coherence-cost model. Section 8 covers the integer-cycle integration details.
+Integration converts integer cycle corrections into an unwrapped phase image. The Python API also returns SNAPHU-faithful connected-component labels grown from the final unwrapped phase by the convex-cost ambiguity-wiggle reliability test. The older linear coherence-cost grow remains available as an opt-out. Section 8 covers the integer-cycle integration details.
 
 ### 3.5 Bridge post-pass
 
@@ -661,7 +661,8 @@ linear MCF path; all other solver variants are opt-in or experimental.
 | `unwrap` *tiled path* (`downsample>1`, `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`) | reuse (per tile) | `compute_carballo_costs`        | early-exit, 50 it + multi-source SSP                                    | forbid (tiled)  | opt-in / experimental, **not validated** (see §9.5 item 4)         |
 | `unwrap_reuse` (whole-image reuse, PHASS-style)                    | reuse            | `compute_carballo_costs`        | early-exit, 50 it                                                       | cost-zero + NaN | opt-in / experimental                                              |
 | `unwrap_convex`                                                    | convex           | `compute_snaphu_smooth_costs`   | heap                                                                    | forbid          | experimental research prototype                                    |
-| `components_only`                                                  | unit-capacity    | `compute_carballo_costs`        | forbid                                                                  | no MCF solve    | -                                                                  |
+| `components_snaphu` **(public conncomp default)**                  | convex-cost test | `compute_snaphu_smooth_costs`   | no MCF solve; wiggle achieved output ambiguity                          | forbid          | **validated default for labels**                                   |
+| `components_only`                                                  | unit-capacity    | `compute_carballo_costs`        | no MCF solve                                                            | forbid          | legacy linear conncomp opt-out                                     |
 
 The reference reused throughout is the NISAR geocoded unwrapped product (GUNW),
 whose production unwrap is SNAPHU; per-component match is the fraction of pixels

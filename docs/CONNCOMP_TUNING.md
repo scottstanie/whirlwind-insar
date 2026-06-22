@@ -1,123 +1,77 @@
 # Tuning connected components
 
-`whirlwind.unwrap` returns two arrays: the unwrapped phase and a **connected
-component** (conncomp) label map, analogous to SNAPHU's. Each positive integer
-marks a region the solver believes is unwrapped self-consistently; `0` is
-background / dropped. This page explains the knobs that shape that label map and
-shows what each one does on a real frame.
+`whirlwind.unwrap` returns two arrays: the unwrapped phase and a connected-component (conncomp) label map, analogous to SNAPHU's. Each positive integer marks a region the solver believes is unwrapped self-consistently; `0` is background or dropped.
 
-If you only remember one thing: **a component boundary is drawn across an edge
-whose statistical cost is low** (an unreliable edge, where a one-cycle slip is
-plausible). Stricter settings draw more boundaries, giving more but smaller and
-"safer" components; looser settings merge them into fewer, larger ones.
+The default in 0.3.0 is the SNAPHU-faithful ambiguity-wiggle grow:
+`conncomp_algorithm="snaphu"` in Python and `--conncomp-algorithm snaphu` in the CLI. It recovers each pixel edge's achieved integer ambiguity from the final unwrapped phase and cuts an edge where a +/-1 cycle "wiggle" against SNAPHU's convex smooth cost is no more expensive than the achieved output.
 
-## The knobs
+If you only remember one thing: the default `conncomp_reliability=0` is the calibration-free SNAPHU wiggle test. Raise it only when you want a more conservative coverage mask that drops low-coherence pixels to label `0`.
 
-All are keyword arguments to [`unwrap`](ALGORITHM.md):
+## Default Knobs
 
-| Knob | What it does | Direction |
-|---|---|---|
-| `cost_threshold` (int, default 50) | Raw threshold: an edge becomes a boundary when its cost is `<= cost_threshold`. | higher → more boundaries (smaller comps) |
-| `conncomp_sigma` (float) | Set `cost_threshold` from a Gaussian-equivalent noise level. `~3.5` reproduces the default 50. | higher → stricter (more boundaries) |
-| `conncomp_cycle_prob` (float) | Set `cost_threshold` from a target per-edge one-cycle-correction probability. `~2.4e-4` matches the default. | lower → stricter (more boundaries) |
-| `min_size_px` (int, default 100) | Discard components smaller than this many pixels. | higher → fewer comps |
-| `max_ncomps` (int, default 1024) | Keep only the N largest components. | lower → fewer comps |
+All Python names below are keyword arguments to [`unwrap`](ALGORITHM.md). CLI names use dashes.
 
-**Prefer the physical knobs over `cost_threshold`.** `conncomp_sigma` and
-`conncomp_cycle_prob` are two views of the same threshold expressed in units you
-can reason about (a noise sigma, or a per-edge slip probability) rather than raw
-cost. If you pass more than one, precedence is
-`conncomp_sigma` > `conncomp_cycle_prob` > `cost_threshold`.
+| Knob                                                                                           | What it does                                                                                                                           | Direction                                                            |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `conncomp_algorithm` (default `"snaphu"`)                                                      | Selects the conncomp grower. `"snaphu"` is the default ambiguity-wiggle path; `"linear"` opts into the legacy raw coherence-cost grow. | use `"linear"` only for old behavior                                 |
+| `conncomp_reliability` (default `0.0`)                                                         | SNAPHU path only. Threshold in inverse-variance (`1/sigma^2`) units; the native raw threshold is this value times `1_000_000`.         | higher -> fewer labeled low-coherence pixels, usually more fragments |
+| `conncomp_min_coherence` (CLI) / `conncomp_reliability_from_coherence(gamma, nlooks)` (Python) | Convenience mapping from a target minimum coherence to `conncomp_reliability`. For `nlooks=16`, `gamma=0.3` maps to about `3.2`.       | higher gamma -> stricter coverage                                    |
+| `min_size_px` (default `100`)                                                                  | Discard components smaller than this many pixels.                                                                                      | higher -> fewer tiny components                                      |
+| `max_ncomps` (default `1024`)                                                                  | Keep only the N largest components.                                                                                                    | lower -> fewer labels                                                |
 
-`conncomp_sigma` / `conncomp_cycle_prob` change *where boundaries fall* (they
-feed the cost-based component growing). `min_size_px` / `max_ncomps` are
-*size filters* applied to the resulting components. Reach for the size filters
-when the boundaries are where you want them but you simply have too many tiny
-islands; reach for sigma/cycle_prob when whole regions are over- or
-under-segmented.
+The `snaphu` algorithm ignores `cost_threshold`, `conncomp_sigma`, and `conncomp_cycle_prob`. Those are kept for `conncomp_algorithm="linear"` only.
 
-> Note: there is intentionally **no** "coherence floor" knob. Masking out pixels
-> below some coherence is just `cc[corr < floor] = 0`, which you can apply to the
-> returned labels yourself; it tells you nothing the unwrapper has to know, so it
-> is not part of the API. The cost-based knobs above *are* integrated into the
-> component growing.
+## Why Reliability 0 Is The Default
 
-## Worked example: A_018
+The 2026-06-19 NISAR sweep under `nisar-pngs/2026-06-19/` compared the old linear conncomp, the SNAPHU ambiguity-wiggle conncomp at `conncomp_reliability=0`, and reliability thresholds expressed as target minimum coherence.
 
-A_018 is a good stress case: a large, genuinely decorrelated area (43 % of valid
-pixels have coherence below 0.3) gets peppered with small components under the
-default settings. The figure runs one `unwrap` per setting:
+The SNAPHU default removed the main linear-path splintering while keeping component counts close to production SNAPHU:
 
-![A_018 conncomp knobs](figures/conncomp_knobs_A_018.png)
+| Frame | Production SNAPHU comps | Old linear comps | New SNAPHU comps |
+| ----- | ----------------------: | ---------------: | ---------------: |
+| A_018 |                       1 |               69 |                3 |
+| A_025 |                       2 |               41 |                3 |
+| A_030 |                       3 |              230 |                3 |
+| A_035 |                       2 |              119 |                5 |
+| D_075 |                       1 |               64 |                3 |
+| D_077 |                       2 |               46 |                1 |
 
-| Setting | # components | labeled % of valid | # comps < 2 k px |
-|---|---:|---:|---:|
-| default (`cost_threshold=50`, `min_size_px=100`) | 69 | 61 | 58 |
-| `conncomp_sigma=2.5` (looser) | 6 | 97 | 3 |
-| `conncomp_sigma=4.5` (stricter) | 131 | 39 | 104 |
-| `conncomp_cycle_prob=1e-2` (looser) | 7 | 97 | 2 |
-| `min_size_px=2000` | 11 | 60 | 0 |
-| `max_ncomps=5` | 5 | 60 | 0 |
+The reliability sweep showed why a positive threshold should not be the package default. It can make labeled percentage closer to production on some frames, but it often fragments the map:
 
-Reading it:
+| Frame | Production labeled % / comps | Default `0.0` labeled % / comps | Threshold example    |     Result |
+| ----- | ---------------------------: | ------------------------------: | -------------------- | ---------: |
+| D_077 |                     82.8 / 2 |                       100.0 / 1 | `min_coherence=0.20` |  81.3 / 18 |
+| A_025 |                     92.0 / 2 |                       100.0 / 3 | `min_coherence=0.15` |  90.2 / 15 |
+| D_075 |                     64.4 / 1 |                        99.9 / 3 | `min_coherence=0.20` |  62.3 / 28 |
+| A_030 |                     81.8 / 3 |                       100.0 / 3 | `min_coherence=0.15` | 72.1 / 125 |
 
-- **Default** leaves 58 small components (the orange speckle) scattered through
-  the decorrelated area — each is a little patch the solver isolated because the
-  edges around it are unreliable.
-- **Loosening** (`conncomp_sigma=2.5` or `conncomp_cycle_prob=1e-2`) draws far
-  fewer boundaries, so the speckle merges into a handful of large components and
-  the labeled fraction jumps to ~97 %. Use this when you trust the phase and want
-  broad regions; the risk is that a real slip inside a merged region goes
-  unflagged.
-- **Tightening** (`conncomp_sigma=4.5`) does the opposite — 131 components, only
-  39 % labeled. Use it when you want only the most internally-consistent cores.
-- **To simply drop the small decorrelated islands** while leaving the good
-  regions exactly as they are, use a size filter: `min_size_px=2000` removes all
-  58 small components (69 → 11) without changing coverage, and `max_ncomps=5`
-  keeps just the five biggest. This is usually what you want for "clean up the
-  speckle in the decorrelated area."
+So the default is intentionally `0`: it gives the stable SNAPHU-style partition. Use a positive `conncomp_reliability` when downstream processing needs conservative coverage more than compact component labels.
 
 ## Recipes
 
-- Too many tiny components, good regions are fine → raise `min_size_px` (or set
-  `max_ncomps`).
-- Whole scene over-segmented (regions that should be one are split) → lower
-  `conncomp_sigma` (e.g. 2.5–3.0) or raise `conncomp_cycle_prob`.
-- Want only high-confidence cores → raise `conncomp_sigma` (e.g. 4.5+).
-- Want to mask by coherence → do it on the returned labels:
-  `cc[corr < 0.3] = 0`.
+- Keep the 0.3.0 default: use `conncomp_algorithm="snaphu"` and `conncomp_reliability=0.0`.
+- Want fewer low-coherence pixels labeled: raise `conncomp_reliability`, or in the CLI use `--conncomp-min-coherence 0.15` to `0.3`.
+- Too many tiny labels after raising reliability: raise `min_size_px` or lower `max_ncomps`.
+- Need the old 0.2.x behavior for comparison: set `conncomp_algorithm="linear"` / `--conncomp-algorithm linear`.
+- Want a hard coherence floor: post-process the labels, e.g. `cc[corr < 0.3] = 0`.
+
+## Legacy Linear Knobs
+
+These only apply with `conncomp_algorithm="linear"`:
+
+| Knob                            | What it does                                                                                                         | Direction                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `cost_threshold` (default `50`) | Raw Carballo threshold: an edge becomes a boundary when its cost is `<= cost_threshold`.                             | higher -> more boundaries |
+| `conncomp_sigma`                | Set `cost_threshold` from a Gaussian-equivalent noise level. `~3.5` maps to `cost_threshold=50`.                     | higher -> stricter        |
+| `conncomp_cycle_prob`           | Set `cost_threshold` from a target per-edge one-cycle-correction probability. `~2.4e-4` maps to `cost_threshold=50`. | lower -> stricter         |
+
+Prefer the SNAPHU path for normal use. The linear knobs remain useful for reproducing older runs and for debugging the raw Carballo component grow.
 
 ## Reproduce
 
 ```bash
-python scripts/sweep_conncomp_knobs.py A_018
+python scripts/nisar_conncomp_compare.py
+python scripts/sweep_conncomp_reliability.py
 ```
 
-## Alternate: SNAPHU "ambiguity wiggle" components (experimental)
-
-The default component grower cuts an edge by its raw **linear** Carballo cost.
-That is the correct collapse of SNAPHU's reliability test only because the
-default cost is linear (no curvature). SNAPHU's `GrowConnCompsMask` actually
-works on the **convex** (quadratic) cost `c_e(k) = w_e·(k·100 − O_e)²` and rates
-each edge by perturbing the achieved integer ambiguity `k` by ±1:
-
-```text
-poscost = c_e(k+1) − c_e(k)    negcost = c_e(k−1) − c_e(k)
-reliability_e = min(poscost, negcost)
-```
-
-An edge whose unwrap sits deep in a cost well (bumping the ambiguity either way
-is expensive) is *reliable*; one sitting near a half-cycle tie — or whose output
-flow is on the wrong side of the cost minimum entirely — has small or negative
-reliability and becomes a boundary.
-
-`whirlwind_core::components_snaphu` / `conncomp::grow_components_snaphu`
-implement this. Like `components_only` they take only **correlation + output**
-(the offsets/weights come from `compute_snaphu_smooth_costs`, the ambiguity `k`
-is recovered from the unwrapped phase), so they need no solved MCF network and
-compose with any phase path. The threshold (`reliability_threshold`,
-[`SnaphuConnCompParams`]) lives in convex-cost units (`weight·nshortcycle²`),
-which scale with coherence; the physical default of `0` cuts an edge iff a ±1
-slip is no more expensive than the achieved flow (the unwrap is at/past a tie),
-and needs no per-scene calibration. This path is still being validated against
-production SNAPHU component maps — treat the threshold as needing a sweep.
+The first script writes per-frame comparison PNGs and `conncomp_summary.csv`. The second writes `conncomp_reliability_sweep.csv`, `conncomp_reliability_sweep.png`, and per-frame reliability-sweep label images under `nisar-pngs/<date>/`.

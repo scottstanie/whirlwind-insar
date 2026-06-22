@@ -15,8 +15,8 @@ The input interferogram is complex. Whirlwind unwraps `angle(igram)` and uses `c
 3. Build coherence-based edge costs using the Carballo/Lee statistical model.
 4. Solve a minimum-cost-flow problem that pairs positive and negative residues through low-cost paths.
 5. Integrate the corrected gradients through the valid mask.
-6. Grow SNAPHU-style connected-component labels from the same cost model.
-7. If the valid mask has disconnected regions, apply a bridge post-pass to set their relative 2pi offsets from the unwrapped phase at the region boundaries (a spanning tree rooted at the largest region).
+6. If the valid mask has disconnected regions, apply a bridge post-pass to set their relative 2pi offsets from the unwrapped phase at the region boundaries (a spanning tree rooted at the largest region).
+7. Grow SNAPHU-faithful connected-component labels from the final unwrapped phase by the ambiguity-wiggle reliability test.
 
 ## Why minimum-cost flow
 
@@ -42,7 +42,7 @@ Pass a mask for real scenes with water, shadow, layover, nodata, or other invali
 | `unw` | Float32 unwrapped phase in radians. |
 | `conncomp` | Uint32 connected-component labels. `0` means background or dropped pixels. |
 
-The unwrapped phase is congruent with the wrapped input modulo 2pi. Connected components are useful when comparing against SNAPHU-style products or when downstream code needs component labels.
+The unwrapped phase is congruent with the wrapped input modulo 2pi. Connected components are useful when comparing against SNAPHU-style products or when downstream code needs component labels. The default component grower matches SNAPHU's ambiguity-wiggle rule; the older linear coherence-cost grow is still available as an opt-out.
 
 ## Bridge post-pass
 
