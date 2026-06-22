@@ -15,6 +15,27 @@ const ALPHA_HI: f32 = 3.0 * TAU;
 const GAMMA_LO: f32 = 0.0;
 const GAMMA_HI: f32 = 0.999;
 
+/// Maximum effective looks any cost LUT is evaluated at. Above this the Lee
+/// (1994) multilook phase PDF is already a near-delta spike whose cost *shape*
+/// no longer changes, while the `₂F₁` series in [`super::lee_pdf`] starts to
+/// overflow/underflow into NaN at high coherence (empirically from ~100 looks
+/// for the Carballo CDF, ~500 for the raw PDF). Independent looks are also
+/// bounded in practice — real multilook windows oversample correlated pixels —
+/// so capping here costs nothing physical. Matches the upper grid point of the
+/// embedded parity spline LUT ([`super::spline_lut`]), which already clamps to
+/// it; keeping the cap identical makes every cost path agree at high looks.
+pub const MAX_COST_MODEL_NLOOKS: f32 = 80.0;
+
+/// Cap `nlooks` at [`MAX_COST_MODEL_NLOOKS`] for LUT construction. Only the
+/// high end is capped: `nlooks < 1` is rejected at the public API boundary
+/// (Python `unwrap` / the CLI) and asserted in [`super::lee_pdf::pdf`], so an
+/// out-of-range low value still surfaces as an error rather than being silently
+/// clamped.
+#[inline]
+fn cost_model_nlooks(nlooks: f32) -> f32 {
+    nlooks.min(MAX_COST_MODEL_NLOOKS)
+}
+
 pub struct Lut {
     nlooks: f32,
     values: Vec<f32>,
@@ -71,16 +92,25 @@ fn cache() -> &'static LutMap {
 }
 
 /// Get a LUT for `nlooks`, building (and caching) one if needed. We round
-/// nlooks to one decimal so e.g. 9.97 ≈ 10.0 shares a cache entry.
+/// nlooks to one decimal so e.g. 9.97 ≈ 10.0 shares a cache entry, and cap it
+/// at [`MAX_COST_MODEL_NLOOKS`] so high-looks requests share one entry and stay
+/// numerically finite.
 pub fn get_or_build(nlooks: f32) -> &'static Lut {
+    let nlooks = cost_model_nlooks(nlooks);
     let key = (nlooks * 10.0).round() as u32;
-    let mut map = cache().lock().unwrap();
-    if let Some(l) = map.get(&key) {
-        return l;
+    {
+        let map = cache().lock().unwrap();
+        if let Some(l) = map.get(&key) {
+            return l;
+        }
     }
-    // Leak the LUT - it's a ~512 KiB one-time cost, and we want 'static.
+    // Build OUTSIDE the lock: should `Lut::build` ever panic (e.g. nlooks < 1
+    // hitting the assert in `lee_pdf::pdf`), the panic must not poison the cache
+    // mutex and brick every later unwrap in a long-running process. Leak the
+    // LUT - it's a ~512 KiB one-time cost, and we want 'static. A concurrent
+    // miss may build a duplicate; `insert` keeps the last (a one-time leak).
     let lut: &'static Lut = Box::leak(Box::new(Lut::build(nlooks)));
-    map.insert(key, lut);
+    cache().lock().unwrap().insert(key, lut);
     lut
 }
 
@@ -156,16 +186,20 @@ fn var_cache() -> &'static VarLutMap {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Get a variance LUT for `nlooks`. Same cache-rounding convention as
+/// Get a variance LUT for `nlooks`. Same cache-rounding and high-looks cap as
 /// [`get_or_build`].
 pub fn get_or_build_variance(nlooks: f32) -> &'static VarianceLut {
+    let nlooks = cost_model_nlooks(nlooks);
     let key = (nlooks * 10.0).round() as u32;
-    let mut map = var_cache().lock().unwrap();
-    if let Some(l) = map.get(&key) {
-        return l;
+    {
+        let map = var_cache().lock().unwrap();
+        if let Some(l) = map.get(&key) {
+            return l;
+        }
     }
+    // Built outside the lock - see `get_or_build` for the poison-avoidance note.
     let lut: &'static VarianceLut = Box::leak(Box::new(VarianceLut::build(nlooks)));
-    map.insert(key, lut);
+    var_cache().lock().unwrap().insert(key, lut);
     lut
 }
 
@@ -281,15 +315,21 @@ fn carb_cache() -> &'static CarbLutMap {
 }
 
 /// Get the Carballo cost LUT for `nlooks`, building and caching on first use.
-/// nlooks is rounded to one decimal (e.g., 9.97 → 10.0) for cache sharing.
+/// nlooks is rounded to one decimal (e.g., 9.97 → 10.0) for cache sharing and
+/// capped at [`MAX_COST_MODEL_NLOOKS`] (the Carballo CDF integral goes NaN at
+/// high coherence from ~100 looks without the cap).
 pub fn get_or_build_carballo(nlooks: f32) -> &'static CarballoLut {
+    let nlooks = cost_model_nlooks(nlooks);
     let key = (nlooks * 10.0).round() as u32;
-    let mut map = carb_cache().lock().unwrap();
-    if let Some(l) = map.get(&key) {
-        return l;
+    {
+        let map = carb_cache().lock().unwrap();
+        if let Some(l) = map.get(&key) {
+            return l;
+        }
     }
+    // Built outside the lock - see `get_or_build` for the poison-avoidance note.
     let lut: &'static CarballoLut = Box::leak(Box::new(CarballoLut::build(nlooks)));
-    map.insert(key, lut);
+    carb_cache().lock().unwrap().insert(key, lut);
     lut
 }
 
@@ -339,6 +379,50 @@ mod tests {
         assert_eq!(
             c_neg, MAX_CARBALLO_COST,
             "cost at alpha<0 should be MAX, got {c_neg}"
+        );
+    }
+
+    /// Every cost LUT must stay finite at extreme `nlooks`. Without the
+    /// [`MAX_COST_MODEL_NLOOKS`] cap, the Lee PDF / Carballo CDF overflow to
+    /// NaN at high coherence (the `>100` looks bug that forced a downstream
+    /// clamp in dolphin). Builders cap at 80, so all of these must be clean.
+    #[test]
+    fn cost_luts_finite_at_extreme_nlooks() {
+        use std::f32::consts::PI;
+        for &n in &[1.0_f32, 16.0, 80.0, 100.0, 1000.0, 10_000.0, 100_000.0] {
+            let dlut = get_or_build(n);
+            let vlut = get_or_build_variance(n);
+            let clut = get_or_build_carballo(n);
+            for gi in 0..=128 {
+                let g = GAMMA_HI * gi as f32 / 128.0;
+                assert!(vlut.eval(g).is_finite(), "variance LUT NaN at n={n}, g={g}");
+                for ai in 0..=256 {
+                    let a = ALPHA_LO + (ALPHA_HI - ALPHA_LO) * ai as f32 / 256.0;
+                    assert!(
+                        dlut.eval(a, g).is_finite(),
+                        "2D LUT NaN at n={n}, a={a}, g={g}"
+                    );
+                }
+                for ai in 0..=200 {
+                    let a = -PI + 2.0 * PI * ai as f32 / 200.0;
+                    assert!(
+                        clut.eval(a, g).is_finite(),
+                        "Carballo LUT NaN at n={n}, a={a}, g={g}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// nlooks above the cap collapses onto the same cached LUT as the cap, so
+    /// e.g. 10_000 looks gives byte-identical costs to 80 looks.
+    #[test]
+    fn high_nlooks_shares_capped_lut() {
+        let at_cap = get_or_build_carballo(MAX_COST_MODEL_NLOOKS);
+        let way_over = get_or_build_carballo(10_000.0);
+        assert!(
+            std::ptr::eq(at_cap, way_over),
+            "nlooks above the cap should reuse the capped LUT instance"
         );
     }
 

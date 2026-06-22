@@ -98,6 +98,28 @@ class TestUnwrap:
         assert unw.dtype == np.float32
         assert unw.shape == (m, n)
 
+    @pytest.mark.parametrize("bad", [0.0, 0.5, -1.0, np.nan])
+    def test_nlooks_below_one_raises(self, bad):
+        """Nonphysical nlooks (< 1 or NaN) must raise early, not panic in Rust."""
+        igram = np.ones((8, 8), dtype=np.complex64)
+        corr = np.ones((8, 8), dtype=np.float32)
+        with pytest.raises(ValueError, match="nlooks"):
+            ww.unwrap(igram, corr, nlooks=bad)
+
+    def test_huge_nlooks_warns_but_succeeds(self, caplog):
+        """A huge effective-looks value (e.g. a 100x100 multilook) must not
+        crash or produce NaN; it is capped for the cost model with a warning."""
+        y, x = np.ogrid[-2:2:64j, -2:2:64j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.full(igram.shape, 0.99, dtype=np.float32)
+
+        with caplog.at_level("WARNING", logger="whirlwind"):
+            unw, cc = ww.unwrap(igram, corr, nlooks=10_000.0)
+        assert np.all(np.isfinite(unw)), "huge nlooks produced non-finite phase"
+        assert cc.dtype == np.uint32
+        assert any("cost-model cap" in r.message for r in caplog.records)
+
     def test_unwrap_returns_conncomp(self):
         """Default path returns (phase, conncomp); Goldstein off by default."""
         y, x = np.ogrid[-2:2:128j, -2:2:128j]
