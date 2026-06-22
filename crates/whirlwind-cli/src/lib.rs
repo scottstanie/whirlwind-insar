@@ -420,6 +420,19 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
     } = args;
     let bridge = !no_bridge;
 
+    // Reject nonphysical looks early (NaN included), and note the high-end cap.
+    if nlooks.is_nan() || nlooks < 1.0 {
+        bail!("--nlooks must be a finite value >= 1, got {nlooks}");
+    }
+    if nlooks > whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS {
+        eprintln!(
+            "warning: --nlooks {nlooks} exceeds the cost-model cap of {}; using {} \
+             (the Lee 1994 phase PDF has effectively converged by then).",
+            whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS,
+            whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS,
+        );
+    }
+
     let ofmt = resolve_out_format(out_format, &out);
     let conncomp_out = if no_conncomp {
         None

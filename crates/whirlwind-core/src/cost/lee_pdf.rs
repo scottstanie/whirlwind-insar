@@ -48,7 +48,10 @@ fn lanczos_lgamma(x: f64) -> f64 {
 /// `alpha` is the phase (radians, any real); `gamma` ∈ [0, 1); `nlooks` ≥ 1.
 pub fn pdf(alpha: f32, gamma: f32, nlooks: f32) -> f32 {
     assert!((0.0..1.0).contains(&gamma), "gamma must be in [0, 1)");
-    assert!(nlooks >= 1.0);
+    assert!(
+        nlooks >= 1.0,
+        "nlooks must be >= 1 for the Lee (1994) multilook phase PDF, got {nlooks}"
+    );
     let g = gamma as f64;
     let a = alpha as f64;
     let n = nlooks as f64;

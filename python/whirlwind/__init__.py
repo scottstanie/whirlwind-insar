@@ -47,6 +47,34 @@ _interpolate = interpolate
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+# Effective looks above this are capped when building the Lee (1994) cost LUTs.
+# The PDF is already a near-delta spike there (the cost shape stops changing),
+# and that many *independent* looks is not physically reachable from correlated
+# multilook windows. Keep in sync with `MAX_COST_MODEL_NLOOKS` in
+# crates/whirlwind-core/src/cost/lut.rs.
+_MAX_COST_MODEL_NLOOKS = 80.0
+
+
+def _validate_nlooks(nlooks: float) -> None:
+    """Reject nonphysical ``nlooks`` early, and warn when it exceeds the cap.
+
+    A clear ``ValueError`` here beats a Rust panic deep in the cost-LUT build
+    (which is what ``nlooks < 1`` triggers via the Lee 1994 PDF assert). The
+    ``not (nlooks >= 1)`` form also rejects ``NaN``.
+    """
+    if not (nlooks >= 1.0):
+        raise ValueError(f"nlooks must be a finite value >= 1, got {nlooks!r}")
+    if nlooks > _MAX_COST_MODEL_NLOOKS:
+        logger.warning(
+            "nlooks=%g exceeds the cost-model cap of %g; the Lee (1994) phase "
+            "PDF is already a near-delta spike by then, so the cost model uses "
+            "%g looks. (That many independent looks is rarely physical from "
+            "correlated multilook windows.)",
+            nlooks,
+            _MAX_COST_MODEL_NLOOKS,
+            _MAX_COST_MODEL_NLOOKS,
+        )
+
 
 def unwrap_crlb_stack(
     igram_cube: "NDArray[np.complex64]",
@@ -231,9 +259,11 @@ def unwrap(
         Sample coherence in ``[0, 1]``, same shape as ``igram``. ``NaN`` is
         treated as nodata (set to ``0`` with a warning).
     nlooks : float
-        Effective number of looks used to estimate ``corr`` (at least 1). A
-        higher number of looks means higher confidence in ``corr`` and sets the
-        width of the coherence cost model.
+        Effective number of looks used to estimate ``corr``. Must be at least
+        ``1`` (values below raise ``ValueError``). A higher number of looks
+        means higher confidence in ``corr`` and a narrower coherence cost model.
+        Very large values (above ~80 looks) are capped for the cost model, with
+        a warning, since the phase PDF has effectively converged by then.
     mask : ndarray of bool, optional
         Valid-pixel mask, ``True`` = valid. Defaults to ``(igram != 0) &
         (corr > 0)``, so exact-zero phase or zero-coherence pixels are excluded.
@@ -337,6 +367,8 @@ def unwrap(
     conncomp : ndarray of uint32, shape ``(m, n)``
         Connected-component labels; ``0`` = background / dropped.
     """
+    _validate_nlooks(nlooks)
+
     # NaN inputs are treated as nodata: zero them (so the default mask drops
     # them) and warn, rather than letting a NaN propagate through the solve.
     igram = np.ascontiguousarray(igram, dtype=np.complex64)
