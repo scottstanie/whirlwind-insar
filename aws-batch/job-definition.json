@@ -1,0 +1,41 @@
+{
+  "jobDefinitionName": "whirlwind-gunw",
+  "type": "container",
+  "platformCapabilities": ["FARGATE"],
+  "containerProperties": {
+    "image": "ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/whirlwind-gunw:latest",
+    "command": ["--help"],
+    "jobRoleArn": "arn:aws:iam::ACCOUNT_ID:role/whirlwind-gunw-job-role",
+    "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/whirlwind-gunw-exec-role",
+    "resourceRequirements": [
+      { "type": "VCPU", "value": "4" },
+      { "type": "MEMORY", "value": "30720" }
+    ],
+    "ephemeralStorage": { "sizeInGiB": 50 },
+    "networkConfiguration": { "assignPublicIp": "ENABLED" },
+    "fargatePlatformConfiguration": { "platformVersion": "LATEST" },
+    "runtimePlatform": {
+      "cpuArchitecture": "X86_64",
+      "operatingSystemFamily": "LINUX"
+    },
+    "environment": [{ "name": "MPLBACKEND", "value": "Agg" }],
+    "secrets": [
+      {
+        "name": "EARTHDATA_USERNAME",
+        "valueFrom": "arn:aws:secretsmanager:us-west-2:ACCOUNT_ID:secret:earthdata-login-XXXXXX:username::"
+      },
+      {
+        "name": "EARTHDATA_PASSWORD",
+        "valueFrom": "arn:aws:secretsmanager:us-west-2:ACCOUNT_ID:secret:earthdata-login-XXXXXX:password::"
+      }
+    ],
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "/aws/batch/whirlwind-gunw",
+        "awslogs-region": "us-west-2",
+        "awslogs-stream-prefix": "ww"
+      }
+    }
+  }
+}

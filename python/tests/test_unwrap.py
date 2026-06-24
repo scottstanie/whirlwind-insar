@@ -168,16 +168,56 @@ class TestUnwrap:
     def test_conncomp_reliability_raises_to_more_conservative(self):
         """Raising `conncomp_reliability` cuts more edges (more conservative):
         an absurdly high threshold cuts every edge, so all pixels are isolated
-        and dropped below the size floor, labeling nothing."""
+        and dropped below the size floor, labeling nothing. `conncomp_min_coherence`
+        is set to None here to exercise the raw reliability knob directly."""
         y, x = np.ogrid[-2:2:128j, -2:2:128j]
         phase = (np.pi * (x + y)).astype(np.float32)
         igram = np.exp(1j * phase).astype(np.complex64)
         corr = np.ones(igram.shape, dtype=np.float32) * 0.95
 
-        _u, cc0 = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=0.0)
-        _u, cc_hi = ww.unwrap(igram, corr, nlooks=5.0, conncomp_reliability=1e12)
-        assert cc0.max() >= 1  # default labels the coherent ramp
+        _u, cc0 = ww.unwrap(
+            igram,
+            corr,
+            nlooks=5.0,
+            conncomp_min_coherence=None,
+            conncomp_reliability=0.0,
+        )
+        _u, cc_hi = ww.unwrap(
+            igram,
+            corr,
+            nlooks=5.0,
+            conncomp_min_coherence=None,
+            conncomp_reliability=1e12,
+        )
+        assert cc0.max() >= 1  # raw reliability 0 labels the coherent ramp
         assert cc_hi.max() == 0  # everything cut -> nothing survives the floor
+
+    def test_conncomp_min_coherence_gates_and_matches_reliability(self):
+        """`conncomp_min_coherence` (the default knob) is more conservative as it
+        rises, and is exactly equivalent to passing the mapped raw reliability."""
+        y, x = np.ogrid[-2:2:128j, -2:2:128j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.full(igram.shape, 0.9, np.float32)
+
+        # The gentle 0.08 default keeps the coherent ramp labeled.
+        _u, cc_def = ww.unwrap(igram, corr, nlooks=16.0)
+        assert cc_def.max() >= 1
+        # A high target min-coherence is strictly more conservative than off.
+        _u, cc_all = ww.unwrap(igram, corr, nlooks=16.0, conncomp_min_coherence=None)
+        _u, cc_strict = ww.unwrap(igram, corr, nlooks=16.0, conncomp_min_coherence=0.99)
+        assert (cc_strict > 0).mean() < (cc_all > 0).mean()
+        # min_coherence == passing the mapped raw reliability with min_coh None.
+        r = ww.conncomp_reliability_from_coherence(0.5, 16.0)
+        _u, cc_mc = ww.unwrap(igram, corr, nlooks=16.0, conncomp_min_coherence=0.5)
+        _u, cc_rl = ww.unwrap(
+            igram,
+            corr,
+            nlooks=16.0,
+            conncomp_min_coherence=None,
+            conncomp_reliability=r,
+        )
+        np.testing.assert_array_equal(cc_mc, cc_rl)
 
     def test_conncomp_reliability_from_coherence(self):
         """The coherence->reliability helper is monotonic and matches the

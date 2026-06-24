@@ -33,3 +33,6 @@ pngs/
 paper/
 # Session transcripts / agent dumps (e.g. 2026-05-28-...-opus-...txt)
 *-opus-*.txt
+
+# Account-specific AWS run notes (kept local)
+aws-batch/setup.md

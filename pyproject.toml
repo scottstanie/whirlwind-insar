@@ -101,4 +101,5 @@ whirlwind-orig = { path = "../whirlwind" }
 # Diagnostic and prototype scripts favor compact, interactive code. Keep Ruff's
 # syntax and undefined-name checks, but do not enforce package-style structure.
 "scripts/**/*.py" = ["E401", "E402", "E731", "E741", "F401", "F541"]
+"aws-batch/**/*.py" = ["E401", "E402", "E731", "E741", "F401", "F541"]
 "experiments/**/*.py" = ["E741"]

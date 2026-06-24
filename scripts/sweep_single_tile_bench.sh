@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Single-tile (verified) benchmark sweep over the NISAR GUNW frames.
 #
-# Runs the VERIFIED single-tile path (`bench_nisar_gunw_whirlwind.py --solver
-# linear --nlooks 16`) on each frame in its OWN process, ONE AT A TIME (single-
+# Runs the VERIFIED single-tile path (`bench_nisar_gunw_whirlwind.py
+# --nlooks 16`) on each frame in its OWN process, ONE AT A TIME (single-
 # tile whole-image is ~6.6 GB/frame - never run these concurrently; see the
 # concurrency note in memory). Captures per-frame:
 #   * runtime + ambiguity match/percomp + a 3-panel plot   (from the bench)
@@ -43,7 +43,7 @@ for h5 in "$H5DIR"/*.h5; do
   fi
   printf '>>> [%d] %s\n' "$i" "$frame"
   /usr/bin/time -l python scripts/bench_nisar_gunw_whirlwind.py \
-    --local-h5 "$h5" --solver linear --nlooks "$NLOOKS" \
+    --local-h5 "$h5" --nlooks "$NLOOKS" \
     --out-dir "$OUT/$frame" $FORCE_FLAG \
     > "$OUT/$frame.stdout" 2> "$OUT/$frame.time" || {
       printf '    FRAME FAILED (exit %d) - see %s\n' "$?" "$OUT/$frame.time"

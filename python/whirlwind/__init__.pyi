@@ -47,6 +47,7 @@ def unwrap(
     interp_min_radius: int = ...,
     interp_alpha: float = ...,
     conncomp_algorithm: str = ...,
+    conncomp_min_coherence: float | None = ...,
     conncomp_reliability: float = ...,
     cost_threshold: int = ...,
     conncomp_cycle_prob: float | None = ...,

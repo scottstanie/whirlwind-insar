@@ -5,7 +5,7 @@
 The default in 0.3.0 is the SNAPHU-faithful ambiguity-wiggle grow:
 `conncomp_algorithm="snaphu"` in Python and `--conncomp-algorithm snaphu` in the CLI. It recovers each pixel edge's achieved integer ambiguity from the final unwrapped phase and cuts an edge where a +/-1 cycle "wiggle" against SNAPHU's convex smooth cost is no more expensive than the achieved output.
 
-If you only remember one thing: the default `conncomp_reliability=0` is the calibration-free SNAPHU wiggle test. Raise it only when you want a more conservative coverage mask that drops low-coherence pixels to label `0`.
+If you only remember one thing: the default `conncomp_min_coherence=0.08` drops only genuinely decorrelated pixels (so `conncomp == 0` works as a basic reliability mask), without fragmenting the map. Set `conncomp_min_coherence=None` for the older calibration-free behavior (`conncomp_reliability=0`, which labels every reliably unwrapped pixel including very low coherence), or raise it toward `0.1-0.15` for production-SNAPHU-like coverage (at the cost of more fragments — see below).
 
 ## Default Knobs
 
@@ -14,8 +14,8 @@ All Python names below are keyword arguments to [`unwrap`](ALGORITHM.md). CLI na
 | Knob                                                                                           | What it does                                                                                                                           | Direction                                                            |
 | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `conncomp_algorithm` (default `"snaphu"`)                                                      | Selects the conncomp grower. `"snaphu"` is the default ambiguity-wiggle path; `"linear"` opts into the legacy raw coherence-cost grow. | use `"linear"` only for old behavior                                 |
-| `conncomp_reliability` (default `0.0`)                                                         | SNAPHU path only. Threshold in inverse-variance (`1/sigma^2`) units; the native raw threshold is this value times `1_000_000`.         | higher -> fewer labeled low-coherence pixels, usually more fragments |
-| `conncomp_min_coherence` (CLI) / `conncomp_reliability_from_coherence(gamma, nlooks)` (Python) | Convenience mapping from a target minimum coherence to `conncomp_reliability`. For `nlooks=16`, `gamma=0.3` maps to about `3.2`.       | higher gamma -> stricter coverage                                    |
+| `conncomp_min_coherence` (default `0.08`, Python + CLI)                                        | SNAPHU path only. Drop (label `0`) pixels roughly below this coherence, so `conncomp > 0` is a reliability mask. `0.08` trims only decorrelated pixels; `None` (Python) / `<= 0` (CLI) uses `conncomp_reliability` instead. Maps to reliability via `conncomp_reliability_from_coherence(gamma, nlooks)`. | higher gamma -> stricter coverage, more fragments above ~0.1 |
+| `conncomp_reliability` (default `0.0`)                                                         | SNAPHU path, used only when `conncomp_min_coherence` is `None`/`<=0`. Threshold in inverse-variance (`1/sigma^2`) units; native raw threshold is this times `1_000_000`. `0` labels every reliably unwrapped pixel.                                                                                       | higher -> fewer labeled low-coherence pixels, usually more fragments |
 | `min_size_px` (default `100`)                                                                  | Discard components smaller than this many pixels.                                                                                      | higher -> fewer tiny components                                      |
 | `max_ncomps` (default `1024`)                                                                  | Keep only the N largest components.                                                                                                    | lower -> fewer labels                                                |
 
@@ -45,13 +45,16 @@ The reliability sweep showed why a positive threshold should not be the package 
 | D_075 |                     64.4 / 1 |                        99.9 / 3 | `min_coherence=0.20` |  62.3 / 28 |
 | A_030 |                     81.8 / 3 |                       100.0 / 3 | `min_coherence=0.15` | 72.1 / 125 |
 
-So the default is intentionally `0`: it gives the stable SNAPHU-style partition. Use a positive `conncomp_reliability` when downstream processing needs conservative coverage more than compact component labels.
+That sweep tested `min_coherence` 0.15-0.20, where fragmentation is real, and concluded the default should be `0`. A later sweep at the **gentle** end (2026-06-24) filled in the gap: re-labeling the authoritative `ww.unwrap` phase of all 13 NISAR frames at `min_coherence=0.08` keeps the component count **identical to the `0.0` baseline on every frame** (e.g. A_016 8->8, A_030 3->3, A_035 5->5, D_077 1->1) while dropping only 0.1-0.8% of pixels (the genuinely decorrelated ones). The fragmentation cliff starts at ~0.10 (A_028 2->8, D_075 3->9). So `0.08` is a safe sweet spot just below the cliff: it gives the reliability-mask behavior most users expect from `conncomp == 0` without splintering the partition.
+
+Hence the default is now `conncomp_min_coherence=0.08` (was `conncomp_reliability=0`). Note `0.08` only removes the lowest-coherence junk; it does **not** match production SNAPHU's overall conservatism (production is also gated by tile cost thresholds and region-size rules), so whirlwind still labels more than production on many frames - by design, since whirlwind's components mark unwrap self-consistency, not a coherence mask. Set `conncomp_min_coherence=None` (then `conncomp_reliability=0`) for the older label-everything behavior, or raise toward `0.1-0.15` only if you need production-like coverage and can tolerate more fragments.
 
 ## Recipes
 
-- Keep the 0.3.0 default: use `conncomp_algorithm="snaphu"` and `conncomp_reliability=0.0`.
-- Want fewer low-coherence pixels labeled: raise `conncomp_reliability`, or in the CLI use `--conncomp-min-coherence 0.15` to `0.3`.
-- Too many tiny labels after raising reliability: raise `min_size_px` or lower `max_ncomps`.
+- Keep the default: `conncomp_algorithm="snaphu"` with `conncomp_min_coherence=0.08` (drops only decorrelated pixels; `conncomp == 0` is a basic mask).
+- Want the old label-everything behavior: `conncomp_min_coherence=None` (so `conncomp_reliability=0`), or in the CLI `--conncomp-min-coherence 0`.
+- Want production-SNAPHU-like coverage: raise `conncomp_min_coherence` toward `0.1-0.15` (expect more fragments above ~0.1).
+- Too many tiny labels after raising it: raise `min_size_px` or lower `max_ncomps`.
 - Need the old 0.2.x behavior for comparison: set `conncomp_algorithm="linear"` / `--conncomp-algorithm linear`.
 - Want a hard coherence floor: post-process the labels, e.g. `cc[corr < 0.3] = 0`.
 

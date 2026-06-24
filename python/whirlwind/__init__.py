@@ -223,6 +223,7 @@ def unwrap(
     interp_min_radius: int = 0,
     interp_alpha: float = 0.75,
     conncomp_algorithm: str = "snaphu",
+    conncomp_min_coherence: "float | None" = 0.08,
     conncomp_reliability: float = 0.0,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
@@ -323,18 +324,28 @@ def unwrap(
         ``conncomp_reliability``. ``"linear"`` is the older global
         coherence-cost grow, tuned by ``cost_threshold`` / ``conncomp_sigma`` /
         ``conncomp_cycle_prob``.
+    conncomp_min_coherence : float or None, default 0.08
+        Target minimum coherence for the default ("snaphu") connected components:
+        pixels whose coherence is roughly below this are dropped (labeled ``0``),
+        so ``conncomp == 0`` works as a reliability mask, the way most users
+        expect from SNAPHU. The default ``0.08`` drops only genuinely decorrelated
+        pixels and barely changes coverage on good scenes. Set to ``None`` to use
+        ``conncomp_reliability`` directly (with the default ``0`` that labels every
+        reliably unwrapped pixel, even very low coherence). Takes precedence over
+        ``conncomp_reliability`` when not ``None``. Only used when
+        ``conncomp_algorithm="snaphu"``.
     conncomp_reliability : float, default 0.0
-        Conservativeness knob for the default ("snaphu") connected components, in
-        inverse-variance (``1 / sigma2``) units, so values are small. An edge
+        Lower-level conservativeness knob for the default ("snaphu") connected
+        components, in inverse-variance (``1 / sigma2``) units, so values are
+        small. Used only when ``conncomp_min_coherence`` is ``None``. An edge
         becomes a component boundary when a one-cycle ambiguity flip across it is
         no more expensive than the achieved flow; an edge of coherence ``gamma``
         is cut roughly when ``conncomp_reliability`` exceeds ``1 / sigma2(gamma)``.
-        The default of ``0`` labels essentially every reliably unwrapped pixel.
-        Raise it to be more conservative: more low-coherence interior edges are
-        cut, so those pixels drop to label ``0`` (background). Typical values are
-        a few to a few tens. To pick one from a target minimum coherence, use
-        :func:`conncomp_reliability_from_coherence` (e.g. ``coherence=0.3`` ->
-        about 3.2). Only used when ``conncomp_algorithm="snaphu"``.
+        ``0`` labels essentially every reliably unwrapped pixel; raise it to cut
+        more low-coherence interior edges. To pick one from a target minimum
+        coherence use :func:`conncomp_reliability_from_coherence` (e.g.
+        ``coherence=0.3`` -> about 3.2), or just set ``conncomp_min_coherence``.
+        Only used when ``conncomp_algorithm="snaphu"``.
     cost_threshold : int, default 50
         Connected-component boundary threshold in raw cost units, for the
         ``"linear"`` algorithm only. An edge becomes a boundary when its
@@ -471,6 +482,15 @@ def unwrap(
     # but using the final phase keeps it unambiguous. "linear" returns the legacy
     # coherence-cost grow already computed above.
     if conncomp_algorithm == "snaphu":
+        # A target minimum coherence (the default, and the intuitive knob) takes
+        # precedence over a raw 1/sigma2 reliability: components keep edges above
+        # ~conncomp_min_coherence and drop (label 0) those below, so conncomp > 0
+        # acts as a reliability mask. Pass conncomp_min_coherence=None to use the
+        # raw conncomp_reliability instead (0 = label every unwrapped pixel).
+        if conncomp_min_coherence is not None:
+            conncomp_reliability = conncomp_reliability_from_coherence(
+                conncomp_min_coherence, nlooks
+            )
         # The public knob is in 1/sigma2 units; the native grow takes the raw
         # convex-cost reliability threshold (this * COST_SCALE * nshortcycle**2).
         reliability_raw = round(conncomp_reliability * CONNCOMP_RELIABILITY_UNIT)
