@@ -208,6 +208,28 @@ def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> floa
     return 1.0 / sigma2
 
 
+def conncomp_min_coherence_auto(nlooks: float) -> float:
+    """Looks-aware default for ``conncomp_min_coherence``.
+
+    A coherence value means different things at different looks: the sample
+    coherence is biased high, and that *noise floor* (the coherence you would
+    estimate from pure noise) is large at few looks and small at many, scaling
+    like ``1 / sqrt(nlooks)``. A fixed coherence cutoff is therefore not
+    looks-aware. This returns a gentle floor -- about one third of the noise
+    floor -- so it drops only pixels whose coherence is essentially noise while
+    staying well below the level that would fragment the components:
+
+    ``min_coherence = 0.32 / sqrt(nlooks)`` (clipped to ``[0.02, 0.30]``),
+
+    which equals ``0.08`` at ``nlooks=16`` (the value validated on the NISAR
+    GUNW frames). At few looks it rises (but coherence is never observed that
+    low there, so nothing is dropped); at many looks it falls, so genuinely
+    decorrelated pixels -- which are only *observable* at high looks -- are
+    dropped instead of trusted.
+    """
+    return min(max(0.32 / (nlooks**0.5), 0.02), 0.30)
+
+
 def unwrap(
     igram: "NDArray[np.complex64]",
     corr: "NDArray[np.float32]",
@@ -223,7 +245,7 @@ def unwrap(
     interp_min_radius: int = 0,
     interp_alpha: float = 0.75,
     conncomp_algorithm: str = "snaphu",
-    conncomp_min_coherence: "float | None" = 0.08,
+    conncomp_min_coherence: "float | str | None" = "auto",
     conncomp_reliability: float = 0.0,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
@@ -324,15 +346,18 @@ def unwrap(
         ``conncomp_reliability``. ``"linear"`` is the older global
         coherence-cost grow, tuned by ``cost_threshold`` / ``conncomp_sigma`` /
         ``conncomp_cycle_prob``.
-    conncomp_min_coherence : float or None, default 0.08
+    conncomp_min_coherence : float or "auto" or None, default "auto"
         Target minimum coherence for the default ("snaphu") connected components:
         pixels whose coherence is roughly below this are dropped (labeled ``0``),
         so ``conncomp == 0`` works as a reliability mask, the way most users
-        expect from SNAPHU. The default ``0.08`` drops only genuinely decorrelated
-        pixels and barely changes coverage on good scenes. Set to ``None`` to use
-        ``conncomp_reliability`` directly (with the default ``0`` that labels every
-        reliably unwrapped pixel, even very low coherence). Takes precedence over
-        ``conncomp_reliability`` when not ``None``. Only used when
+        expect from SNAPHU. The default ``"auto"`` is a gentle, *looks-aware*
+        floor, :func:`conncomp_min_coherence_auto` (``0.32 / sqrt(nlooks)``, e.g.
+        ``0.08`` at ``nlooks=16``), so the cutoff scales with the coherence noise
+        floor instead of being a fixed number that means different things at
+        different looks. Pass a float to set a fixed coherence cutoff, or ``None``
+        to use ``conncomp_reliability`` directly (with the default ``0`` that
+        labels every reliably unwrapped pixel, even very low coherence). Takes
+        precedence over ``conncomp_reliability`` when not ``None``. Only used when
         ``conncomp_algorithm="snaphu"``.
     conncomp_reliability : float, default 0.0
         Lower-level conservativeness knob for the default ("snaphu") connected
@@ -488,9 +513,12 @@ def unwrap(
         # acts as a reliability mask. Pass conncomp_min_coherence=None to use the
         # raw conncomp_reliability instead (0 = label every unwrapped pixel).
         if conncomp_min_coherence is not None:
-            conncomp_reliability = conncomp_reliability_from_coherence(
-                conncomp_min_coherence, nlooks
+            gamma = (
+                conncomp_min_coherence_auto(nlooks)
+                if conncomp_min_coherence == "auto"
+                else float(conncomp_min_coherence)
             )
+            conncomp_reliability = conncomp_reliability_from_coherence(gamma, nlooks)
         # The public knob is in 1/sigma2 units; the native grow takes the raw
         # convex-cost reliability threshold (this * COST_SCALE * nshortcycle**2).
         reliability_raw = round(conncomp_reliability * CONNCOMP_RELIABILITY_UNIT)
@@ -529,6 +557,7 @@ __all__ = [
     "bridge_components",
     "compute_residues",
     "conncomp_reliability_from_coherence",
+    "conncomp_min_coherence_auto",
     "cost_threshold_from_cycle_prob",
     "goldstein",
     "interpolate",

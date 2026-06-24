@@ -36,3 +36,4 @@ paper/
 
 # Account-specific AWS run notes (kept local)
 aws-batch/setup.md
+aws-batch/local-TEARDOWN.md

@@ -322,12 +322,13 @@ struct Cli {
     #[arg(long, default_value_t = 0.0)]
     conncomp_reliability: f64,
     /// Drop (label conncomp 0) pixels roughly below this coherence, so conncomp>0
-    /// is a reliability mask like production SNAPHU. Default 0.08 drops only
-    /// genuinely decorrelated pixels. Takes precedence over --conncomp-reliability;
-    /// set to 0 (or below) to use --conncomp-reliability instead (0 = label every
-    /// unwrapped pixel). Only used by the `snaphu` algorithm.
-    #[arg(long, default_value_t = 0.08)]
-    conncomp_min_coherence: f64,
+    /// is a reliability mask. Default "auto" is a gentle looks-aware floor
+    /// (0.32/sqrt(nlooks), e.g. 0.08 at 16 looks) that scales with the coherence
+    /// noise floor. Pass a number for a fixed coherence cutoff, or "off" to use
+    /// --conncomp-reliability instead (0 = label every unwrapped pixel). Takes
+    /// precedence over --conncomp-reliability. Only used by the `snaphu` algorithm.
+    #[arg(long, default_value = "auto")]
+    conncomp_min_coherence: String,
     /// output unwrapped phase; format chosen by --out-format (default:
     /// by extension)
     #[arg(long)]
@@ -683,8 +684,17 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
                 // over the raw --conncomp-reliability. The native grow wants the
                 // raw convex-cost threshold, = scaled * COST_SCALE * NSHORTCYCLE^2.
                 const RELIABILITY_UNIT: f64 = 100.0 * 100.0 * 100.0; // 1e6
-                let scaled = if conncomp_min_coherence > 0.0 {
-                    let g = conncomp_min_coherence.clamp(1e-3, 0.999);
+                let gamma = match conncomp_min_coherence.as_str() {
+                    "auto" => (0.32 / (nlooks as f64).sqrt()).clamp(0.02, 0.30),
+                    "off" | "none" => 0.0,
+                    s => s.parse::<f64>().unwrap_or_else(|_| {
+                        panic!(
+                            "--conncomp-min-coherence must be 'auto', 'off', or a number, got {s:?}"
+                        )
+                    }),
+                };
+                let scaled = if gamma > 0.0 {
+                    let g = gamma.clamp(1e-3, 0.999);
                     let sigma2 = (1.0 - g * g) / (2.0 * nlooks as f64 * g * g);
                     1.0 / sigma2
                 } else {

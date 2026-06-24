@@ -192,6 +192,23 @@ class TestUnwrap:
         assert cc0.max() >= 1  # raw reliability 0 labels the coherent ramp
         assert cc_hi.max() == 0  # everything cut -> nothing survives the floor
 
+    def test_conncomp_min_coherence_auto_default(self):
+        """The default conncomp_min_coherence='auto' is the looks-aware floor
+        (0.32/sqrt(nlooks)); at nlooks=16 it is exactly the validated 0.08."""
+        assert ww.conncomp_min_coherence_auto(16.0) == pytest.approx(0.08)
+        # Looks-aware: fewer looks -> higher floor, more looks -> lower.
+        assert ww.conncomp_min_coherence_auto(4.0) > ww.conncomp_min_coherence_auto(
+            64.0
+        )
+        y, x = np.ogrid[-2:2:128j, -2:2:128j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.full(igram.shape, 0.9, np.float32)
+        # The "auto" default at nlooks=16 must match an explicit 0.08.
+        _u, cc_auto = ww.unwrap(igram, corr, nlooks=16.0)
+        _u, cc_008 = ww.unwrap(igram, corr, nlooks=16.0, conncomp_min_coherence=0.08)
+        np.testing.assert_array_equal(cc_auto, cc_008)
+
     def test_conncomp_min_coherence_gates_and_matches_reliability(self):
         """`conncomp_min_coherence` (the default knob) is more conservative as it
         rises, and is exactly equivalent to passing the mapped raw reliability."""

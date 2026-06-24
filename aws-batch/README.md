@@ -14,7 +14,6 @@ ASF download URL, or an `s3://` URI and it fetches the product first.
 - `submit_batch.py` — submit one Batch job per product.
 - `sample_granules.txt` — three sample products to start with.
 - `isce3_integration/` — wiring whirlwind into the isce3 GUNW workflow.
-- `TEARDOWN.md` — delete every AWS resource created here, in order.
 - `ARCH_COMPARISON.md` — x86_64 vs ARM64: results are identical, ARM64 is cheaper.
 
 ---

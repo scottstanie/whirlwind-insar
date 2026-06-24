@@ -693,12 +693,18 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         gc.collect()
         rss0 = get_rss_mb()
         t0 = time.perf_counter()
+        # "auto" / "none" pass through; a number becomes a fixed coherence cutoff.
+        mc = args.conncomp_min_coherence
+        if isinstance(mc, str) and mc.lower() in ("none", "off"):
+            mc = None
+        elif isinstance(mc, str) and mc.lower() != "auto":
+            mc = float(mc)
         ww_unw, ww_cc = ww.unwrap(
             ig_complex,
             coh_solver,
             float(args.nlooks),
             mask,
-            conncomp_min_coherence=args.conncomp_min_coherence,
+            conncomp_min_coherence=mc,
         )
         runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
@@ -858,13 +864,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--conncomp-min-coherence",
-        type=float,
-        default=0.08,
-        help="Drop (label conncomp=0) pixels roughly below this coherence, so "
-        "conncomp>0 acts as a reliability mask like production SNAPHU. Default 0.08 "
-        "(whirlwind's library default) drops only genuinely decorrelated pixels; "
-        "raise toward ~0.1-0.15 for production-like coverage, or pass a tiny value "
-        "like 0.001 to label every unwrapped pixel.",
+        default="auto",
+        help="Coherence floor below which conncomp drops pixels to 0 (a reliability "
+        "mask). Default 'auto' is whirlwind's gentle looks-aware floor "
+        "(0.32/sqrt(nlooks), e.g. 0.08 at 16 looks). Pass a number for a fixed "
+        "cutoff, or 'none' to label every unwrapped pixel.",
     )
     p.add_argument("--pol", default=None, help="Polarization, e.g. HH. Default: first.")
     p.add_argument(
