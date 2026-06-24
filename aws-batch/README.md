@@ -1,11 +1,11 @@
 # Comparing whirlwind against NISAR L2 GUNW products
 
 This directory packages a self-service benchmark so anyone on the NISAR team can
-run the **whirlwind** phase unwrapper on real NISAR L2 GUNW products and see, for
+run the whirlwind phase unwrapper on real NISAR L2 GUNW products and see, for
 themselves, how closely it matches the production unwrapped phase and connected
 components — on one product or on hundreds, via AWS Batch.
 
-You do **not** need to pre-download anything: point the tool at a granule name, an
+You do not need to pre-download anything: point the tool at a granule name, an
 ASF download URL, or an `s3://` URI and it fetches the product first.
 
 - `compare_gunw.py` — the comparison entrypoint (portable, one file).
@@ -22,7 +22,7 @@ ASF download URL, or an `s3://` URI and it fetches the product first.
 
 For each GUNW product, `compare_gunw.py`:
 
-1. Reads the production 80 m `unwrappedPhase` and **re-wraps** it to `[-pi, pi)`.
+1. Reads the production 80 m `unwrappedPhase` and re-wraps it to `[-pi, pi)`.
    That re-wrapped phase is the *only* phase input handed to whirlwind. This is
    an apples-to-apples test of the unwrapping algorithm: both unwrappers see the
    identical wrapped field on the identical grid.
@@ -36,8 +36,8 @@ For each GUNW product, `compare_gunw.py`:
 2. Reads the production `coherenceMagnitude` and the GUNW `mask` (water / subswath
    validity), and builds a valid-pixel mask.
 
-3. Runs `whirlwind.unwrap(igram, corr, nlooks, mask)` — the **exact public API** an
-   external user would call. This returns an unwrapped phase **and** SNAPHU-style
+3. Runs `whirlwind.unwrap(igram, corr, nlooks, mask)` — the exact public API an
+   external user would call. This returns an unwrapped phase and SNAPHU-style
    connected-component labels.
 
 4. Compares whirlwind's output to the production `unwrappedPhase` and
@@ -45,7 +45,7 @@ For each GUNW product, `compare_gunw.py`:
 
    | metric                                          | meaning                                                                                                                                                                                              |
    | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `ambiguity_match_frac`                          | fraction of valid pixels where whirlwind and the production unwrap agree on the integer 2π count, after removing a single global cycle offset. **1.0 = identical ambiguities.**                      |
+   | `ambiguity_match_frac`                          | fraction of valid pixels where whirlwind and the production unwrap agree on the integer 2π count, after removing a single global cycle offset. 1.0 = identical ambiguities.                      |
    | `ambiguity_match_frac_percomp`                  | same, but re-leveled within each production connected component first. This is the fair score across water/decorrelation gaps, where the absolute inter-region 2π offset is physically unobservable. |
    | `residual_wrapped_rmse_rad` / `_p95_abs_rad`    | RMSE / 95th-pct of `wrap(whirlwind − production)`; near 0 means the shapes agree.                                                                                                                    |
    | `prod_num_cc` / `ww_num_cc`                     | number of connected components in each.                                                                                                                                                              |
@@ -58,36 +58,30 @@ For each GUNW product, `compare_gunw.py`:
    (ww−prod) · ambiguity diff), and `<crop>_arrays.npz` (the rasters).
    Across all products: `summary.csv` and `summary.md`.
 
-This is a **regression / agreement** benchmark on the production grid, not a test
+This is a regression / agreement benchmark on the production grid, not a test
 of the full NISAR wrapped-product geocoding.
 
-### Connected-component coverage and `--conncomp-reliability`
+### Connected-component coverage
 
-The "conncomp coverage (ww−prod)" panel shows which unwrapper labeled each pixel
-as part of a component: red = whirlwind only, blue = production only, gray = both.
-By default whirlwind uses the calibration-free SNAPHU wiggle test
-(`conncomp_reliability=0`), which labels **every** unwrapped pixel — including
-low-coherence ones that production SNAPHU declines to label. On the cryo A_140
-frame (median coherence 0.15) whirlwind labels ~100% of valid pixels vs
-production's ~70%, so the low-coherence regions show up red.
+The "conncomp coverage (ww−prod)" panel shows which unwrapper labeled each pixel:
+red = whirlwind only, blue = production only, gray = both.
 
-Whether that is "too forgiving" is a downstream-policy question, not an
-unwrapping error (the 2π solution agrees with production at 99.8%). Many users
-treat `conncomp == 0` as a basic reliability mask, the way production SNAPHU
-behaves. To get that, pass **`--conncomp-min-coherence`** — pixels roughly below
-that coherence are dropped (labeled 0). On the cryo A_140 frame:
+whirlwind labels every pixel it unwrapped self-consistently, a larger set than
+production SNAPHU labels (production also drops pixels by tile cost and region-size
+rules). On the cryo A_140 frame (median coherence 0.15) whirlwind labels ~99% of
+valid pixels vs production's ~70%, so those regions show red. The 2π solution still
+agrees with production at 99.8%.
 
-| `--conncomp-min-coherence` | labeled fraction (recall)              |
-| -------------------------- | -------------------------------------- |
-| (default, off)             | 1.00 (labels everything down to ~0.03) |
-| 0.10                       | 0.82                                   |
-| 0.12                       | 0.67 (≈ production's 0.70)             |
-| 0.15                       | 0.35                                   |
+`--conncomp-min-coherence` sets the coherence below which conncomp labels a pixel
+0. The default `auto` is `0.32/sqrt(nlooks)` (0.08 at 16 looks); raise it to drop
+more low-coherence pixels, at the cost of more components. On A_140:
 
-So ~0.1–0.12 reproduces production's coverage here. The transition is steep and
-scene-dependent, so tune per dataset. (The raw `--conncomp-reliability` knob is
-the same thing in inverse-variance `1/sigma^2` units; `--conncomp-min-coherence`
-just maps a coherence to it via `ww.conncomp_reliability_from_coherence`.)
+| `--conncomp-min-coherence` | labeled fraction |
+| -------------------------- | ---------------- |
+| auto (0.08 at 16 looks)    | 0.99             |
+| 0.10                       | 0.82             |
+| 0.12                       | 0.67             |
+| 0.15                       | 0.35             |
 
 ---
 
@@ -114,7 +108,7 @@ uv run aws-batch/compare_gunw.py --inputs-file aws-batch/sample_granules.txt --o
 ```
 
 > Memory note: a full NISAR frame uses several GB and is solved single-threaded
-> at peak. The tool runs products **one at a time** on purpose; don't fan out
+> at peak. The tool runs products one at a time on purpose; don't fan out
 > multiple full-frame solves on one machine.
 
 ---
@@ -133,9 +127,9 @@ docker run --rm -e EARTHDATA_TOKEN="$EARTHDATA_TOKEN" \
   https://nisar.asf.earthdatacloud.nasa.gov/.../<ID>.h5 --out-dir /work/out
 ```
 
-**Apple Silicon / architecture:** the committed `job-definition.json` targets
+Apple Silicon / architecture: the committed `job-definition.json` targets
 `X86_64`. Either build for that target (`docker build --platform linux/amd64 ...`,
-emulated and slower on an M-series Mac), **or** — recommended for your own runs —
+emulated and slower on an M-series Mac), or — recommended for your own runs —
 switch to ARM64/Graviton, which is ~20% cheaper on Fargate and builds natively on
 Apple Silicon: set `runtimePlatform.cpuArchitecture` to `ARM64` in
 `job-definition.json` and build with `--platform linux/arm64`.
@@ -144,11 +138,11 @@ Apple Silicon: set `runtimePlatform.cpuArchitecture` to `ARM64` in
 
 ## Run on AWS Batch (lowest cost)
 
-**The single biggest cost lever is the region.** The ASF DAAC NISAR cloud
-holdings live in **`us-west-2`**; running Batch there keeps every download
-in-region, so there is **no data-egress charge** — you pay only for compute.
-Then: **Fargate Spot** (≈70% off on-demand, no instances to manage), right-sized
-memory, and optionally **ARM64/Graviton** (≈20% cheaper still).
+The single biggest cost lever is the region. The ASF DAAC NISAR cloud
+holdings live in `us-west-2`; running Batch there keeps every download
+in-region, so there is no data-egress charge — you pay only for compute.
+Then: Fargate Spot (≈70% off on-demand, no instances to manage), right-sized
+memory, and optionally ARM64/Graviton (≈20% cheaper still).
 
 Below, replace `ACCOUNT_ID`, the bucket, and the subnet/SG with your values.
 Commands use the `my-profile` profile for our sample run.
@@ -217,7 +211,7 @@ $AWS batch register-job-definition --cli-input-json file://aws-batch/job-definit
 
 ### 5. Create the Fargate Spot compute environment + queue
 
-Use a **public** subnet in your default VPC (so `assignPublicIp: ENABLED` reaches
+Use a public subnet in your default VPC (so `assignPublicIp: ENABLED` reaches
 the internet for EDL) and a security group that allows outbound (the default SG
 does).
 
@@ -270,8 +264,8 @@ uv run aws-batch/submit_batch.py \
 ### Rough cost
 
 In `us-west-2`, a full GUNW frame solves in single-digit minutes on 4 vCPU. At
-Fargate **Spot** rates that is on the order of **a cent or two per product**, plus
-a few MB of S3 for the figures/arrays and **zero egress** (in-region download).
+Fargate Spot rates that is on the order of a cent or two per product, plus
+a few MB of S3 for the figures/arrays and zero egress (in-region download).
 A few hundred products is dollars, not hundreds of dollars.
 
 ---

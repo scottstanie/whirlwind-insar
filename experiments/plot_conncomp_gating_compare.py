@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Show WHY a high coherence cutoff shatters whirlwind's conncomp.
+"""Plot whirlwind's conncomp under different coherence gating.
 
-For a few NISAR frames, plot the conncomp label map under different gating:
-production (GUNW), our gentle default (edge-cut min_coh=0.08), a SNAPHU-like
-cutoff via edge-cutting (0.28), and the same cutoff via pixel-masking (0.28).
-Both 0.28 variants fragment badly; this makes that visible.
+For a few NISAR frames, plots the conncomp label map for: production (GUNW), the
+default floor (edge-cut min_coh=0.08), a 0.28 cutoff via edge-cutting, and a 0.28
+cutoff via pixel-masking. The two 0.28 maps have many more components.
 """
 
 from __future__ import annotations

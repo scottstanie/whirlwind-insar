@@ -1,25 +1,13 @@
 #!/usr/bin/env python3
-"""PROTOTYPE: a looks-aware, gentle conncomp coherence floor.
+"""Plot a looks-aware conncomp coherence floor against the noise floor.
 
-Idea (from the user's point + the SNAPHU note): a coherence value means
-different things at different looks. The sample-coherence magnitude is biased
-high, and that bias floor -- the coherence you'd estimate from PURE NOISE -- is
-large at few looks and small at many. So a fixed cutoff (our shipped 0.08) is
-not looks-aware; it is nearly a no-op at low looks and may be too lax at very
-high looks.
+A coherence value means different things at different looks: the sample coherence
+is biased high, and the noise floor -- the coherence estimated from uncorrelated
+data -- falls as 1/sqrt(L). A fixed cutoff does not track it.
 
-This keeps the existing ambiguity-wiggle conncomp mechanism (no region merge,
-no pixel masking) and only makes the `conncomp_min_coherence` floor a function
-of looks. It stays GENTLE -- a fraction of the noise floor, well below the
-fragmentation cliff (~0.10 at L=16) -- so it never shatters the map. It is NOT
-trying to match production SNAPHU's coverage (that needs region-growing we are
-intentionally not adding).
-
-Calibration: pass through the validated 0.08 at L=16, and track the noise floor
-(~1/sqrt(L)) elsewhere. Compared here against SNAPHU's `1.25*(1.3/L + 0.14)`,
-which is much more aggressive (and would shatter our grow).
-
-Writes gunw_results/proto_looks_aware/min_coh_vs_looks.png and prints a table.
+Plots the candidate floor 0.32/sqrt(L) (= 0.08 at 16 looks) against the simulated
+noise floor and against SNAPHU's 1.25*(1.3/L + 0.14), and prints a table. Writes
+gunw_results/proto_looks_aware/min_coh_vs_looks.png.
 """
 
 from __future__ import annotations
@@ -50,11 +38,9 @@ def snaphu_rho0(nlooks: float) -> float:
 
 
 def simulate_noise_floor(nlooks: int, ntrials: int = 20000, rng_seed: int = 0) -> float:
-    """E[|gamma_hat|] from PURE NOISE (true coherence 0) with `nlooks` looks.
+    """Mean |gamma_hat| from uncorrelated data (true coherence 0) at `nlooks`.
 
-    Two independent complex-Gaussian series; sample coherence magnitude. Seeded
-    by deriving a fixed bit pattern from nlooks (Math.random is unavailable in
-    workflows, but this is a normal script so np.random is fine here).
+    Two independent complex-Gaussian series; mean sample-coherence magnitude.
     """
     rng = np.random.default_rng(rng_seed + nlooks)
     a = rng.standard_normal((ntrials, nlooks)) + 1j * rng.standard_normal(
@@ -110,8 +96,8 @@ def main() -> None:
     ax.set_xlabel("effective number of looks (L)")
     ax.set_ylabel("conncomp coherence floor")
     ax.set_title(
-        "Looks-aware conncomp floor: a gentle fraction of the noise floor\n"
-        "(stays below the ~0.10 fragmentation cliff; SNAPHU's cutoff would shatter our grow)"
+        "Conncomp coherence floor vs looks\n"
+        "(0.32/sqrt(L) is a fraction of the noise floor; SNAPHU's cutoff is higher)"
     )
     ax.set_xticks(looks)
     ax.set_xticklabels(looks)

@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Validate the proposed conncomp default (conncomp_min_coherence=0.08) across
-the 13 NISAR frames.
+"""Check a connected-component coherence floor across the NISAR frames.
 
-Re-labels the AUTHORITATIVE cached ``ww.unwrap`` phase (``ww_4way_final/<frame>_
-panels.npz``) via the exact native conncomp grow -- no re-unwrap, so it is fast
-and memory-safe (one frame at a time). For each frame it records labeled-fraction
-and component count at min-coherence 0.0 (the current default), 0.08 (proposed),
-and 0.10 (cliff context), and writes an 8-panel comparison figure (using the 0.08
-labels) for the NISAR team to view/compare.
+Re-labels the cached ``ww.unwrap`` phase (``ww_4way_final/<frame>_panels.npz``)
+with the native conncomp grow at a few coherence floors. There is no re-unwrap,
+so it is fast and runs one frame at a time. For each frame it records the labeled
+fraction and component count at min-coherence 0.0, 0.08, and 0.10, and writes an
+eight-panel comparison figure.
 
-The question this answers: does 0.08 keep the component count near the 0.0
-baseline (safe) or fragment the map (like 0.15-0.20 did in the 2026-06-19 sweep)?
+The question it answers: does a 0.08 floor hold the component count near the
+no-floor baseline, or does it fragment the map the way 0.15-0.20 does?
 """
 
 from __future__ import annotations

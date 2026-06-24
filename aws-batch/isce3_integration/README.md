@@ -10,11 +10,11 @@ runconfig:
       phase_unwrap:
         algorithm: whirlwind
         whirlwind:
-          nlooks:                  # blank -> estimated like snaphu's nlooks
+          nlooks:                  # blank -> isce3's effective-looks estimate (see below)
           mask:                    # optional valid-pixel mask file (nonzero = valid)
           bridge: true             # whirlwind's own region re-leveling post-pass
           downsample: 1            # >1 for noisy scenes (coarse-solve cycles)
-          conncomp_reliability: 0.0
+          conncomp_min_coherence: auto
           goldstein_alpha: 0.0
 ```
 
@@ -22,6 +22,16 @@ Everything else (crossmul, looks, preprocess/water/subswath masking, RUNW output
 datasets, statistics) is unchanged — whirlwind reads the same wrapped
 interferogram + coherence and writes the same `unwrappedPhase` /
 `connectedComponents` datasets that snaphu does.
+
+`nlooks` is the effective number of independent looks in the coherence estimate.
+When blank, the branch calls isce3's `get_effective_looks`, which computes it from
+the interferogram range/azimuth sample spacing and the SAR range/azimuth
+bandwidths (`n_e = k_r k_a d_r d_a / (rho_r rho_a)`) — the same value the snaphu
+branch falls back to. It is usually a non-integer (e.g. ~20-24 for a NISAR GUNW),
+lower than the raw multilook-window product because of oversampling and spatial
+correlation. whirlwind uses it for the coherence cost model and the conncomp
+coherence floor, so set it explicitly only if you know the effective looks of
+your coherence.
 
 `whirlwind` must be importable in the isce3 environment
 (`pip install whirlwind-insar`); it is imported lazily, only when this algorithm
@@ -62,7 +72,7 @@ elif algorithm == "whirlwind":
     if (unwrap_args["preprocess_wrapped_phase"]["enabled"] and mask is not None):
         valid = ~mask if valid is None else (valid & ~mask)
 
-    # nlooks: from config, else estimated exactly like the snaphu branch.
+    # nlooks: from config, else isce3's get_effective_looks (same as snaphu).
     if ww_cfg.get("nlooks") is not None:
         nlooks = ww_cfg["nlooks"]
     else:
@@ -75,7 +85,7 @@ elif algorithm == "whirlwind":
         valid,
         bridge=ww_cfg.get("bridge", True),
         downsample=ww_cfg.get("downsample", 1),
-        conncomp_reliability=ww_cfg.get("conncomp_reliability", 0.0),
+        conncomp_min_coherence=ww_cfg.get("conncomp_min_coherence", "auto"),
         goldstein_alpha=ww_cfg.get("goldstein_alpha", 0.0),
     )
     dst_h5[unw_path][:, :] = unw_array

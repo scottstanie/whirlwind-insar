@@ -140,13 +140,11 @@ whirlwind --ifg pair.diff --ifg-meta pair.off \
 - `--mask` also accepts snaphu-style flat byte masks (nonzero = valid).
 
 Connected components default to the SNAPHU-faithful ambiguity-wiggle grow
-(`--conncomp-algorithm snaphu`) with `--conncomp-min-coherence auto`, a gentle
-looks-aware coherence floor (`0.32/sqrt(nlooks)`, e.g. 0.08 at 16 looks) that
-drops only genuinely decorrelated pixels (so `conncomp == 0` is a basic
-reliability mask) without fragmenting the partition. Set
-`--conncomp-min-coherence off` for the older calibration-free behavior (label
-every reliably unwrapped pixel), or pass a number for a fixed cutoff. The legacy
-linear grow remains available with `--conncomp-algorithm linear`.
+(`--conncomp-algorithm snaphu`) with `--conncomp-min-coherence auto`, which labels
+`0` any pixel below a coherence floor of `0.32/sqrt(nlooks)` (0.08 at 16 looks).
+Set `--conncomp-min-coherence off` to label every reliably unwrapped pixel, or
+pass a number for a fixed cutoff. The legacy linear grow is available with
+`--conncomp-algorithm linear`.
 
 For noisy scenes, coarsen the solve with `--downsample` (as in the Python API);
 the integration-component `--no-bridge`-able re-leveling pass runs by default:

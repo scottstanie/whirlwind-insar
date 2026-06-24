@@ -5,7 +5,7 @@
 The default in 0.3.0 is the SNAPHU-faithful ambiguity-wiggle grow:
 `conncomp_algorithm="snaphu"` in Python and `--conncomp-algorithm snaphu` in the CLI. It recovers each pixel edge's achieved integer ambiguity from the final unwrapped phase and cuts an edge where a +/-1 cycle "wiggle" against SNAPHU's convex smooth cost is no more expensive than the achieved output.
 
-If you only remember one thing: the default `conncomp_min_coherence="auto"` is a gentle, looks-aware coherence floor (`conncomp_min_coherence_auto(nlooks) = 0.32/sqrt(nlooks)`, e.g. `0.08` at 16 looks) that drops only genuinely decorrelated pixels — so `conncomp == 0` works as a basic reliability mask — without fragmenting the map. Set `conncomp_min_coherence=None` for the older calibration-free behavior (`conncomp_reliability=0`, which labels every reliably unwrapped pixel including very low coherence), pass a float for a fixed cutoff, or raise it toward `0.1-0.15` for production-SNAPHU-like coverage (at the cost of more fragments — see below).
+The default `conncomp_min_coherence="auto"` labels `0` any pixel whose coherence is below `conncomp_min_coherence_auto(nlooks) = 0.32/sqrt(nlooks)` (`0.08` at 16 looks), so `conncomp == 0` is a coherence cutoff. Set `conncomp_min_coherence=None` for the older behavior (`conncomp_reliability=0`, labels every reliably unwrapped pixel), pass a float for a fixed cutoff, or raise it toward `0.1-0.15` to drop more low-coherence pixels (with more components — see below).
 
 ## Default Knobs
 
@@ -21,11 +21,9 @@ All Python names below are keyword arguments to [`unwrap`](ALGORITHM.md). CLI na
 
 The `snaphu` algorithm ignores `cost_threshold`, `conncomp_sigma`, and `conncomp_cycle_prob`. Those are kept for `conncomp_algorithm="linear"` only.
 
-## Why Reliability 0 Is The Default
+## Why the default floor is gentle and looks-aware
 
-The 2026-06-19 NISAR sweep under `nisar-pngs/2026-06-19/` compared the old linear conncomp, the SNAPHU ambiguity-wiggle conncomp at `conncomp_reliability=0`, and reliability thresholds expressed as target minimum coherence.
-
-The SNAPHU default removed the main linear-path splintering while keeping component counts close to production SNAPHU:
+Comparing the connected-component algorithms on a set of NISAR frames, the SNAPHU ambiguity-wiggle grow removes the splintering of the old linear grow while keeping component counts close to production SNAPHU:
 
 | Frame | Production SNAPHU comps | Old linear comps | New SNAPHU comps |
 | ----- | ----------------------: | ---------------: | ---------------: |
@@ -45,9 +43,11 @@ The reliability sweep showed why a positive threshold should not be the package 
 | D_075 |                     64.4 / 1 |                        99.9 / 3 | `min_coherence=0.20` |  62.3 / 28 |
 | A_030 |                     81.8 / 3 |                       100.0 / 3 | `min_coherence=0.15` | 72.1 / 125 |
 
-That sweep tested `min_coherence` 0.15-0.20, where fragmentation is real, and concluded the default should be `0`. A later sweep at the **gentle** end (2026-06-24) filled in the gap: re-labeling the authoritative `ww.unwrap` phase of all 13 NISAR frames at `min_coherence=0.08` keeps the component count **identical to the `0.0` baseline on every frame** (e.g. A_016 8->8, A_030 3->3, A_035 5->5, D_077 1->1) while dropping only 0.1-0.8% of pixels (the genuinely decorrelated ones). The fragmentation cliff starts at ~0.10 (A_028 2->8, D_075 3->9). So `0.08` is a safe sweet spot just below the cliff: it gives the reliability-mask behavior most users expect from `conncomp == 0` without splintering the partition.
+Those examples use a floor of 0.15-0.20. At 0.08 (16 looks) the component count stays at the no-floor baseline across the frames tested, dropping under 1% of pixels; the count starts to climb above about 0.10.
 
-Hence the default is now `conncomp_min_coherence="auto"` (was `conncomp_reliability=0`). "auto" is the looks-aware floor `conncomp_min_coherence_auto(nlooks) = 0.32/sqrt(nlooks)` (a gentle ~1/3 of the coherence noise floor), which is `0.08` at the NISAR 16-look case but scales with looks so it stays sensible for other pipelines (e.g. dolphin): at few looks it rises but nothing is observed that low, and at many looks it falls so genuinely decorrelated pixels (only observable at high looks) are dropped instead of trusted. The cutoff only removes the lowest-coherence junk; it does **not** match production SNAPHU's overall conservatism (production is also gated by tile cost thresholds and region-size rules), so whirlwind still labels more than production on many frames - by design, since whirlwind's components mark unwrap self-consistency, not a coherence mask. Set `conncomp_min_coherence=None` (then `conncomp_reliability=0`) for the older label-everything behavior, or raise toward `0.1-0.15` only if you need production-like coverage and can tolerate more fragments.
+The default is `conncomp_min_coherence="auto"`, the floor `conncomp_min_coherence_auto(nlooks) = 0.32/sqrt(nlooks)` -- about a third of the sample-coherence noise floor, which falls as `1/sqrt(nlooks)`. It is `0.08` at 16 looks and scales with looks, so the cutoff tracks the coherence a decorrelated pixel actually estimates at that look count rather than a fixed number.
+
+The floor only removes the lowest-coherence pixels; it does not reproduce production SNAPHU's overall conservatism, which is also gated by tile cost thresholds and minimum region sizes, so whirlwind labels more than production on many frames. That is by design: whirlwind's components mark unwrap self-consistency, not a coherence mask. For the older behavior that labels every reliably unwrapped pixel, set `conncomp_min_coherence=None` (with `conncomp_reliability=0`); for production-like coverage, raise the floor toward 0.1-0.15 and expect more fragments.
 
 ## Recipes
 

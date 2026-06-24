@@ -28,7 +28,7 @@ def run_whirlwind(
     *,
     bridge: bool = True,
     downsample: int = 1,
-    conncomp_reliability: float = 0.0,
+    conncomp_min_coherence: "float | str | None" = "auto",
     goldstein_alpha: float = 0.0,
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
     """Unwrap a wrapped interferogram with whirlwind.
@@ -45,7 +45,7 @@ def run_whirlwind(
         Valid-pixel mask, ``True`` = valid. If your mask file follows the
         SNAPHU/isce3 convention (nonzero = valid), pass ``raster != 0``. If you
         have an *invalid*-pixel mask (``True`` = invalid), pass ``~invalid``.
-    bridge, downsample, conncomp_reliability, goldstein_alpha
+    bridge, downsample, conncomp_min_coherence, goldstein_alpha
         See ``whirlwind.unwrap``. ``bridge`` re-levels regions the mask splits
         apart; skip the generic isce3 bridge post-pass when using this.
 
@@ -63,7 +63,7 @@ def run_whirlwind(
         mask,
         bridge=bridge,
         downsample=downsample,
-        conncomp_reliability=conncomp_reliability,
+        conncomp_min_coherence=conncomp_min_coherence,
         goldstein_alpha=goldstein_alpha,
     )
     return np.asarray(unw, dtype=np.float32), np.asarray(conncomp, dtype=np.uint32)

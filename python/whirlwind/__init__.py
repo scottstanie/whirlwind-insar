@@ -211,21 +211,11 @@ def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> floa
 def conncomp_min_coherence_auto(nlooks: float) -> float:
     """Looks-aware default for ``conncomp_min_coherence``.
 
-    A coherence value means different things at different looks: the sample
-    coherence is biased high, and that *noise floor* (the coherence you would
-    estimate from pure noise) is large at few looks and small at many, scaling
-    like ``1 / sqrt(nlooks)``. A fixed coherence cutoff is therefore not
-    looks-aware. This returns a gentle floor -- about one third of the noise
-    floor -- so it drops only pixels whose coherence is essentially noise while
-    staying well below the level that would fragment the components:
-
-    ``min_coherence = 0.32 / sqrt(nlooks)`` (clipped to ``[0.02, 0.30]``),
-
-    which equals ``0.08`` at ``nlooks=16`` (the value validated on the NISAR
-    GUNW frames). At few looks it rises (but coherence is never observed that
-    low there, so nothing is dropped); at many looks it falls, so genuinely
-    decorrelated pixels -- which are only *observable* at high looks -- are
-    dropped instead of trusted.
+    Returns ``0.32 / sqrt(nlooks)``, clipped to ``[0.02, 0.30]`` -- about a third
+    of the sample-coherence noise floor (the magnitude estimated from
+    uncorrelated data, which falls as ``1 / sqrt(nlooks)``). A fixed coherence
+    cutoff ignores this and so means different things at different looks. Equals
+    ``0.08`` at 16 looks.
     """
     return min(max(0.32 / (nlooks**0.5), 0.02), 0.30)
 
@@ -347,17 +337,12 @@ def unwrap(
         coherence-cost grow, tuned by ``cost_threshold`` / ``conncomp_sigma`` /
         ``conncomp_cycle_prob``.
     conncomp_min_coherence : float or "auto" or None, default "auto"
-        Target minimum coherence for the default ("snaphu") connected components:
-        pixels whose coherence is roughly below this are dropped (labeled ``0``),
-        so ``conncomp == 0`` works as a reliability mask, the way most users
-        expect from SNAPHU. The default ``"auto"`` is a gentle, *looks-aware*
-        floor, :func:`conncomp_min_coherence_auto` (``0.32 / sqrt(nlooks)``, e.g.
-        ``0.08`` at ``nlooks=16``), so the cutoff scales with the coherence noise
-        floor instead of being a fixed number that means different things at
-        different looks. Pass a float to set a fixed coherence cutoff, or ``None``
-        to use ``conncomp_reliability`` directly (with the default ``0`` that
-        labels every reliably unwrapped pixel, even very low coherence). Takes
-        precedence over ``conncomp_reliability`` when not ``None``. Only used when
+        Coherence below which pixels are labeled ``0`` (background) in the default
+        ("snaphu") connected components. ``"auto"`` uses
+        :func:`conncomp_min_coherence_auto` (``0.32 / sqrt(nlooks)``); pass a float
+        for a fixed cutoff, or ``None`` to disable the cutoff and use
+        ``conncomp_reliability`` (``0`` labels every reliably unwrapped pixel).
+        Takes precedence over ``conncomp_reliability``. Only used when
         ``conncomp_algorithm="snaphu"``.
     conncomp_reliability : float, default 0.0
         Lower-level conservativeness knob for the default ("snaphu") connected
