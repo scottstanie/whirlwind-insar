@@ -24,6 +24,8 @@ Wrapped gradients can be locally inconsistent because of noise. Those inconsiste
 
 This is the same broad algorithm family as SNAPHU: residues, statistical costs, network flow, then integration. Whirlwind's implementation is Rust-backed and tuned for the 2D coherence-cost path exposed by `whirlwind.unwrap`.
 
+The cost model gives the flow solve a precise statistical meaning: minimizing total cost maximizes a posterior probability over the integer cycle corrections. See [Why it's Bayesian](BAYESIAN.md) for the formulation and how it differs from SNAPHU's cost model.
+
 ## Inputs
 
 | Input | Meaning |
