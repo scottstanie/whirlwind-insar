@@ -19,7 +19,7 @@ It drives two runners (each engine timed + memory-measured in its own process):
 
 Whirlwind-only sweep (no reference unwrappers):
 `bash scripts/sweep_single_tile_bench.sh`, or a single frame with
-`python scripts/bench_nisar_gunw_whirlwind.py --solver linear --nlooks 16 --local-h5 <h5>`.
+`python scripts/bench_nisar_gunw_whirlwind.py --nlooks 16 --local-h5 <h5>`.
 
 ## Diagnostics (the masked-frame parity investigation, ATBD §7.6.1)
 

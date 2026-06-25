@@ -33,3 +33,10 @@ pngs/
 paper/
 # Session transcripts / agent dumps (e.g. 2026-05-28-...-opus-...txt)
 *-opus-*.txt
+
+# Account-specific AWS run notes (kept local)
+aws-batch/setup.md
+aws-batch/local-TEARDOWN.md
+
+# Benchmark/analysis outputs (figures, csv) - not source
+gunw_results/

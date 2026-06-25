@@ -317,16 +317,18 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = ConnCompAlgorithm::Snaphu)]
     conncomp_algorithm: ConnCompAlgorithm,
     /// Conservativeness of the default `snaphu` conncomp, in inverse-variance
-    /// (1/sigma^2) units. The default 0 is the calibration-free SNAPHU wiggle
-    /// test. Raise to label fewer lower-coherence pixels; prefer
-    /// --conncomp-min-coherence.
+    /// (1/sigma^2) units. Used only when --conncomp-min-coherence <= 0. Raise to
+    /// label fewer lower-coherence pixels; prefer --conncomp-min-coherence.
     #[arg(long, default_value_t = 0.0)]
     conncomp_reliability: f64,
-    /// Set `--conncomp-reliability` from a target minimum coherence (cut edges
-    /// roughly below this coherence). E.g. 0.3 -> ~3.2. Takes precedence over
-    /// `--conncomp-reliability`. Only used by the `snaphu` algorithm.
-    #[arg(long)]
-    conncomp_min_coherence: Option<f64>,
+    /// Drop (label conncomp 0) pixels roughly below this coherence, so conncomp>0
+    /// is a reliability mask. Default "auto" is a gentle looks-aware floor
+    /// (0.32/sqrt(nlooks), e.g. 0.08 at 16 looks) that scales with the coherence
+    /// noise floor. Pass a number for a fixed coherence cutoff, or "off" to use
+    /// --conncomp-reliability instead (0 = label every unwrapped pixel). Takes
+    /// precedence over --conncomp-reliability. Only used by the `snaphu` algorithm.
+    #[arg(long, default_value = "auto")]
+    conncomp_min_coherence: String,
     /// output unwrapped phase; format chosen by --out-format (default:
     /// by extension)
     #[arg(long)]
@@ -682,7 +684,16 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
                 // over the raw --conncomp-reliability. The native grow wants the
                 // raw convex-cost threshold, = scaled * COST_SCALE * NSHORTCYCLE^2.
                 const RELIABILITY_UNIT: f64 = 100.0 * 100.0 * 100.0; // 1e6
-                let scaled = if let Some(gamma) = conncomp_min_coherence {
+                let gamma = match conncomp_min_coherence.as_str() {
+                    "auto" => (0.32 / (nlooks as f64).sqrt()).clamp(0.02, 0.30),
+                    "off" | "none" => 0.0,
+                    s => s.parse::<f64>().unwrap_or_else(|_| {
+                        panic!(
+                            "--conncomp-min-coherence must be 'auto', 'off', or a number, got {s:?}"
+                        )
+                    }),
+                };
+                let scaled = if gamma > 0.0 {
                     let g = gamma.clamp(1e-3, 0.999);
                     let sigma2 = (1.0 - g * g) / (2.0 * nlooks as f64 * g * g);
                     1.0 / sigma2

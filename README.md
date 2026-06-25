@@ -140,10 +140,10 @@ whirlwind --ifg pair.diff --ifg-meta pair.off \
 - `--mask` also accepts snaphu-style flat byte masks (nonzero = valid).
 
 Connected components default to the SNAPHU-faithful ambiguity-wiggle grow
-(`--conncomp-algorithm snaphu`) with `--conncomp-reliability 0` (the
-calibration-free wiggle test). Raise `--conncomp-reliability` or use
-`--conncomp-min-coherence` when you want a more conservative low-coherence
-coverage mask. The legacy linear grow remains available with
+(`--conncomp-algorithm snaphu`) with `--conncomp-min-coherence auto`, which labels
+`0` any pixel below a coherence floor of `0.32/sqrt(nlooks)` (0.08 at 16 looks).
+Set `--conncomp-min-coherence off` to label every reliably unwrapped pixel, or
+pass a number for a fixed cutoff. The legacy linear grow is available with
 `--conncomp-algorithm linear`.
 
 For noisy scenes, coarsen the solve with `--downsample` (as in the Python API);

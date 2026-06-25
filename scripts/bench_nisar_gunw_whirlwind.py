@@ -19,15 +19,15 @@ phase, re-wraps it to [-pi, pi), reads the 80 m coherence/mask/connected
 components, runs whirlwind, and compares the output to the production GUNW
 unwrapped phase, recording runtime, peak-RSS delta, and ambiguity-match stats.
 
-Which solver (`--solver`)
--------------------------
-* `linear` (DEFAULT, RECOMMENDED): the VERIFIED single-tile, whole-image
-  `unwrap_linear` with fixed Carballo parity costs. On the full D_077 frame it
-  matches Python ww-orig at 99.49%% and beats single-tile snaphu on BOTH speed
-  (~158 s vs ~588 s) and accuracy (99.49%% vs 99.30%%). This is the path to show
-  on NISAR-sized interferograms.
-* `tiled`: the `ww.unwrap` tiled path. EXPERIMENTAL - tiling is not yet validated
-  on NISAR-scale frames and can produce invalid (fast-but-wrong) results.
+Solver
+------
+This bench runs the VERIFIED single-tile, whole-image `unwrap_linear` with fixed
+Carballo parity costs. On the full D_077 frame it matches Python ww-orig at
+99.49%% and beats single-tile snaphu on BOTH speed (~158 s vs ~588 s) and
+accuracy (99.49%% vs 99.30%%). It returns unwrapped phase only (no connected
+components). For the public-API comparison that also returns SNAPHU-style
+connected components, use `aws-batch/compare_gunw.py`. The old `--solver tiled`
+path was removed (see `experiments/bench_nisar_gunw_tiled_solver.md`).
 
 Run the cost model at `--nlooks ~16` (NISAR GUNW unwrap looks are ~13x16);
 `--nlooks 1` gives a near-flat phase-difference PDF and degenerate routing.
@@ -132,32 +132,10 @@ def parse_args() -> argparse.Namespace:
         help="Polarization group to use, e.g. HH or VV. Default: first available.",
     )
     run.add_argument(
-        "--solver",
-        choices=["linear", "tiled"],
-        default="linear",
-        help="Which whirlwind solver to benchmark. 'linear' (default, RECOMMENDED) = the "
-        "VERIFIED single-tile whole-image `unwrap_linear` with fixed Carballo parity costs; "
-        "matches Python ww-orig at ~99.5%% on D_077 and beats single-tile snaphu on both speed "
-        "and accuracy. 'tiled' = the `ww.unwrap` tiled path (EXPERIMENTAL; tiling is not yet "
-        "validated on NISAR-scale frames and can produce invalid results).",
-    )
-    run.add_argument(
         "--nlooks",
         type=float,
         default=16.0,
         help="nlooks for the Carballo cost model (NISAR GUNW unwrap looks ~13x16; nlooks=1 gives a near-flat PDF and degenerate routing - keep ~16).",
-    )
-    run.add_argument(
-        "--tile-size",
-        type=int,
-        default=0,
-        help="tile_size for --solver tiled. 0=auto (512 for >512px). Use a value >= frame dims to force a single whole-image solve. Ignored for --solver linear (always single-tile).",
-    )
-    run.add_argument(
-        "--tile-overlap",
-        type=int,
-        default=0,
-        help="tile_overlap passed to ww.unwrap (0=auto).",
     )
     run.add_argument(
         "--sizes",
@@ -652,35 +630,24 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
         # flat in masked regions, and `unwrap_linear` computes residues on the
         # FULL phase (no mask-gating, for Python parity), so masked-region phase
         # detonates into a wall of spurious residues (A_013: 715k vs 778 when
-        # zeroed) and blows up the MCF. Zeroing makes masked regions flat (no
-        # residues); the tiled path gates them anyway, so this is safe for both.
+        # zeroed) and blows up the MCF. Zeroing makes masked regions flat.
         ig_solver = np.where(mask, ig, 0.0).astype(np.float32)
         ig_complex = np.exp(1j * ig_solver).astype(np.complex64)
         # Sanitize coherence for the SOLVER only (stats below still use raw `coh`).
         # Raw coh can carry NaN / out-of-range values in masked regions; feeding
-        # those to the Carballo cost LUT yields garbage costs, which on the
-        # `linear` path blows up Dial's bucket count (max_reduced_cost) and its
-        # memory. Clip to [0,1], NaN->0, and zero coherence outside the mask.
+        # those to the Carballo cost LUT yields garbage costs, which blow up
+        # Dial's bucket count (max_reduced_cost) and its memory. Clip to [0,1],
+        # NaN->0, and zero coherence outside the mask.
         coh_solver = np.where(mask, np.clip(np.nan_to_num(coh), 0.0, 1.0), 0.0).astype(
             np.float32
         )
-        if args.solver == "linear":
-            # VERIFIED path: single-tile whole-image MCF with fixed Carballo parity
-            # costs (matches Python ww-orig). No connected-component labels are
-            # returned by this solver, so component-level stats are skipped.
-            ww_unw = ww._native.unwrap_linear(
-                ig_complex, coh_solver, float(args.nlooks), mask
-            )
-            ww_cc = None
-        else:
-            ww_unw, ww_cc = ww.unwrap(
-                ig_complex,
-                coh_solver,
-                args.nlooks,
-                mask,
-                tile_size=args.tile_size,
-                tile_overlap=args.tile_overlap,
-            )
+        # VERIFIED path: single-tile whole-image MCF with fixed Carballo parity
+        # costs (matches Python ww-orig). No connected-component labels are
+        # returned by this solver, so component-level stats are skipped.
+        ww_unw = ww._native.unwrap_linear(
+            ig_complex, coh_solver, float(args.nlooks), mask
+        )
+        ww_cc = None
         runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
         rss_delta = None if (rss0 is None or rss1 is None) else rss1 - rss0
@@ -705,7 +672,7 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
                 "product_path": str(path),
                 "crop": label,
                 "pol": pol,
-                "solver": args.solver,
+                "solver": "linear",
                 "nlooks": args.nlooks,
                 "coh_threshold": args.coh_threshold,
                 "mask_policy": args.mask_policy,
@@ -738,7 +705,7 @@ def run_one_product(path: Path, args: argparse.Namespace) -> list[dict[str, Any]
             ww_cc=ww_cc_arr,
             amb_diff=amb_diff,
             valid=mask & np.isfinite(ww_unw),
-            title=f"{path.name}\n{label}, solver={args.solver}, pol={pol}, nlooks={args.nlooks}, runtime={runtime_s:.2f}s",
+            title=f"{path.name}\n{label}, pol={pol}, nlooks={args.nlooks}, runtime={runtime_s:.2f}s",
             stride=max(1, args.plot_downsample),
         )
         rec_ww = stats.get("ww_unwrapped_recall")

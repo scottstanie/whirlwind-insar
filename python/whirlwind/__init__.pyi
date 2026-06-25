@@ -27,6 +27,11 @@ from ._native import (
 )
 
 def cost_threshold_from_cycle_prob(cycle_prob: float) -> int: ...
+def conncomp_min_coherence_auto(nlooks: float) -> float:
+    """Looks-aware default conncomp coherence floor (0.32/sqrt(nlooks), clipped
+    to [0.02, 0.30]); 0.08 at nlooks=16."""
+    ...
+
 def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> float:
     """``conncomp_reliability`` value (in 1/sigma2 units) that cuts conncomp edges
     below a target coherence (``1 / sigma2(coherence)``). A guessable way to set
@@ -47,6 +52,7 @@ def unwrap(
     interp_min_radius: int = ...,
     interp_alpha: float = ...,
     conncomp_algorithm: str = ...,
+    conncomp_min_coherence: float | str | None = ...,
     conncomp_reliability: float = ...,
     cost_threshold: int = ...,
     conncomp_cycle_prob: float | None = ...,
