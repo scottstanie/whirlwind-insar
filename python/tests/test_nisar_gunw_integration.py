@@ -29,11 +29,33 @@ import os
 import sys
 from pathlib import Path
 
-import h5py
 import numpy as np
 import pytest
 
 import whirlwind as ww
+
+
+def _test_files() -> list[Path]:
+    files: list[Path] = []
+    if one := os.environ.get("WHIRLWIND_TEST_GUNW"):
+        files.append(Path(one))
+    if d := os.environ.get("WHIRLWIND_TEST_GUNW_DIR"):
+        files.extend(sorted(Path(d).glob("*.h5")))
+    return [f for f in files if f.exists()]
+
+
+_FILES = _test_files()
+
+# Opt-in: skip the whole module (before importing h5py/matplotlib, which the
+# default test environment does not install) unless GUNW files are configured.
+if not _FILES:
+    pytest.skip(
+        "Set WHIRLWIND_TEST_GUNW=<.h5> or WHIRLWIND_TEST_GUNW_DIR=<dir> to run "
+        "the NISAR GUNW integration test (no downloads in CI).",
+        allow_module_level=True,
+    )
+
+import h5py  # noqa: E402
 
 # Reuse the exact comparison helpers the AWS-Batch tool uses, so this test and
 # the benchmark stay in lockstep.
@@ -49,24 +71,6 @@ SAMPLE_GRANULES = {
     "A_019": f"{_BASE}/NISAR_L2_PR_GUNW_009_148_A_019_010_4000_SH_20260107T105515_20260107T105550_20260119T105516_20260119T105551_X05010_N_F_J_001/NISAR_L2_PR_GUNW_009_148_A_019_010_4000_SH_20260107T105515_20260107T105550_20260119T105516_20260119T105551_X05010_N_F_J_001.h5",
     "A_140_cryo": f"{_BASE}/NISAR_L2_PR_GUNW_009_163_A_140_010_7700_SH_20260108T130215_20260108T130251_20260120T130216_20260120T130252_X05010_N_P_J_001/NISAR_L2_PR_GUNW_009_163_A_140_010_7700_SH_20260108T130215_20260108T130251_20260120T130216_20260120T130252_X05010_N_P_J_001.h5",
 }
-
-
-def _test_files() -> list[Path]:
-    files: list[Path] = []
-    if one := os.environ.get("WHIRLWIND_TEST_GUNW"):
-        files.append(Path(one))
-    if d := os.environ.get("WHIRLWIND_TEST_GUNW_DIR"):
-        files.extend(sorted(Path(d).glob("*.h5")))
-    return [f for f in files if f.exists()]
-
-
-_FILES = _test_files()
-
-pytestmark = pytest.mark.skipif(
-    not _FILES,
-    reason="Set WHIRLWIND_TEST_GUNW=<.h5> or WHIRLWIND_TEST_GUNW_DIR=<dir> to run "
-    "the NISAR GUNW integration test (no downloads in CI).",
-)
 
 
 @pytest.mark.parametrize("h5_path", _FILES, ids=lambda p: p.name[:48])
