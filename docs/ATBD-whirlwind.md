@@ -104,8 +104,7 @@ Residues are topological defects indicating phase inconsistency. For any continu
 
 - Residues are integers, typically in $\{-1, 0, +1\}$
 - The sum over the **entire augmented grid** (interior nodes *plus* the signed
-  boundary frame, §4.2–4.3) is exactly zero by Stokes' theorem - the boundary
-  deposits balance the interior winding. (For a smooth non-wrapping image every
+  boundary frame, §4.2–4.3) is exactly zero by Stokes' theorem - the boundary deposits balance the interior winding. (For a smooth non-wrapping image every
   residue is zero.)
 - Positive residues act as flow **sources**, negative as **sinks** in the network formulation
 
@@ -209,10 +208,10 @@ NaN/invalid pixels are replaced by zeros upstream and would otherwise generate a
 
 Whirlwind ships **two** Carballo-style edge-cost implementations. They share the same statistical motivation (Lee 1994 multilook phase noise + smoothed local gradient) and the same per-arc layout, but differ in how the per-arc log-likelihood is obtained and in their default scale:
 
-| Function (`crates/whirlwind-core/src/cost/mod.rs`) | Used by                                                                     | Probability source                                                                 | Int scale                               | Masking rule                                  |
-| -------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------- |
-| `compute_carballo_costs_parity` (§5.6)             | **Default**: `unwrap` → single-tile `unwrap_linear`                          | Embedded pre-sampled spline tables (`cost/spline_lut.rs`); `p_0 + p_1 ≠ 1`         | `100`                                   | cost = 0 only where **both** endpoints masked |
-| `compute_carballo_costs` (§5.1–5.5)                | Opt-in: `unwrap_reuse`, the tiled solver, conncomp regrow                    | Analytical Lee-1994 CDF LUT built at runtime (`cost/lut.rs`); `p_0 = 1-p_1`        | `CARBALLO_COST_SCALE = 6` (max int 300) | cost = 0 where **either** endpoint masked     |
+| Function (`crates/whirlwind-core/src/cost/mod.rs`) | Used by                                                   | Probability source                                                          | Int scale                               | Masking rule                                  |
+| -------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------- | --------------------------------------------- |
+| `compute_carballo_costs_parity` (§5.6)             | **Default**: `unwrap` → single-tile `unwrap_linear`       | Embedded pre-sampled spline tables (`cost/spline_lut.rs`); `p_0 + p_1 ≠ 1`  | `100`                                   | cost = 0 only where **both** endpoints masked |
+| `compute_carballo_costs` (§5.1–5.5)                | Opt-in: `unwrap_reuse`, the tiled solver, conncomp regrow | Analytical Lee-1994 CDF LUT built at runtime (`cost/lut.rs`); `p_0 = 1-p_1` | `CARBALLO_COST_SCALE = 6` (max int 300) | cost = 0 where **either** endpoint masked     |
 
 ### 5.1 Carballo Probability Model
 
@@ -269,12 +268,12 @@ Smoothing (biased 7x7 box), the min-of-endpoints edge coherence, and the four-di
 
 ### 5.7 Cost Interpretation
 
-| Coherence | Phase gradient $\hat\alpha$ | Cost behavior        | Interpretation                                         |
-| --------- | --------------------------- | -------------------- | ------------------------------------------------------ |
-| High      | $\approx 0$ (smooth)        | Large (→ $c_{\max}$) | Confident $\Delta k = 0$; strongly penalize a cut here |
-| High      | near $+\pi$ (wrap line)     | $\approx 0$          | Confident $\Delta k = +1$; cheap to cut                |
-| Any       | $\le 0$ (analytical-CDF path) | $c_{\max}$         | Wrong-sign correction for this direction; never cut    |
-| Low       | any                         | small                | Uncertain; the edge barely influences the solution     |
+| Coherence | Phase gradient $\hat\alpha$   | Cost behavior        | Interpretation                                         |
+| --------- | ----------------------------- | -------------------- | ------------------------------------------------------ |
+| High      | $\approx 0$ (smooth)          | Large (→ $c_{\max}$) | Confident $\Delta k = 0$; strongly penalize a cut here |
+| High      | near $+\pi$ (wrap line)       | $\approx 0$          | Confident $\Delta k = +1$; cheap to cut                |
+| Any       | $\le 0$ (analytical-CDF path) | $c_{\max}$           | Wrong-sign correction for this direction; never cut    |
+| Low       | any                           | small                | Uncertain; the edge barely influences the solution     |
 
 Forward-arc costs are clamped non-negative (never negative), and the analytical-CDF path is **asymmetric** in the sign of $\hat\alpha$ rather than symmetric near zero at low coherence.
 
@@ -334,7 +333,7 @@ $$
 \min_{k}\ \sum_{e} w_e\,\bigl(k_e\cdot 100 - O_e\bigr)^2,
 $$
 
-with $w_e$ an inverse-variance weight, $O_e$ a preferred-flow offset, and $100 = $ `NSHORTCYCLE`. Dijkstra uses the marginal cost $\Delta c_e = w_e\,(\pm 2\cdot100\cdot(k_e\cdot100-O_e) + 100^2)$. Because that marginal is negative at $k_e=0$ whenever $|O_e|>50$, the convex network is first pre-loaded so each arc sits at its parabola minimum $k^\* = \mathrm{round}(O_e/100)$ (`preload_convex_min`, with node excess adjusted to keep conservation); thereafter every residual marginal is $\ge 0$, zero initial potentials are valid, and successive-shortest-paths stays sound (the ordered-parallel-arc reduction of convex-cost MCF).
+with $w_e$ an inverse-variance weight, $O_e$ a preferred-flow offset, and $100 = $ `NSHORTCYCLE`. Dijkstra uses the marginal cost $\Delta c_e = w_e\,(\pm 2\cdot100\cdot(k_e\cdot100-O_e) + 100^2)$. Because that marginal is negative at $k_e=0$ whenever $|O_e|>50$, the convex network is first pre-loaded so each arc sits at its parabola minimum $k^* = \mathrm{round}(O_e/100)$ (`preload_convex_min`, with node excess adjusted to keep conservation); thereafter every residual marginal is $\ge 0$, zero initial potentials are valid, and successive-shortest-paths stays sound (the ordered-parallel-arc reduction of convex-cost MCF).
 
 An optional **virtual ground node** (`new_with_mask_and_ground`) connects every boundary residue to a sink with two unit-capacity arcs of cost `ground_cost`, letting boundary wrap-line terminations drain at the image edge. It is used only by the `*_grounded` diagnostics - it corrupts dense interior-residue real data and is not on the default path.
 
@@ -654,15 +653,15 @@ goes stale independently of the public comparison page.
 **Entry point → solver / cost / mask map.** The public `unwrap` is the single-tile
 linear MCF path; all other solver variants are opt-in or experimental.
 
-| Public fn                                                          | Network          | Cost                            | Dijkstra                                                                | Mask            | Status                                                              |
-| ------------------------------------------------------------------ | ---------------- | ------------------------------- | ----------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------ |
-| `unwrap` **(public default → `unwrap_linear`)**                    | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **validated default**                                              |
-| `unwrap_linear` (single-tile kernel; what `unwrap` calls)          | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **validated**; masked frames balanced via adaptive fallback        |
-| `unwrap` *tiled path* (`downsample>1`, `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`) | reuse (per tile) | `compute_carballo_costs`        | early-exit, 50 it + multi-source SSP                                    | forbid (tiled)  | opt-in / experimental, **not validated** (see §9.5 item 4)         |
-| `unwrap_reuse` (whole-image reuse, PHASS-style)                    | reuse            | `compute_carballo_costs`        | early-exit, 50 it                                                       | cost-zero + NaN | opt-in / experimental                                              |
-| `unwrap_convex`                                                    | convex           | `compute_snaphu_smooth_costs`   | heap                                                                    | forbid          | experimental research prototype                                    |
-| `components_snaphu` **(public conncomp default)**                  | convex-cost test | `compute_snaphu_smooth_costs`   | no MCF solve; wiggle achieved output ambiguity                          | forbid          | **validated default for labels**                                   |
-| `components_only`                                                  | unit-capacity    | `compute_carballo_costs`        | no MCF solve                                                            | forbid          | legacy linear conncomp opt-out                                     |
+| Public fn                                                                               | Network          | Cost                            | Dijkstra                                                                | Mask            | Status                                                      |
+| --------------------------------------------------------------------------------------- | ---------------- | ------------------------------- | ----------------------------------------------------------------------- | --------------- | ----------------------------------------------------------- |
+| `unwrap` **(public default → `unwrap_linear`)**                                         | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **validated default**                                       |
+| `unwrap_linear` (single-tile kernel; what `unwrap` calls)                               | unit-capacity    | `compute_carballo_costs_parity` | full-completion, 8 it + single-source SSP + adaptive PD-resume (§7.6.1) | cost-zero + NaN | **validated**; masked frames balanced via adaptive fallback |
+| `unwrap` *tiled path* (`downsample>1`, `tile_size`, or `WHIRLWIND_UNWRAP_SOLVER=tiled`) | reuse (per tile) | `compute_carballo_costs`        | early-exit, 50 it + multi-source SSP                                    | forbid (tiled)  | opt-in / experimental, **not validated** (see §9.5 item 4)  |
+| `unwrap_reuse` (whole-image reuse, PHASS-style)                                         | reuse            | `compute_carballo_costs`        | early-exit, 50 it                                                       | cost-zero + NaN | opt-in / experimental                                       |
+| `unwrap_convex`                                                                         | convex           | `compute_snaphu_smooth_costs`   | heap                                                                    | forbid          | experimental research prototype                             |
+| `components_snaphu` **(public conncomp default)**                                       | convex-cost test | `compute_snaphu_smooth_costs`   | no MCF solve; wiggle achieved output ambiguity                          | forbid          | **validated default for labels**                            |
+| `components_only`                                                                       | unit-capacity    | `compute_carballo_costs`        | no MCF solve                                                            | forbid          | legacy linear conncomp opt-out                              |
 
 The reference reused throughout is the NISAR geocoded unwrapped product (GUNW),
 whose production unwrap is SNAPHU; per-component match is the fraction of pixels
