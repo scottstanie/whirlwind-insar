@@ -29,24 +29,19 @@ integrate that difference PDF over the wrap intervals. Runtime cost is then:
 
     cost = int(100 * max(-log(p1 / p0), 0))
 
-==============================================================================
-IMPORTANT - THIS IS A MODEL REFERENCE, NOT A BIT-FOR-BIT REGENERATOR.
-==============================================================================
+Which mode to use:
 
-The ORIGINAL analytic generator that produced the shipping ``.npz``/``.bin``
-tables is NOT preserved in any repo (only its OUTPUT, its CONSUMER
-``whirlwind/src/whirlwind_orig/_cost.py``, and Geoff's notes survive). The
-analytic mode reconstructs the *documented math* and reproduces the qualitative
-fingerprint of the coherence marginalization (the tables vary with ``L`` even
-at ``gamma_hat = 0``, which a pure Lee/slope model cannot do), but it does
-**not** reproduce the shipping tables numerically. Run with ``--compare-dir``
-to print the residual RMSE and the gamma_hat=0 fingerprint.
-
-The surviving saved tables are therefore the AUTHORITATIVE source for byte
-reproduction; the analytic mode is for documentation, diagnostics, and future
-model work. ``--write-rust-bins`` is guarded: it refuses to overwrite an
-existing embedded-blob directory with non-identical output unless you pass
-``--allow-overwrite-embedded``.
+* To recreate the exact embedded blobs, use ``--source-table-dir`` (mode 1).
+  The embedded blobs are an `f32` dump of the saved ww-orig tables, so this is
+  byte-for-byte.
+* The analytic mode (mode 2) is the readable, theory-driven definition of the
+  cost model - the thing to read, extend, and regenerate LUTs from. It is a
+  close but not identical match to the saved tables (it reproduces the
+  coherence-marginalization fingerprint - tables vary with ``L`` at
+  ``gamma_hat = 0`` - and on the 13 NISAR frames its LUTs unwrap essentially
+  identically to the embedded ones). Run with ``--compare-dir`` to see the
+  numeric difference. ``--write-rust-bins`` is guarded so the analytic output
+  cannot silently replace the embedded blobs without ``--allow-overwrite-embedded``.
 
 Example - recreate the embedded Rust blobs from saved ww-orig tables:
 
