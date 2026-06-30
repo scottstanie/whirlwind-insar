@@ -86,7 +86,16 @@ $$
 \Delta k^* = \arg\max_{\Delta k} f(\Delta \hat{\psi} \mid \Delta k)
 $$
 
-This requires a probability model for the phase gradient conditioned on the integer ambiguity. Carballo's approach integrates over the unknown true coherence $\gamma$ using the sample coherence $\hat{\gamma}$ and the phase noise PDF from Lee et al.
+This requires a probability model for the phase gradient conditioned on the integer ambiguity, built from the Lee et al. (1994) multilook phase-noise PDF $f(\phi_N \mid \gamma, L)$. The shipping model marginalizes **two** unknowns under uniform priors:
+
+- the local signal **slope** $\alpha$ (Carballo's contribution); and
+- the **true coherence** $\gamma$ given the *sample* coherence $\hat{\gamma}$ (beyond Carballo), using the Touzi (1999) coherence-estimator density $f(\hat{\gamma}\mid\gamma,L)$:
+
+$$
+f(\phi_N \mid \hat{\gamma}, L) = \frac{1}{C}\int_0^1 f(\phi_N \mid \gamma, L)\, f(\hat{\gamma}\mid\gamma, L)\, d\gamma .
+$$
+
+The empirical fingerprint of this second step is that the cost tables vary with $L$ even at $\hat{\gamma}=0$, where a pure Lee model would reduce to the ($L$-independent) uniform PDF. The field prior stays uniform, so the estimate remains maximum-likelihood ("probabilistic," not fully Bayesian).
 
 A guiding principle from Carballo's formulation is to never rewrap: the algorithm works directly with wrapped gradients and integer cycle corrections, never rewrapping intermediate results.
 
@@ -260,7 +269,7 @@ The float LLR is converted to `i32` via `round(c · CARBALLO_COST_SCALE)` with `
 
 The default single-tile `unwrap_linear` uses `compute_carballo_costs_parity`, the directly-sampled Carballo spline model:
 
-- **Probabilities** come from embedded, pre-sampled tables read via **trilinear** interpolation (`cost/spline_lut.rs`) - there is no tri-cubic B-spline evaluator in Rust; the original tri-cubic splines were sampled onto a dense grid that the Rust reads directly. The grid is α: 31 uniform pts in $[-\pi,\pi]$; γ: 11 pts $[0,0.1,\dots,1.0]$; $L$: 11 log-spaced pts $[1,\dots,80]$ (clamped at lookup). Tables ship as five little-endian `f32` blobs embedded in the binary: `carballo_grid_phase.bin` (31), `carballo_grid_corr.bin` (11), `carballo_grid_nlooks.bin` (11), `carballo_p0.bin` and `carballo_p1.bin` (each 31·11·11 = 3751). Here $p_0 = P(\Delta k=0)$ and $p_1 = P(\Delta k=\pm1)$, and in general **$p_0 + p_1 \neq 1$**.
+- **Probabilities** come from embedded, pre-sampled tables read via **trilinear** interpolation (`cost/spline_lut.rs`) - there is no tri-cubic B-spline evaluator in Rust; the original tri-cubic splines were sampled onto a dense grid that the Rust reads directly. These tables encode the full §2.3 model, including the Touzi (1999) true-coherence marginalization - the tell is that $p_0,p_1$ vary with $L$ at $\hat\gamma=0$, which the pure Lee/slope model cannot reproduce. The model is documented and reproducible in `scripts/generate_carballo_tables.py`: a `--source-table-dir` mode recreates the embedded blobs byte-for-byte from the saved `.npz` / `.pkl` tables, and an analytic mode computes the model from theory (a close, validated match - the two unwrap the 13 NISAR frames essentially identically). The grid is α: 31 uniform pts in $[-\pi,\pi]$; γ: 11 pts $[0,0.1,\dots,1.0]$; $L$: 11 log-spaced pts $[1,\dots,80]$ (clamped at lookup). Tables ship as five little-endian `f32` blobs embedded in the binary: `carballo_grid_phase.bin` (31), `carballo_grid_corr.bin` (11), `carballo_grid_nlooks.bin` (11), `carballo_p0.bin` and `carballo_p1.bin` (each 31·11·11 = 3751). Here $p_0 = P(\Delta k=0)$ and $p_1 = P(\Delta k=\pm1)$, and in general **$p_0 + p_1 \neq 1$**.
 - **Cost** = `round(100 · max(-ln(p_1/p_0), 0))`, with both probabilities floored at `1e-30`. The scale is `100`, *not* the analytical-CDF path's 6.
 - **Masking** zeros the cost only where **both** endpoint pixels are invalid (zero where `mask[a] && mask[b]`); a boundary arc with one valid pixel keeps a nonzero cost.
 

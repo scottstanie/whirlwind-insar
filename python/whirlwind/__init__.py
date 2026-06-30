@@ -34,7 +34,6 @@ from ._native import (
 )
 from ._native import (
     _unwrap_native,
-    _unwrap_with_costs,
     components_snaphu,
     label_components,
 )

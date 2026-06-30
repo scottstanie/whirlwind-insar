@@ -141,15 +141,6 @@ def components_snaphu(
     The labels are renumbered 1..=K by size, capped at ``max_ncomps``.
     """
 
-def _unwrap_with_costs(
-    igram: NDArray[np.complex64],
-    costs: NDArray[np.int32],
-    mask: NDArray[np.bool_] | None = ...,
-) -> NDArray[np.float32]:
-    """Whole-image MCF unwrap with caller-supplied integer arc costs (testing /
-    research). ``costs`` is packed in the same arc-id order as
-    ``whirlwind_core::cost::compute_carballo_costs`` returns."""
-
 def compute_residues(wrapped_phase: NDArray[np.float32]) -> NDArray[np.int32]:
     """Compute the integer residue grid from a wrapped-phase array."""
 
