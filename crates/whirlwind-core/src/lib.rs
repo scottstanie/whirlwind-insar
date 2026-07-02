@@ -352,13 +352,19 @@ pub fn unwrap_convex(
     Ok(unw)
 }
 
-/// Capacity-1 (linear) MCF solver - exact replica of Python `whirlwind_orig`.
+/// Capacity-1 (linear) MCF solver - replica of Python `whirlwind_orig`, with
+/// one deliberate difference: boundary-frame residue deposits are KEPT (ww-orig
+/// zeroes them), so wrap lines may terminate at the raster edge and the MCF
+/// stays balanced on scenes whose valid data touches the edge. On scenes with
+/// a nodata collar the frame deposits are all zero and the two behaviors are
+/// identical.
 ///
-/// Uses standard unit-capacity arcs (no reuse, no multi-unit) and only 8
-/// primal-dual iterations (matching `primal_dual(network, maxiter=8)` in
-/// Python). Residues are computed from the full phase array (not mask-gated),
-/// matching `ww_orig._unwrap.unwrap`. This is the verified default kernel; use
-/// the public `whirlwind.unwrap` for conncomp + bridge.
+/// Uses standard unit-capacity arcs (no reuse; the zero-cost boundary gutter
+/// ring is multi-unit) and only 8 primal-dual iterations (matching
+/// `primal_dual(network, maxiter=8)` in Python). Residues are computed from
+/// the full phase array (not mask-gated), matching `ww_orig._unwrap.unwrap`.
+/// This is the verified default kernel; use the public `whirlwind.unwrap` for
+/// conncomp + bridge.
 pub fn unwrap_linear(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
@@ -373,23 +379,18 @@ pub fn unwrap_linear(
         return Err(UnwrapError::TooSmall((m, n)));
     }
     let wrapped_phase = igram.mapv(|z| z.arg());
-    let mut residues = residue::compute(wrapped_phase.view());
-    // Match Python ww-orig: zero the boundary frame of the residue grid.
-    // Python's `_unwrap.py` does exactly:
-    //   residue[0, :] = 0; residue[-1, :] = 0
-    //   residue[:, 0] = 0; residue[:, -1] = 0
-    // These are "artifacts of the finite image where wrap lines cross the
-    // boundary, not actual phase singularities" (Python comment). Without
-    // this, Rust routes interior residues to boundary frame nodes while
-    // Python routes them only to other interior nodes - completely different
-    // MCF solutions and ~45% quality loss on masked scenes.
-    {
-        let (rm, rn) = residues.dim();
-        residues.row_mut(0).fill(0);
-        residues.row_mut(rm - 1).fill(0);
-        residues.column_mut(0).fill(0);
-        residues.column_mut(rn - 1).fill(0);
-    }
+    let residues = residue::compute(wrapped_phase.view());
+    // KEEP the boundary-frame deposits (wrap counts where fringes exit the
+    // image; see `residue::compute`). They terminate boundary-exiting wrap
+    // lines and make the residue grid sum exactly zero, and they cancel for
+    // free along the zero-cost multi-unit gutter ring (integration never
+    // reads those arcs). Python ww-orig zeroes the frame instead; that only
+    // matters when valid data touches the raster edge: the interior is then
+    // unbalanced by the net frame charge, SSP strands exactly that many
+    // residues, and each stranded residue becomes a full-width 2π tear in
+    // the row-major integration (horizontal banding). Scenes with a nodata
+    // collar (phase 0 at every raster edge, e.g. geocoded NISAR GUNW frames)
+    // deposit nothing on the frame, so ww-orig parity is preserved there.
     // Python ww-orig does NOT forbid masked arcs - it only sets their cost to 0.
     // Rust's new_with_mask explicitly forbids them, isolating residues in masked
     // regions and degrading quality on ~50%-masked NISAR scenes. Use new() here
@@ -439,14 +440,8 @@ pub fn unwrap_linear_ext_costs(
         return Err(UnwrapError::TooSmall((m, n)));
     }
     let wrapped_phase = igram.mapv(|z| z.arg());
-    let mut residues = residue::compute(wrapped_phase.view());
-    {
-        let (rm, rn) = residues.dim();
-        residues.row_mut(0).fill(0);
-        residues.row_mut(rm - 1).fill(0);
-        residues.column_mut(0).fill(0);
-        residues.column_mut(rn - 1).fill(0);
-    }
+    // Frame deposits kept, matching `unwrap_linear` (see the comment there).
+    let residues = residue::compute(wrapped_phase.view());
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     assert_eq!(
         ext_costs.len(),
