@@ -1,17 +1,16 @@
-//! Trilinear interpolation of the ww-orig Carballo PDF tables.
+//! Trilinear interpolation of the Carballo/Touzi PDF cost tables.
 //!
 //! The embedded binary blobs are little-endian `f32` dumps of the `values`
-//! arrays in Python's `carballo-pdf-0-spline.npz` / `carballo-pdf-1-spline.npz`.
-//! They encode the full cost model - Lee 1994 multilook phase noise + Carballo
-//! slope marginalization + the Touzi 1999 true-coherence marginalization (the
-//! tables vary with `L` even at sample coherence 0, which a pure Lee model
-//! cannot do).
+//! arrays produced by `scripts/generate_carballo_tables.py` in its default
+//! analytic mode. They encode the full cost model - Lee 1994 multilook phase
+//! noise + Carballo slope marginalization + the Touzi 1999 true-coherence
+//! marginalization.
 //!
 //! The model is documented and reproducible in `scripts/generate_carballo_tables.py`:
-//! its `--source-table-dir` mode regenerates these blobs byte-for-byte from the
-//! saved `.npz` / `.pkl` tables, and its analytic mode computes the model from
-//! theory (a close, validated match - the two unwrap NISAR frames essentially
-//! identically).
+//! its default analytic mode computes the model from theory and regenerates
+//! these blobs byte-for-byte (`--write-rust-bins`). The `--source-table-dir`
+//! mode instead re-exports the historical ww-orig `.npz` / `.pkl` tables and is
+//! retained only for provenance.
 //! The tables store `p0(α, γ, L)` and `p1(α, γ, L)`:
 //!   p0 = P(Δk = 0 | observation)
 //!   p1 = P(Δk = ±1 | observation)   [note: p0 + p1 ≠ 1 in general]
