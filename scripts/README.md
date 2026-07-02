@@ -32,4 +32,4 @@ Whirlwind-only sweep (no reference unwrappers):
 
 ## Infrastructure
 
-- `generate_carballo_tables.py` - regenerate the embedded Carballo cost LUT blobs.
+- `generate_carballo_tables.py` - export byte-parity embedded Carballo LUT blobs from saved ww-orig tables, or run the non-parity analytic model reconstruction for diagnostics.

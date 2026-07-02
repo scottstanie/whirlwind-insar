@@ -752,48 +752,6 @@ fn unwrap_native<'py>(
     Ok((unw.into_pyarray(py), comps.into_pyarray(py)))
 }
 
-/// Whole-image MCF unwrap with caller-supplied integer arc costs.
-///
-/// For testing/research: pass precomputed costs (e.g. Python Carballo spline)
-/// directly to the Rust reuse-network primal-dual solver, bypassing the
-/// built-in cost computation. Costs must be packed in the same arc-id order
-/// as `whirlwind_core::cost::compute_carballo_costs` returns.
-///
-/// * ``igram`` - complex64 (m, n); used for residues and integration only.
-/// * ``costs`` - int32 flat vector of length ``num_forward_arcs``.
-/// * ``mask`` - optional bool (m, n) validity mask.
-#[pyfunction]
-#[pyo3(signature = (igram, costs, mask = None))]
-fn _unwrap_with_costs<'py>(
-    py: Python<'py>,
-    igram: PyReadonlyArray2<'py, Complex32>,
-    costs: PyReadonlyArray1<'py, i32>,
-    mask: Option<PyReadonlyArray2<'py, bool>>,
-) -> PyResult<Bound<'py, PyArray2<f32>>> {
-    use whirlwind_core::{grid, integrate, network, primal_dual, residue};
-    let ig = igram.as_array();
-    let cost_slice = costs
-        .as_slice()
-        .map_err(|e| PyValueError::new_err(format!("{e}")))?;
-    let m_view = mask.as_ref().map(|m| m.as_array());
-    let out = py.detach(|| {
-        let (m, n) = ig.dim();
-        let wrapped_phase = ig.mapv(|z| z.arg());
-        let residues = residue::compute(wrapped_phase.view());
-        let g = grid::RectangularGridGraph::new(m + 1, n + 1);
-        let costs_vec = cost_slice.to_vec();
-        let mut net =
-            network::Network::new_reuse_with_mask(&g, residues.view(), &costs_vec, m_view);
-        primal_dual::run(&g, &mut net, 50);
-        if m_view.is_some() {
-            integrate::integrate_with_mask(wrapped_phase.view(), &g, &net, m_view)
-        } else {
-            integrate::integrate(wrapped_phase.view(), &g, &net)
-        }
-    });
-    Ok(out.into_pyarray(py))
-}
-
 /// Goldstein adaptive phase filter (Goldstein & Werner 1998).
 ///
 /// Block-parallel Rust port of the Python helper. See
@@ -934,6 +892,5 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(quality_map, m)?)?;
     m.add_function(wrap_pyfunction!(quality_triangles, m)?)?;
     m.add_function(wrap_pyfunction!(goldstein, m)?)?;
-    m.add_function(wrap_pyfunction!(_unwrap_with_costs, m)?)?;
     Ok(())
 }
