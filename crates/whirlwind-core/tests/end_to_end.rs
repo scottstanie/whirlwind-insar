@@ -224,6 +224,67 @@ fn masked_band_plane_no_tear() {
     );
 }
 
+/// Regression for the horizontal-banding tear on scenes whose valid data
+/// reaches the raster edge (typical for real Sentinel-1 frames; NISAR GUNW
+/// frames have a nodata collar instead). `unwrap_linear` used to zero the
+/// residue frame deposits for ww-orig parity; on an edge-touching scene the
+/// interior is then unbalanced by the net frame charge, SSP strands exactly
+/// that many residues, and each stranded residue becomes a full-width 2π
+/// tear in the row-major integration. Keeping the deposits lets
+/// boundary-exiting wrap lines terminate on the zero-cost multi-unit gutter
+/// ring and the MCF stays balanced.
+#[test]
+fn edge_touching_noisy_scene_no_row_tears() {
+    use rand::SeedableRng;
+    let (m, n) = (160usize, 160usize);
+    let cycles = 4.0_f32;
+    let truth = Array2::from_shape_fn((m, n), |(i, j)| {
+        2.0 * std::f32::consts::PI * cycles * (i as f32 + j as f32) / (m as f32)
+    });
+    let gamma = Array2::<f32>::from_elem((m, n), 0.45);
+
+    // Precondition: the scene must deposit a NONZERO NET charge on the
+    // residue frame - that net is exactly what the old frame-zeroing
+    // stranded, so without it this test would not exercise the bug path.
+    // Scan seeds for a healthy imbalance rather than pinning one seed to a
+    // particular RNG stream.
+    let (igram, corr, net) = (0..64)
+        .find_map(|seed| {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let (igram, corr) = simulate::simulate_ifg(&truth, &gamma, 6, &mut rng);
+            let wrapped = igram.mapv(|z| z.arg());
+            let res = whirlwind_core::residue::compute(wrapped.view());
+            let (rm, rn) = res.dim();
+            let interior: i32 = res.slice(ndarray::s![1..rm - 1, 1..rn - 1]).sum();
+            // Total sums to zero, so net frame charge = -interior.
+            (interior.abs() >= 3).then_some((igram, corr, -interior))
+        })
+        .expect("no seed produced a net frame charge >= 3; scene generator changed");
+    assert!(net != 0);
+
+    let unw = whirlwind_core::unwrap_linear(igram.view(), corr.view(), 6.0, None).unwrap();
+
+    // Alignment-free banding check: the per-row MEDIAN integer cycle error
+    // must be one global constant. Isolated speckle errors cannot move a row
+    // median; a full-width 2π tear shifts every row median below it.
+    let tau = 2.0 * std::f32::consts::PI;
+    let row_medians: Vec<i32> = (0..m)
+        .map(|i| {
+            let mut cyc: Vec<i32> = (0..n)
+                .map(|j| ((unw[(i, j)] - truth[(i, j)]) / tau).round() as i32)
+                .collect();
+            cyc.sort_unstable();
+            cyc[n / 2]
+        })
+        .collect();
+    let lo = *row_medians.iter().min().unwrap();
+    let hi = *row_medians.iter().max().unwrap();
+    assert_eq!(
+        lo, hi,
+        "row-banding tear: row-median cycle error spans {lo}..{hi} (net frame charge {net})"
+    );
+}
+
 /// Regression for the zero-cost masked-sea blowup. `unwrap_linear` does NOT
 /// forbid masked arcs (cost 0), so a heavily-masked frame is a vast zero-cost
 /// "sea"; the single-source SSP must cross it to pair residues. With a binary
