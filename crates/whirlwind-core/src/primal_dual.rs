@@ -126,7 +126,8 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
             }
             if after >= before {
                 // PD made no progress this round AND SSP couldn't finish - the
-                // residual is genuinely trapped; stop and report rather than spin.
+                // residual is genuinely trapped for the cost-aware solvers; stop
+                // here and let the cost-ignoring BFS guard below pair the rest.
                 break;
             }
         }
@@ -134,6 +135,29 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
     if dbg {
         let rem: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
         eprintln!("[pd_full] ADAPTIVE FINAL remaining_excess={rem}");
+    }
+
+    // FINAL BALANCE GUARD. Integrating an unbalanced network turns every
+    // unpaired residue pair into a full-width 2π tear, so if the cost-aware
+    // passes above ever leave excess behind, pair it here no matter what.
+    // (The one known way they did - the Ridgecrest block-tear, where the Dial
+    // SSP's bucket-advance exit tested cumulative instead of consecutive empty
+    // advances and cut long searches short - is fixed in `run_single_source`;
+    // this guard remains as the safety net for any future incomplete pass.)
+    // Pair any survivors with a cost-ignoring residual BFS, which cannot strand
+    // on a connected balanced graph. It runs only when excess remains (a no-op
+    // on frames that already drained, so ww-orig parity is untouched there) and
+    // both sides are nonzero (a one-sided imbalance has no augmenting path left).
+    // Opt out with WHIRLWIND_NO_BFS_DRAIN=1 to observe the raw stranding.
+    if excess_now(net) > 0
+        && deficit_now(net) > 0
+        && std::env::var("WHIRLWIND_NO_BFS_DRAIN").is_err()
+    {
+        let paired = ssp::drain_residual_bfs(g, net);
+        if dbg {
+            let rem: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+            eprintln!("[pd_full] BFS DRAIN paired={paired} remaining_excess={rem}");
+        }
     }
 }
 
