@@ -1,14 +1,32 @@
 # Ridgecrest block-tear bug: stranded residues → stacked 2π integration tears
 
-**Status (2026-07-07): FIXED** by a cost-ignoring residual-BFS balance guard
-(`ssp::drain_residual_bfs`, wired into `primal_dual::run_full_dijkstra`). Full
-frame 90.3% → 97.75% agreement, the −19-cycle block eliminated
-(`remaining_excess` 38 → 0, BFS paired all 19 survivors, zero stranding); crop
-64.0% → 93.9%. The residual near-fault error is now a small local wedge (the
-BFS routes fewest-hops, not min-cost), not a full-width tear. The underlying
-Dial-SSP reachability defect (below) is still **open** — the guard makes it
-harmless rather than fixing the root cause. Disable with `WHIRLWIND_NO_BFS_DRAIN=1`
-to observe the raw stranding.
+**Status (2026-07-07): ROOT CAUSE FOUND AND FIXED.**
+`run_single_source`'s Dial bucket-advance exit tested **cumulative** empty
+advances over the whole search instead of **consecutive** ones (the three
+backends in `dial.rs` all reset the counter on every non-empty bucket; the SSP
+copy did not), so any search whose distance range spanned more than
+`k = max_rc + 1` total empty skips self-terminated with live entries still
+queued — stranding exactly the long-range leftover residues. One-line fix
+(`bucket_advances = 0;` after the empty-scan, matching `dial.rs`) plus a
+regression test (`ssp::single_source_tests::pairs_a_distant_sink_beyond_one_bucket_cycle`,
+verified to fail on the unfixed code). Results with the fix alone (BFS guard
+disabled): crop 64.0% → **97.4%**, zero stranding, zero remaining excess; full
+frame 90.3% → **99.43%** in 164 s (block eliminated, conncomps 20 → 1,
+vs SNAPHU-5×5's 99.81% self-recovery in 1301 s). Runtime rose 98 → 164 s
+because the formerly-stranded searches now complete — the cost of doing the
+work rather than silently skipping it.
+
+A `-C debug-assertions=yes` build of the repro never fired the
+`rc >= 0` assert, so reduced costs stay non-negative throughout: the earlier
+"invalid potentials from the belt PD" hypothesis was **wrong** and has been
+corrected in the code comments. The cost-ignoring residual-BFS balance guard
+(`ssp::drain_residual_bfs`, first commit of this PR) is retained as a safety
+net — the network must never be integrated unbalanced — but is now a no-op on
+this scene. Disable it with `WHIRLWIND_NO_BFS_DRAIN=1`.
+
+**Earlier guard-only status:** BFS guard alone gave full frame 90.3% → 97.75%,
+crop 64.0% → 93.9% (fewest-hops pairing, small local wedge). Superseded by the
+root-cause fix above, which lets the cost-aware SSP pair everything optimally.
 
 **Original diagnosis (2026-07-07).** Found while benchmarking the
 paper's Sentinel-1 rewrap-recovery test. Whirlwind offsets a 3.4-Mpixel

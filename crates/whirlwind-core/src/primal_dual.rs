@@ -137,11 +137,13 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
         eprintln!("[pd_full] ADAPTIVE FINAL remaining_excess={rem}");
     }
 
-    // FINAL BALANCE GUARD. The cost-aware passes above can strand residues on
-    // residue-dense scenes (e.g. the Ridgecrest coseismic belt): a balanced,
-    // residual-connected network whose leftover excess the Dial SSP fails to
-    // route because its reduced-cost potentials went invalid. Integrating such
-    // an unbalanced network turns every stranded pair into a full-width 2π tear.
+    // FINAL BALANCE GUARD. Integrating an unbalanced network turns every
+    // unpaired residue pair into a full-width 2π tear, so if the cost-aware
+    // passes above ever leave excess behind, pair it here no matter what.
+    // (The one known way they did - the Ridgecrest block-tear, where the Dial
+    // SSP's bucket-advance exit tested cumulative instead of consecutive empty
+    // advances and cut long searches short - is fixed in `run_single_source`;
+    // this guard remains as the safety net for any future incomplete pass.)
     // Pair any survivors with a cost-ignoring residual BFS, which cannot strand
     // on a connected balanced graph. It runs only when excess remains (a no-op
     // on frames that already drained, so ww-orig parity is untouched there) and

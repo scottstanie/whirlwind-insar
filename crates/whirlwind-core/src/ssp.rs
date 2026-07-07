@@ -238,12 +238,21 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                     cur_dist += 1;
                     bucket_advances += 1;
                     if bucket_advances > k {
-                        break; // nothing reachable remains (shouldn't happen w/ pending>0)
+                        break; // a full k-cycle of empty buckets: queue exhausted
                     }
                 }
                 if buckets[cur_bucket].is_empty() {
                     break;
                 }
+                // Reset on every non-empty bucket, exactly like the dial.rs
+                // backends: the exit test above must mean "k CONSECUTIVE empty
+                // buckets" (a full window with no work = exhausted), not "k
+                // empty advances accumulated over the whole search". Without
+                // this reset, any search whose distance range spans more than
+                // k total empty skips self-terminates with live entries still
+                // queued, stranding sources whose nearest deficit lies farther
+                // than ~k in reduced cost (the Ridgecrest block-tear bug).
+                bucket_advances = 0;
                 let u = buckets[cur_bucket].pop_front().unwrap() as usize; // FIFO (see decl)
                 pending -= 1;
                 // Stale: popped already, or re-relaxed since queuing (see decl).
@@ -400,16 +409,20 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
 ///
 /// # Why this exists
 ///
-/// The reduced-cost solvers (`primal_dual::run_full_dijkstra` + the Dial
-/// single-source [`run_single_source`] and its adaptive PD resume) can STRAND
-/// residues on residue-dense scenes such as the Ridgecrest coseismic belt: a
-/// source floods a large residual pocket and never reaches a deficit, even
-/// though the network is balanced and its residual graph is connected (so by
-/// flow-decomposition an augmenting path provably exists). The stranding is a
-/// reduced-cost / Dial-potential failure, not a real disconnection - the Dial
-/// bucket queue keys on reduced cost and its correctness needs non-negative
-/// reduced costs that the belt PD does not always deliver. Each stranded pair
-/// becomes one full-width 2π offset block in the row-major integration.
+/// If any cost-aware pass (`primal_dual::run_full_dijkstra`, the Dial
+/// single-source [`run_single_source`], the adaptive PD resume) ever leaves
+/// residues unpaired, the row-major integration turns each unpaired ±1 pair
+/// into a full-width 2π offset block - by far the worst possible failure, so
+/// the network must NEVER be integrated unbalanced. This happened on the 2019
+/// Ridgecrest coseismic belt (OPERA DISP-S1 F16941): [`run_single_source`]'s
+/// bucket-advance exit tested *cumulative* rather than *consecutive* empty
+/// advances, so long-range searches self-terminated with live entries still
+/// queued and ~19-49 sources stranded. That root cause is fixed (the counter
+/// now resets on every non-empty bucket, matching the `dial.rs` backends, and
+/// a debug-assertion run confirmed reduced costs stay non-negative throughout,
+/// so the potentials were never the problem). This guard stays as the safety
+/// net for any future incomplete pass: a suboptimal pairing costs a bounded
+/// local error, an unpaired residue costs a full-width tear.
 ///
 /// This routine sidesteps all of that: a plain FIFO breadth-first search over
 /// the residual graph, gated **only** on `is_arc_saturated` (never on cost or
@@ -524,6 +537,42 @@ pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
         eprintln!("[bfs_drain] paired={paired} stranded_sources={stranded} remaining_excess={rem}");
     }
     paired
+}
+
+#[cfg(test)]
+mod single_source_tests {
+    use super::*;
+    use crate::grid::RectangularGridGraph;
+    use ndarray::Array2;
+
+    /// Regression test for the Ridgecrest block-tear bug: the Dial
+    /// bucket-advance exit must test CONSECUTIVE empty advances (a full
+    /// k-cycle with no work = queue exhausted), not CUMULATIVE advances over
+    /// the whole search. With uniform arc cost 7 and zero potentials, k =
+    /// max_rc + 1 = 8, and every hop of the wavefront costs 7 empty-bucket
+    /// advances - so a sink more than one hop away needs cumulative advances
+    /// beyond k while never exceeding 7 consecutively. Before the fix this
+    /// search self-terminated after ~2 hops and stranded the source; each
+    /// stranded pair then integrates into a full-width 2π tear.
+    #[test]
+    fn pairs_a_distant_sink_beyond_one_bucket_cycle() {
+        // 4x16 residue grid, +1 and -1 planted 12 hops apart: shortest-path
+        // distance 12 * 7 = 84 >> k = 8.
+        let g = RectangularGridGraph::new(4, 16);
+        let mut residues = Array2::<i32>::zeros((4, 16));
+        residues[(1, 1)] = 1;
+        residues[(1, 13)] = -1;
+        let costs = vec![7_i32; g.num_forward];
+        let mut net = Network::new(&g, residues.view(), &costs);
+        assert!(net.is_balanced());
+
+        run_single_source(&g, &mut net);
+        let remaining: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        assert_eq!(
+            remaining, 0,
+            "single-source SSP must pair a sink whose distance spans many bucket cycles"
+        );
+    }
 }
 
 #[cfg(test)]
