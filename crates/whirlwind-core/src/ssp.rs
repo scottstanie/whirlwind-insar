@@ -118,15 +118,17 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
 /// The per-source potential update preserves the invariant: popped nodes get
 /// their exact distance (`π += d_sink − dist[v]`); non-popped nodes keep a zero
 /// shift, which is exactly "cap at `d_sink`" in that frame - valid because any
-/// unpopped node has `dist ≥ d_sink` by pop order. The `debug_assert` proves it:
-/// it must NEVER fire on the full path. Do **not** use this after the early-exit
+/// unpopped node has `dist ≥ d_sink` by pop order. The invariant is checked at
+/// runtime (release builds included): a negative reduced cost abandons that
+/// source's search untouched, counts it for the BFS balance guard, and warns
+/// loudly - it must never trigger on the full path. Do **not** use this after the early-exit
 /// `run` (its `d_max`-capped potentials can be negative on frontier arcs); use
 /// the multi-source [`run`] there.
 pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     let dbg = crate::primal_dual::debug_enabled();
     let n_nodes = net.num_nodes();
     let mut dist = vec![i64::MAX; n_nodes];
-    let mut pred_arc: Vec<i32> = vec![-1; n_nodes];
+    let mut pred_arc: Vec<i64> = vec![-1; n_nodes];
     let mut popped = vec![false; n_nodes];
     let mut touched: Vec<usize> = Vec::new();
     let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
@@ -177,6 +179,11 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     // arcs included), so a stranded source is a REACHABILITY/SSP BUG, not
     // expected control flow - surfaced here instead of being silently skipped.
     let mut stranded = 0_usize;
+    // Searches abandoned because a NEGATIVE reduced cost was seen (invalid
+    // potentials). Always reported loudly at the end: it means an upstream
+    // pass broke the potential invariant and must be investigated, even
+    // though the BFS balance guard keeps the output usable.
+    let mut neg_rc_sources = 0_usize;
     let mut scan_ns: u128 = 0; // time in max_reduced_cost_par (now only on k-overflow)
     // Maintained ACROSS sources (was rescanned every source - up to half the
     // runtime on large frames). A valid upper bound on every arc's reduced cost; grows lazily (a
@@ -230,6 +237,7 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             let mut cur_dist = 0_i64;
             let mut bucket_advances = 0_usize;
             let mut overflow = false;
+            let mut neg_rc = false;
             let mut max_rc_seen = 0_i64;
 
             while pending > 0 {
@@ -276,13 +284,20 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                         continue;
                     }
                     let rc = (net.arc_cost(g, arc) as i64) - pot_u + net.potential[v];
-                    // Must hold on the full-completion path (valid entry potentials +
-                    // the capped update below). NOT clamped: a fire means the
-                    // invariant broke and must be fixed, not papered over.
-                    debug_assert!(
-                        rc >= 0,
-                        "negative rc={rc} on arc {arc} in single-source Dial SSP (src idx {idx})"
-                    );
+                    // Non-negative reduced costs are the Dial validity
+                    // invariant (valid entry potentials + the capped update
+                    // below). Checked in RELEASE too - a debug_assert here is
+                    // compiled out exactly where it matters, and a negative rc
+                    // silently poisons distances (entries land in buckets the
+                    // scan already passed and are discarded as stale). Recover
+                    // by abandoning this source's search untouched: it is
+                    // counted as stranded and the cost-ignoring BFS balance
+                    // guard pairs it, so the failure is a bounded local error
+                    // instead of a corrupt unwrap.
+                    if rc < 0 {
+                        neg_rc = true;
+                        break;
+                    }
                     if rc >= k as i64 {
                         overflow = true; // k too small (potentials grew) -> recompute + retry
                         break;
@@ -296,16 +311,36 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                             touched.push(v);
                         }
                         dist[v] = nd;
-                        pred_arc[v] = arc as i32;
+                        pred_arc[v] = arc as i64;
                         buckets[(nd as usize) % k].push_back(v as u32);
                         pending += 1;
                     }
                 }
-                if overflow {
+                if overflow || neg_rc {
                     break;
                 }
             }
 
+            if neg_rc {
+                // Invalid potentials: abandon this search with the network
+                // state untouched (no augment, no potential update). The
+                // source is counted as stranded below and the BFS balance
+                // guard pairs it. Discard the partial Dijkstra scratch.
+                for &v in &touched {
+                    dist[v] = i64::MAX;
+                    pred_arc[v] = -1;
+                    popped[v] = false;
+                }
+                touched.clear();
+                for b in buckets.iter_mut() {
+                    b.clear();
+                }
+                neg_rc_sources += 1;
+                sink_found = None;
+                dbg_cur_dist = cur_dist;
+                dbg_k = k;
+                break;
+            }
             if overflow {
                 // Discard the partial Dijkstra, recompute a tight max_rc, retry.
                 for &v in &touched {
@@ -388,6 +423,14 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
             b.clear();
         }
     }
+    if neg_rc_sources > 0 {
+        eprintln!(
+            "[ssp1] WARNING: {neg_rc_sources} source search(es) abandoned on a \
+             negative reduced cost - the potential invariant broke upstream; \
+             the BFS balance guard will pair the leftovers, but this should be \
+             reported and investigated"
+        );
+    }
     if dbg {
         let ex: i64 = net
             .excess
@@ -449,7 +492,7 @@ pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
         return 0;
     }
 
-    let mut pred_arc: Vec<i32> = vec![-1; n_nodes];
+    let mut pred_arc: Vec<i64> = vec![-1; n_nodes];
     let mut visited = vec![false; n_nodes];
     let mut touched: Vec<usize> = Vec::new();
     let mut queue: VecDeque<u32> = VecDeque::new();
@@ -484,7 +527,7 @@ pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
                     }
                     visited[v] = true;
                     touched.push(v);
-                    pred_arc[v] = arc as i32;
+                    pred_arc[v] = arc as i64;
                     queue.push_back(v as u32);
                 }
             }
@@ -509,10 +552,16 @@ pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
                 // neither of which should occur on the balanced `unwrap_linear`
                 // grid. Report and abandon this source rather than spin.
                 stranded += 1;
-                if dbg {
+                // Unconditionally loud (first few): if the guard of last
+                // resort itself cannot pair a residue, the output WILL carry
+                // a full-width 2pi tear - the one failure this module exists
+                // to prevent - and silence here would recreate the original
+                // Ridgecrest bug with no trace in the logs.
+                if stranded <= 5 {
                     eprintln!(
-                        "[bfs_drain] src={src} reached {} nodes, NO deficit reachable \
-                         (network disconnected/unbalanced?)",
+                        "[bfs_drain] WARNING: src={src} reached {} nodes, NO deficit \
+                         reachable (network disconnected/unbalanced?) - the unwrap \
+                         will contain a full-width 2pi tear",
                         touched.len()
                     );
                 }
@@ -532,8 +581,13 @@ pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
         }
     }
 
-    if dbg {
-        let rem: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+    let rem: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+    if stranded > 0 || rem > 0 {
+        eprintln!(
+            "[bfs_drain] WARNING: paired={paired} stranded_sources={stranded} \
+             remaining_excess={rem} - unpaired residues integrate to full-width 2pi tears"
+        );
+    } else if dbg {
         eprintln!("[bfs_drain] paired={paired} stranded_sources={stranded} remaining_excess={rem}");
     }
     paired
@@ -572,6 +626,35 @@ mod single_source_tests {
             remaining, 0,
             "single-source SSP must pair a sink whose distance spans many bucket cycles"
         );
+    }
+
+    /// A NEGATIVE reduced cost (invalid potentials) must not panic, poison
+    /// distances, or corrupt the network: the search is abandoned untouched,
+    /// the source counts as stranded, and the BFS balance guard pairs it.
+    /// Force the condition by corrupting one potential before the solve.
+    #[test]
+    fn negative_reduced_cost_is_abandoned_and_bfs_guard_recovers() {
+        let g = RectangularGridGraph::new(4, 8);
+        let mut residues = Array2::<i32>::zeros((4, 8));
+        residues[(1, 1)] = 1;
+        residues[(1, 6)] = -1;
+        let costs = vec![7_i32; g.num_forward];
+        let mut net = Network::new(&g, residues.view(), &costs);
+        let src = net.excess_nodes().next().unwrap();
+        // Every arc out of src now has rc = 7 - 1000 + 0 < 0.
+        net.potential[src] = 1000;
+
+        run_single_source(&g, &mut net);
+        let remaining: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        assert_eq!(
+            remaining, 2,
+            "abandoned search must leave the pair untouched"
+        );
+
+        let paired = drain_residual_bfs(&g, &mut net);
+        assert_eq!(paired, 1, "BFS guard must pair what the SSP abandoned");
+        let remaining: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        assert_eq!(remaining, 0, "network must be balanced after the guard");
     }
 }
 

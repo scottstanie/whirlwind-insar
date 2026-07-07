@@ -42,6 +42,19 @@ pub struct RectangularGridGraph {
 impl RectangularGridGraph {
     pub fn new(m: usize, n: usize) -> Self {
         assert!(m >= 2 && n >= 2, "grid must be at least 2x2");
+        // Node ids are stored as `u32` in the Dial bucket queues and the BFS
+        // drain queue (halving the hottest queues' memory traffic), so the
+        // node count must fit in 32 bits. 2^32 nodes is a ~65,535 x 65,535
+        // grid - a full NISAR frame at single-look posting (60,000 x 60,000)
+        // fits. Fail loudly at construction rather than wrap silently in the
+        // queues. (Arc ids are already `i64`/`u64` everywhere: at ~16 arcs
+        // per pixel they overflow 32 bits past ~268 Mpixel.)
+        let num_nodes = m.checked_mul(n).expect("grid node count overflows usize");
+        assert!(
+            num_nodes <= u32::MAX as usize + 1,
+            "grid {m}x{n} = {num_nodes} nodes exceeds the u32 node-id range \
+             of the shortest-path queues; widen the queue node ids to u64"
+        );
         let n_v = (m - 1) * n;
         let n_h = m * (n - 1);
         let num_forward = 2 * n_v + 2 * n_h;
@@ -296,5 +309,23 @@ mod tests {
         let out = g.outgoing_ij(2, 2);
         // 4 forward (D, U, R, L) + 4 reverse partners-of-forward-into = 8
         assert_eq!(out.len, 8);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds the u32 node-id range")]
+    fn rejects_grids_beyond_u32_node_ids() {
+        // 70,000^2 = 4.9e9 nodes > 2^32; construction is O(1), so this only
+        // exercises the guard - no allocation happens.
+        RectangularGridGraph::new(70_000, 70_000);
+    }
+
+    #[test]
+    fn accepts_nisar_single_look_dimensions() {
+        // 60,000 x 60,000 single-look NISAR frame -> graph is (m+1, n+1).
+        let g = RectangularGridGraph::new(60_001, 60_001);
+        assert!(
+            g.num_forward > u32::MAX as usize,
+            "arc ids genuinely need 64 bits at this scale"
+        );
     }
 }

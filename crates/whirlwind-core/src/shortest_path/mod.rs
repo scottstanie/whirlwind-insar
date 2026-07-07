@@ -50,7 +50,12 @@ pub struct ShortestPaths {
     /// bytes/node of RAM and two stores per relaxation in the hottest loop.
     /// The augment phase never trusted `source` anyway: it walks the pred
     /// chain to find the true seed, see `primal_dual::run_impl`.)
-    pub pred_arc: Vec<i32>,
+    ///
+    /// `i64`, not `i32`: residual arc ids run to `2 * num_forward`, roughly
+    /// 16 arcs per pixel, which overflows `i32` past ~268 Mpixel - and a
+    /// NISAR frame at single-look posting is 3.6 Gpixel. A silent wrap here
+    /// corrupts the pred chain (and the unwrap) with no error raised.
+    pub pred_arc: Vec<i64>,
     /// True iff the node has been popped (i.e. `dist[node]` is finalized).
     /// With early-exit Dijkstra a node may have a finite `dist` after
     /// relaxation but not be finalized; callers must consult `popped`
