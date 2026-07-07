@@ -161,7 +161,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
             let nd = cur_dist + rc;
             if nd < sp.dist[v] {
                 sp.dist[v] = nd;
-                sp.pred_arc[v] = arc as i32;
+                sp.pred_arc[v] = arc as i64;
                 let b = (nd as usize) % k;
                 buckets[b].push(v as u32);
                 *pending += 1;
@@ -288,7 +288,7 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
             let nd = cur_dist + rc;
             if nd < sp.dist[v] {
                 sp.dist[v] = nd;
-                sp.pred_arc[v] = arc as i32;
+                sp.pred_arc[v] = arc as i64;
                 let b = (nd as usize) % k;
                 buckets[b].push_back(v as u32); // FIFO (see decl)
                 *pending += 1;
@@ -320,7 +320,10 @@ const PAR_THRESHOLD: usize = 256;
 /// Proposal emitted by a phase-1 thread: `(v, nd, arc)`.
 /// We collect into per-thread Vecs and reduce, so the constant matters less
 /// than amortized.
-type Proposal = (usize, i64, u32);
+type Proposal = (usize, i64, u64);
+// The arc id is u64, not u32: residual arc ids run to 2*num_forward (~16 x
+// pixels), which overflows u32 past ~536 Mpixel (NISAR single-look posting
+// is 3.6 Gpixel). Node ids stay u32 - guarded by the assert in grid.rs.
 
 /// Parallel Dial's multi-source Dijkstra. Functionally equivalent to [`run`],
 /// but each large-enough bucket is relaxed via rayon. See module docs for the
@@ -409,7 +412,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                         let nd = cur_dist + rc;
                         if nd < sp.dist[v] {
                             sp.dist[v] = nd;
-                            sp.pred_arc[v] = arc as i32;
+                            sp.pred_arc[v] = arc as i64;
                             let b = (nd as usize) % k;
                             buckets[b].push(v as u32);
                             *pending += 1;
@@ -486,7 +489,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                             };
                             let nd = cur_dist + rc;
                             if nd < sp_dist_snap[v] {
-                                props.push((v, nd, arc as u32));
+                                props.push((v, nd, arc as u64));
                             }
                         };
                         out_buf.clear();
@@ -522,7 +525,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
             for (v, nd, arc) in proposals {
                 if nd < sp.dist[v] {
                     sp.dist[v] = nd;
-                    sp.pred_arc[v] = arc as i32;
+                    sp.pred_arc[v] = arc as i64;
                     let b = (nd as usize) % k;
                     buckets[b].push(v as u32);
                     pending += 1;

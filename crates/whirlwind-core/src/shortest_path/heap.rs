@@ -82,7 +82,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
             let nd = d.saturating_add(rc);
             if nd < sp.dist[v] {
                 sp.dist[v] = nd;
-                sp.pred_arc[v] = arc as i32;
+                sp.pred_arc[v] = arc as i64;
                 heap.push(Reverse((nd, v)));
             }
         }
