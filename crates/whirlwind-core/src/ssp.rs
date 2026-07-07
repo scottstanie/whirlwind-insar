@@ -393,3 +393,196 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
         );
     }
 }
+
+/// Last-resort **cost-ignoring** residual BFS that pairs every remaining excess
+/// unit with a deficit, guaranteeing the network is left balanced so the
+/// integration never has to absorb a stranded residue as a full-width 2π tear.
+///
+/// # Why this exists
+///
+/// The reduced-cost solvers (`primal_dual::run_full_dijkstra` + the Dial
+/// single-source [`run_single_source`] and its adaptive PD resume) can STRAND
+/// residues on residue-dense scenes such as the Ridgecrest coseismic belt: a
+/// source floods a large residual pocket and never reaches a deficit, even
+/// though the network is balanced and its residual graph is connected (so by
+/// flow-decomposition an augmenting path provably exists). The stranding is a
+/// reduced-cost / Dial-potential failure, not a real disconnection - the Dial
+/// bucket queue keys on reduced cost and its correctness needs non-negative
+/// reduced costs that the belt PD does not always deliver. Each stranded pair
+/// becomes one full-width 2π offset block in the row-major integration.
+///
+/// This routine sidesteps all of that: a plain FIFO breadth-first search over
+/// the residual graph, gated **only** on `is_arc_saturated` (never on cost or
+/// potential). On a connected, balanced network it always finds a deficit for
+/// every leftover excess unit, so the result is balanced by construction. The
+/// pairing it picks is the fewest-hops augmenting path, which is not
+/// cost-optimal - but a suboptimal pairing costs a bounded local error, whereas
+/// leaving the pair unpaired costs a full-width tear. It is a guard, not the
+/// primary solver: it only runs when excess survives the cost-aware passes, so
+/// it is a no-op on the frames (e.g. the NISAR set) that already drain cleanly.
+///
+/// Returns the number of units it paired (0 when there was nothing to drain).
+pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
+    let dbg = crate::primal_dual::debug_enabled();
+    let n_nodes = net.num_nodes();
+
+    let mut deficit_units: i64 = net
+        .excess
+        .iter()
+        .filter(|&&e| e < 0)
+        .map(|&e| -e as i64)
+        .sum();
+    if deficit_units == 0 {
+        return 0;
+    }
+
+    let mut pred_arc: Vec<i32> = vec![-1; n_nodes];
+    let mut visited = vec![false; n_nodes];
+    let mut touched: Vec<usize> = Vec::new();
+    let mut queue: VecDeque<u32> = VecDeque::new();
+    let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
+
+    let sources: Vec<usize> = net.excess_nodes().collect();
+    let mut paired = 0_usize;
+    let mut stranded = 0_usize;
+
+    for &src in &sources {
+        // A single source may hold more than one excess unit; drain them all.
+        while net.excess[src] > 0 && deficit_units > 0 {
+            // BFS from src over unsaturated residual arcs, early-exiting the
+            // moment the first deficit node is popped (fewest-hops path).
+            visited[src] = true;
+            touched.push(src);
+            queue.push_back(src as u32);
+            let mut sink: Option<usize> = None;
+            while let Some(u) = queue.pop_front() {
+                let u = u as usize;
+                if net.excess[u] < 0 {
+                    sink = Some(u);
+                    break;
+                }
+                out_buf.clear();
+                if u < g.num_nodes() {
+                    g.outgoing(u, &mut out_buf);
+                }
+                for &(arc, v) in out_buf.iter().chain(net.extra_outgoing(u).iter()) {
+                    if net.is_arc_saturated(arc) || visited[v] {
+                        continue;
+                    }
+                    visited[v] = true;
+                    touched.push(v);
+                    pred_arc[v] = arc as i32;
+                    queue.push_back(v as u32);
+                }
+            }
+
+            if let Some(sink) = sink {
+                net.increase_excess(sink, 1);
+                net.decrease_excess(src, 1);
+                deficit_units -= 1;
+                paired += 1;
+                let mut cur = sink;
+                loop {
+                    let pa = pred_arc[cur];
+                    if pa < 0 {
+                        break;
+                    }
+                    net.push_unit(g, pa as usize);
+                    cur = net.arc_endpoints(g, pa as usize).0;
+                }
+            } else {
+                // Genuinely no deficit reachable in the residual graph - only
+                // possible if the network is unbalanced or truly disconnected,
+                // neither of which should occur on the balanced `unwrap_linear`
+                // grid. Report and abandon this source rather than spin.
+                stranded += 1;
+                if dbg {
+                    eprintln!(
+                        "[bfs_drain] src={src} reached {} nodes, NO deficit reachable \
+                         (network disconnected/unbalanced?)",
+                        touched.len()
+                    );
+                }
+            }
+
+            // Reset scratch over touched only.
+            for &v in &touched {
+                visited[v] = false;
+                pred_arc[v] = -1;
+            }
+            touched.clear();
+            queue.clear();
+
+            if sink.is_none() {
+                break; // this source can't be served; move on
+            }
+        }
+    }
+
+    if dbg {
+        let rem: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        eprintln!("[bfs_drain] paired={paired} stranded_sources={stranded} remaining_excess={rem}");
+    }
+    paired
+}
+
+#[cfg(test)]
+mod bfs_drain_tests {
+    use super::*;
+    use crate::grid::RectangularGridGraph;
+    use ndarray::Array2;
+
+    /// The BFS drain must balance a connected network regardless of the
+    /// potential/reduced-cost state - it never touches potentials. Here we hand
+    /// it a raw, un-solved network (zero potentials, high arc costs so a
+    /// cost-aware solver would still route, but we skip it) with a single
+    /// +1/-1 residue pair and require it to pair them, leaving zero excess.
+    #[test]
+    fn drains_a_balanced_pair_with_no_prior_solve() {
+        // 6x6 residue grid (5x5 pixel edges). Plant +1 and -1 at two interior
+        // nodes; the rest zero → balanced.
+        let g = RectangularGridGraph::new(6, 6);
+        let mut residues = Array2::<i32>::zeros((6, 6));
+        residues[(2, 1)] = 1;
+        residues[(3, 4)] = -1;
+        let costs = vec![7_i32; g.num_forward];
+        let mut net = Network::new(&g, residues.view(), &costs);
+        assert!(net.is_balanced());
+
+        let paired = drain_residual_bfs(&g, &mut net);
+        assert_eq!(paired, 1, "exactly one +1/-1 pair to route");
+        let remaining: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        assert_eq!(remaining, 0, "network must be balanced after the drain");
+    }
+
+    /// Multi-unit sources (an excess node holding more than one unit) must be
+    /// fully drained, and several pairs paired in one call.
+    #[test]
+    fn drains_multi_unit_source() {
+        let g = RectangularGridGraph::new(8, 8);
+        let mut residues = Array2::<i32>::zeros((8, 8));
+        residues[(2, 2)] = 2; // two units on one source
+        residues[(5, 5)] = -1;
+        residues[(1, 6)] = -1;
+        let costs = vec![3_i32; g.num_forward];
+        let mut net = Network::new(&g, residues.view(), &costs);
+        assert!(net.is_balanced());
+
+        let paired = drain_residual_bfs(&g, &mut net);
+        assert_eq!(paired, 2, "two units to route from the +2 source");
+        let remaining: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        assert_eq!(remaining, 0);
+    }
+
+    /// A no-op when there is nothing to drain (already balanced with zero
+    /// excess): returns 0 and leaves the network untouched. This is the state
+    /// the guard sees on frames that already solved cleanly (e.g. NISAR).
+    #[test]
+    fn no_op_when_nothing_stranded() {
+        let g = RectangularGridGraph::new(5, 5);
+        let residues = Array2::<i32>::zeros((5, 5));
+        let costs = vec![1_i32; g.num_forward];
+        let mut net = Network::new(&g, residues.view(), &costs);
+        assert_eq!(drain_residual_bfs(&g, &mut net), 0);
+    }
+}
