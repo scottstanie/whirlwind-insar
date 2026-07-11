@@ -17,8 +17,8 @@
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
-use crate::shortest_path::dial::max_reduced_cost_par;
-use crate::shortest_path::{ShortestPaths, dijkstra_multi_source_into};
+use crate::shortest_path::dial::{max_reduced_cost_par, max_reduced_cost_par_fused};
+use crate::shortest_path::{FusedSolveState, ShortestPaths, dijkstra_multi_source_into};
 use std::collections::VecDeque;
 
 pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
@@ -452,6 +452,283 @@ pub fn run_single_source_scratch<G: ResidualGraph>(
         // source (early-exit can leave queued entries behind).
         for &v in &touched {
             dist[v] = i64::MAX;
+            pred_arc[v] = -1;
+            popped[v] = false;
+        }
+        touched.clear();
+        for b in buckets.iter_mut() {
+            b.clear();
+        }
+    }
+    if neg_rc_sources > 0 {
+        eprintln!(
+            "[ssp1] WARNING: {neg_rc_sources} source search(es) abandoned on a \
+             negative reduced cost - the potential invariant broke upstream; \
+             the BFS balance guard will pair the leftovers, but this should be \
+             reported and investigated"
+        );
+    }
+    if dbg {
+        let ex: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e > 0)
+            .map(|&e| e as i64)
+            .sum();
+        eprintln!(
+            "[ssp1] DONE: stranded_sources={stranded} remaining_excess={ex} \
+             max_reduced_cost_scan={:.1}ms",
+            scan_ns as f64 / 1e6
+        );
+    }
+}
+
+/// Fused-layout twin of [`run_single_source_scratch`]: identical algorithm
+/// and identical i64 arithmetic in the same order (byte-identical output),
+/// but potential + distance are read through one [`PotDist`] per node - one
+/// random cache line per relaxation instead of two, and the per-source
+/// potential update `pot += d_sink − dist` lands on the line the search just
+/// touched. Potentials live in `st.pd` for the duration of the fused solve
+/// (`net.potential` is empty; see [`FusedSolveState`]).
+pub fn run_single_source_fused<G: ResidualGraph>(
+    g: &G,
+    net: &mut Network,
+    st: &mut FusedSolveState,
+    buckets: &mut Vec<VecDeque<u32>>,
+) {
+    let dbg = crate::primal_dual::debug_enabled();
+    debug_assert_eq!(st.pd.len(), net.num_nodes());
+    st.reset_search();
+    let pd = &mut st.pd;
+    let pred_arc = &mut st.pred_arc;
+    let popped = &mut st.popped;
+    let mut touched: Vec<usize> = Vec::new();
+    let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
+    let has_ground = net.has_ground();
+    for b in buckets.iter_mut() {
+        b.clear();
+    }
+
+    let sources: Vec<usize> = net.excess_nodes().collect();
+    let total = sources.len();
+    let mut deficit_units: i64 = net
+        .excess
+        .iter()
+        .filter(|&&e| e < 0)
+        .map(|&e| -e as i64)
+        .sum();
+    if dbg {
+        let ex: i64 = net
+            .excess
+            .iter()
+            .filter(|&&e| e > 0)
+            .map(|&e| e as i64)
+            .sum();
+        eprintln!(
+            "[ssp1] single-source SSP (Dial, fused): {total} sources; excess={ex} deficit={deficit_units} balanced={}",
+            ex == deficit_units
+        );
+    }
+    if deficit_units == 0 {
+        return;
+    }
+    let mut stranded = 0_usize;
+    let mut neg_rc_sources = 0_usize;
+    let mut scan_ns: u128 = 0;
+    let mut max_rc = {
+        let _scan_t = std::time::Instant::now();
+        let v = max_reduced_cost_par_fused(g, net, pd);
+        scan_ns += _scan_t.elapsed().as_nanos();
+        v
+    };
+
+    for (idx, src) in sources.into_iter().enumerate() {
+        if deficit_units == 0 {
+            break;
+        }
+        if net.excess[src] <= 0 {
+            continue;
+        }
+        if dbg && idx % 1000 == 0 {
+            let ex: i64 = net
+                .excess
+                .iter()
+                .filter(|&&e| e > 0)
+                .map(|&e| e as i64)
+                .sum();
+            eprintln!("[ssp1] source {idx}/{total}, excess_remaining={ex}");
+        }
+        crate::primal_dual::record_ssp_iter();
+
+        let mut sink_found: Option<(usize, i64)> = None;
+        let dbg_cur_dist: i64;
+        let dbg_k: usize;
+        loop {
+            let k = (max_rc as usize).saturating_add(1).max(1);
+            if buckets.len() < k {
+                buckets.resize_with(k, VecDeque::new);
+            }
+
+            pd[src].dist = 0;
+            touched.push(src);
+            buckets[0].push_back(src as u32);
+            let mut pending = 1_usize;
+            let mut cur_bucket = 0_usize;
+            let mut cur_dist = 0_i64;
+            let mut bucket_advances = 0_usize;
+            let mut overflow = false;
+            let mut neg_rc = false;
+            let mut max_rc_seen = 0_i64;
+
+            while pending > 0 {
+                while buckets[cur_bucket].is_empty() {
+                    cur_bucket = (cur_bucket + 1) % k;
+                    cur_dist += 1;
+                    bucket_advances += 1;
+                    if bucket_advances > k {
+                        break; // a full k-cycle of empty buckets: queue exhausted
+                    }
+                }
+                if buckets[cur_bucket].is_empty() {
+                    break;
+                }
+                // Consecutive-empty-advance reset - see the split-layout twin.
+                bucket_advances = 0;
+                let u = buckets[cur_bucket].pop_front().unwrap() as usize; // FIFO
+                pending -= 1;
+                if pd[u].dist != cur_dist {
+                    debug_assert!(!popped[u] || pd[u].dist < cur_dist);
+                    continue;
+                }
+                debug_assert!(!popped[u], "node {u} popped twice at dist {cur_dist}");
+                popped[u] = true;
+                if net.excess[u] < 0 {
+                    sink_found = Some((u, cur_dist));
+                    break;
+                }
+                let pot_u = pd[u].pot;
+                out_buf.clear();
+                if u < g.num_nodes() {
+                    g.outgoing(u, &mut out_buf);
+                }
+                if has_ground {
+                    out_buf.extend(net.extra_outgoing(u));
+                }
+                for &(arc, v) in out_buf.iter() {
+                    if net.is_arc_saturated(arc) {
+                        continue;
+                    }
+                    // One 16-byte load serves the reduced cost AND the
+                    // improvement test (see the split twin for the rc<0 /
+                    // overflow recovery semantics).
+                    let pv = pd[v];
+                    let rc = (net.arc_cost(g, arc) as i64) - pot_u + pv.pot;
+                    if rc < 0 {
+                        neg_rc = true;
+                        break;
+                    }
+                    if rc >= k as i64 {
+                        overflow = true;
+                        break;
+                    }
+                    if rc > max_rc_seen {
+                        max_rc_seen = rc;
+                    }
+                    let nd = cur_dist + rc;
+                    if nd < pv.dist {
+                        if pv.dist == i64::MAX {
+                            touched.push(v);
+                        }
+                        pd[v].dist = nd;
+                        pred_arc[v] = arc as i64;
+                        buckets[(nd as usize) % k].push_back(v as u32);
+                        pending += 1;
+                    }
+                }
+                if overflow || neg_rc {
+                    break;
+                }
+            }
+
+            if neg_rc {
+                for &v in &touched {
+                    pd[v].dist = i64::MAX;
+                    pred_arc[v] = -1;
+                    popped[v] = false;
+                }
+                touched.clear();
+                for b in buckets.iter_mut() {
+                    b.clear();
+                }
+                neg_rc_sources += 1;
+                sink_found = None;
+                dbg_cur_dist = cur_dist;
+                dbg_k = k;
+                break;
+            }
+            if overflow {
+                for &v in &touched {
+                    pd[v].dist = i64::MAX;
+                    pred_arc[v] = -1;
+                    popped[v] = false;
+                }
+                touched.clear();
+                for b in buckets.iter_mut() {
+                    b.clear();
+                }
+                let _scan_t = std::time::Instant::now();
+                max_rc = max_reduced_cost_par_fused(g, net, pd);
+                scan_ns += _scan_t.elapsed().as_nanos();
+                continue;
+            }
+            if max_rc_seen > max_rc {
+                max_rc = max_rc_seen;
+            }
+            dbg_cur_dist = cur_dist;
+            dbg_k = k;
+            break;
+        }
+
+        if let Some((sink, d_sink)) = sink_found {
+            net.increase_excess(sink, 1);
+            net.decrease_excess(src, 1);
+            deficit_units -= 1;
+            let mut cur = sink;
+            loop {
+                let pa = pred_arc[cur];
+                if pa < 0 {
+                    break;
+                }
+                net.push_unit(g, pa as usize);
+                cur = net.arc_endpoints(g, pa as usize).0;
+            }
+            // Potential update on the SAME cache line the search touched.
+            for &v in &touched {
+                if popped[v] {
+                    let x = &mut pd[v];
+                    x.pot += d_sink - x.dist;
+                }
+            }
+        } else {
+            stranded += 1;
+            if dbg && stranded <= 5 {
+                let reached = touched.iter().filter(|&&v| popped[v]).count();
+                let n_def = net.excess.iter().filter(|&&e| e < 0).count();
+                let reached_def = touched
+                    .iter()
+                    .filter(|&&v| popped[v] && net.excess[v] < 0)
+                    .count();
+                eprintln!(
+                    "[ssp1] STRANDED src={src} (idx {idx}): reached={reached} nodes, \
+                     touched={}, global_deficit_nodes={n_def}, reached_deficits={reached_def}, \
+                     last_cur_dist={dbg_cur_dist} k={dbg_k}",
+                    touched.len()
+                );
+            }
+        }
+
+        for &v in &touched {
+            pd[v].dist = i64::MAX;
             pred_arc[v] = -1;
             popped[v] = false;
         }

@@ -10,9 +10,7 @@
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
-use crate::shortest_path::{
-    ShortestPaths, dijkstra_multi_source_full_scratch_into, dijkstra_multi_source_into,
-};
+use crate::shortest_path::{FusedSolveState, ShortestPaths, dial, dijkstra_multi_source_into};
 use crate::ssp;
 use rayon::prelude::*;
 use std::collections::VecDeque;
@@ -67,7 +65,7 @@ fn reset_timings() {
 }
 
 pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
-    run_impl(g, net, max_iter, false);
+    run_impl(g, net, max_iter);
 }
 
 /// Primal-dual loop using full-completion Dijkstra - matches Python ww-orig.
@@ -78,7 +76,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
 /// each PD iteration to route significantly more flow than early-exit Dijkstra.
 /// On large full-frame scenes this closes a several-percent quality gap.
 pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
-    run_impl(g, net, max_iter, true);
+    run_impl_full_fused(g, net, max_iter);
 
     // GUARDED ADAPTIVE FALLBACK. ww-orig does PD(8)+SSP and its SSP completes;
     // ours can STRAND residues (the single-source SSP greedily fragments the
@@ -174,10 +172,202 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
     }
 }
 
-fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_dijkstra: bool) {
+/// Full-completion primal-dual driver on the FUSED (π, dist) node layout -
+/// the ww-orig-parity path behind [`run_full_dijkstra`].
+///
+/// Same algorithm and identical i64 arithmetic as the historical split-layout
+/// full path (distance-sorted augment order, exact potential subtraction,
+/// single-source SSP tail), so the output is byte-identical. The difference
+/// is purely mechanical: `net.potential` is MOVED into a [`FusedSolveState`]
+/// for the whole solve (one 16-byte struct per node holds π and dist, one
+/// random cache line per relaxation instead of two) and restored at exit, so
+/// callers - the adaptive resume, the BFS balance guard, diagnostics, tests -
+/// keep seeing valid potentials on `net`.
+fn run_impl_full_fused<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     reset_timings();
     let dbg = debug_enabled();
-    let tag = if full_dijkstra { "pd_full" } else { "pd" };
+    let tag = "pd_full";
+    assert!(
+        !net.reuse_mode && !net.convex_mode,
+        "run_impl_full_fused only supports linear-cost networks"
+    );
+
+    let n_nodes = net.num_nodes();
+    let mut visited_epoch: Vec<u32> = vec![0; n_nodes];
+    let mut source_used: Vec<bool> = vec![false; n_nodes];
+    let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    let mut deficits: Vec<usize> = Vec::new();
+    let mut st = FusedSolveState::take_from(net);
+    let mut fifo_buckets: Vec<VecDeque<u32>> = Vec::new();
+    let mut epoch: u32 = 0;
+
+    'solve: {
+        let mut iter = 0;
+        let mut last_excess_total = i64::MAX;
+        loop {
+            let excess_total: i64 = net
+                .excess
+                .iter()
+                .filter(|&&e| e > 0)
+                .map(|&e| e as i64)
+                .sum();
+            let deficit_total: i64 = net
+                .excess
+                .iter()
+                .filter(|&&e| e < 0)
+                .map(|&e| -e as i64)
+                .sum();
+            if dbg {
+                eprintln!("[{tag}] iter={iter} excess={excess_total} deficit={deficit_total}");
+            }
+            if excess_total == 0 || deficit_total == 0 {
+                // Either fully balanced, or no remaining deficit to flow toward.
+                break 'solve;
+            }
+            if excess_total >= last_excess_total {
+                if dbg {
+                    eprintln!("[{tag}] no progress, falling to SSP");
+                }
+                break;
+            }
+            last_excess_total = excess_total;
+
+            if dbg {
+                eprintln!("[{tag}] iter={iter} running dijkstra");
+            }
+            let t0 = std::time::Instant::now();
+            dial::run_full_fused_into(g, net, &mut st, &mut fifo_buckets);
+            let dt = t0.elapsed().as_secs_f64();
+            record_dijkstra(dt * 1000.0);
+            record_iter();
+            if dbg {
+                eprintln!("[{tag}] iter={iter} dijkstra took {:.3}s", dt);
+            }
+
+            // Augment: identical walk to `run_impl` (see the comments there),
+            // reading the pred chain from the fused state.
+            let t_aug = std::time::Instant::now();
+            deficits.clear();
+            deficits.extend(net.deficit_nodes());
+            path_info.clear();
+            for &sink in &deficits {
+                if !st.popped[sink] {
+                    continue;
+                }
+                epoch = epoch.wrapping_add(1);
+                if epoch == 0 {
+                    visited_epoch.fill(0);
+                    epoch = 1;
+                }
+                let mut arcs = Vec::new();
+                let mut cur = sink;
+                visited_epoch[cur] = epoch;
+                loop {
+                    let parc = st.pred_arc[cur];
+                    if parc < 0 {
+                        break; // cur is a seed source
+                    }
+                    arcs.push(parc as usize);
+                    cur = net.arc_endpoints(g, parc as usize).0;
+                    if visited_epoch[cur] == epoch {
+                        if dbg && arcs.len() < 30 {
+                            eprintln!(
+                                "[{tag}] CYCLE in pred-chain from sink={sink}, revisits cur={cur} after {} hops, dist={}",
+                                arcs.len(),
+                                st.pd[cur].dist
+                            );
+                        }
+                        arcs.clear();
+                        break;
+                    }
+                    visited_epoch[cur] = epoch;
+                }
+                if !arcs.is_empty() {
+                    path_info.push((sink, cur, arcs));
+                }
+            }
+            // Parity augment order: sort sinks by (source, Dijkstra DISTANCE),
+            // exactly ww-orig's `augment_flow_pd` (`distance_to_vertex(sink)`).
+            // Meaningful only because the Dijkstra above is FIFO - see
+            // `dial::run_full_scratch_into`.
+            path_info.sort_by_key(|item| (item.1, st.pd[item.0].dist));
+            source_used.iter_mut().for_each(|x| *x = false);
+            let mut augmented = 0;
+            for (sink, src, arcs) in path_info.drain(..) {
+                if source_used[src] {
+                    continue;
+                }
+                source_used[src] = true;
+                for arc in arcs {
+                    net.push_unit(g, arc);
+                }
+                net.increase_excess(sink, 1);
+                net.decrease_excess(src, 1);
+                augmented += 1;
+            }
+            record_augment(t_aug.elapsed().as_secs_f64() * 1000.0);
+            if dbg {
+                eprintln!("[{tag}] iter={iter} augmented {augmented}");
+            }
+
+            let t_pot = std::time::Instant::now();
+            // Exact potential update `π[v] -= dist[v]`: with full completion
+            // every reachable node is popped, so the d_max cap only guards
+            // genuinely unreachable nodes - matching `update_potential_pd`.
+            let d_max = st
+                .pd
+                .par_iter()
+                .zip(st.popped.par_iter())
+                .filter_map(|(x, &p)| if p { Some(x.dist) } else { None })
+                .max()
+                .unwrap_or(0);
+            st.pd
+                .par_iter_mut()
+                .zip(st.popped.par_iter())
+                .for_each(|(x, &popped)| {
+                    let dv = if popped { x.dist } else { d_max };
+                    x.pot -= dv;
+                });
+            record_potential(t_pot.elapsed().as_secs_f64() * 1000.0);
+
+            iter += 1;
+            if iter >= max_iter {
+                if dbg {
+                    eprintln!("[{tag}] hit max_iter, falling to SSP");
+                }
+                break;
+            }
+        }
+
+        // SSP tail on the same fused state (single-source Dial; see ATBD
+        // §9.6). Augment scratch is dead from here - free it first.
+        drop(visited_epoch);
+        drop(source_used);
+        drop(path_info);
+        drop(deficits);
+        record_ssp_call();
+        ssp::run_single_source_fused(g, net, &mut st, &mut fifo_buckets);
+    }
+
+    // Single exit: hand the potentials back to the network for everything
+    // downstream (adaptive resume, BFS guard, diagnostics, tests).
+    st.restore_into(net);
+
+    if dbg {
+        // FINAL MCF objective + leftover imbalance - see `run_impl`.
+        let nf = net.num_forward();
+        let total_cost: i64 = (0..nf)
+            .map(|a| net.arc_flow(g, a) as i64 * net.arc_cost(g, a) as i64)
+            .sum();
+        let remaining: i64 = net.excess.iter().map(|&e| (e as i64).abs()).sum();
+        eprintln!("[{tag}] FINAL total_cost={total_cost} remaining_excess={remaining}");
+    }
+}
+
+fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
+    reset_timings();
+    let dbg = debug_enabled();
+    let tag = "pd";
     // Note: we do NOT require `net.is_balanced()` here. The boundary-zeroing
     // pass in `residue::compute` can leave a small charge imbalance for real
     // noisy data; the algorithm will route as much flow as it can and stop
@@ -192,10 +382,6 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
     let mut deficits: Vec<usize> = Vec::new();
     let mut sp = ShortestPaths::new(n_nodes);
-    // FIFO Dial buckets, reused across the full-completion Dijkstras (they
-    // grow to ~n_nodes u32 entries; re-growing them every iteration was pure
-    // allocator churn) and handed to the SSP tail below.
-    let mut fifo_buckets: Vec<VecDeque<u32>> = Vec::new();
     // Epoch counter persists across PD iterations too - wrap-on-zero handles
     // the (vanishingly rare) ~4B-walk overflow.
     let mut epoch: u32 = 0;
@@ -235,11 +421,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
             eprintln!("[{tag}] iter={iter} running dijkstra");
         }
         let t0 = std::time::Instant::now();
-        if full_dijkstra {
-            dijkstra_multi_source_full_scratch_into(g, net, &mut sp, &mut fifo_buckets);
-        } else {
-            dijkstra_multi_source_into(g, net, &mut sp);
-        }
+        dijkstra_multi_source_into(g, net, &mut sp);
         let dt = t0.elapsed().as_secs_f64();
         record_dijkstra(dt * 1000.0);
         record_iter();
@@ -303,25 +485,13 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
                 path_info.push((sink, cur, arcs));
             }
         }
-        // Augment order = which deficit each source serves. Match ww-orig's
-        // `augment_flow_pd`: sort sinks by (source, key), keep the FIRST per
-        // source (via `source_used` below) = the source's chosen deficit.
-        //   * full-completion (parity) path: key = Dijkstra DISTANCE, exactly
-        //     ww-orig (`distance_to_vertex(sink)`). With the FIFO Dial above,
-        //     distances are true min-hop shortest-path distances, so "nearest by
-        //     distance" pairs each residue with its nearest partner - the short
-        //     branch cut that is the correct unwrap on masked frames. (Distance
-        //     here is meaningful ONLY because the Dijkstra is FIFO; the two are a
-        //     pair - hop-count sort or LIFO distances both diverge from ww-orig.)
-        //   * early-exit path (default/convex/reuse production): keep hop count -
-        //     distance there breaks the convex probe's SSP non-negativity
-        //     invariant, and that path is not a parity path. (item.0 = sink,
-        //     item.1 = source.)
-        if full_dijkstra {
-            path_info.sort_by_key(|item| (item.1, sp.dist[item.0]));
-        } else {
-            path_info.sort_by_key(|item| (item.1, item.2.len()));
-        }
+        // Augment order = which deficit each source serves, sorted by
+        // (source, hop count), first per source. The full-completion parity
+        // path (in `run_impl_full_fused`) sorts by Dijkstra DISTANCE to match
+        // ww-orig; here on the early-exit path hop count is kept - distance
+        // would break the convex probe's SSP non-negativity invariant, and
+        // this path is not a parity path. (item.0 = sink, item.1 = source.)
+        path_info.sort_by_key(|item| (item.1, item.2.len()));
         // Reset the source_used scratch buffer in place; allocation is reused.
         source_used.iter_mut().for_each(|x| *x = false);
         let mut augmented = 0;
@@ -351,11 +521,6 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         // residual arcs that cross the boundary acquire negative reduced
         // cost on the next iteration → Dijkstra produces cyclic predecessor
         // chains. (Ahuja, Magnanti, Orlin §9: "valid potentials".)
-        //
-        // With full_dijkstra=true all nodes are popped so d_max is unused;
-        // the `if popped { d } else { d_max }` always takes the `d` branch
-        // and each node gets its exact shortest-path distance subtracted -
-        // matching Python's `update_potential_pd`.
         let d_max = sp
             .dist
             .par_iter()
@@ -399,11 +564,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     drop(path_info);
     drop(deficits);
     record_ssp_call();
-    if full_dijkstra {
-        ssp::run_single_source_scratch(g, net, &mut sp, &mut fifo_buckets);
-    } else {
-        ssp::run_scratch(g, net, &mut sp);
-    }
+    ssp::run_scratch(g, net, &mut sp);
 
     if dbg {
         // FINAL MCF objective + leftover imbalance. total_cost is directly

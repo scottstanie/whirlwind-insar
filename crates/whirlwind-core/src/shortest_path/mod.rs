@@ -39,6 +39,75 @@ pub fn backend() -> DijkstraBackend {
     )
 }
 
+/// Per-node (potential, distance) packed into one 16-byte struct.
+///
+/// Every Dijkstra relaxation reads these two values together (`rc = cost −
+/// π_u + π_v`, then `nd < dist[v]`), and on a NISAR-scale frame those are the
+/// two dominant random loads of the whole solve. Keeping them in separate
+/// `Vec<i64>`s costs two cache-line fetches per neighbor; packed, one line
+/// serves both (and the improvement write to `dist` hits the same line).
+#[derive(Clone, Copy, Debug)]
+pub struct PotDist {
+    pub pot: i64,
+    pub dist: i64,
+}
+
+/// Solver state for the fused (linear, full-completion) path: the node
+/// potentials live HERE, not in `Network.potential`, for the duration of the
+/// solve. Built by stealing `net.potential` (`FusedSolveState::take_from`) and
+/// written back with `restore_into` at every solver exit - peak-RSS-neutral
+/// relative to the split layout (`pd` replaces `potential` + `dist`).
+pub struct FusedSolveState {
+    pub pd: Vec<PotDist>,
+    /// See [`ShortestPaths::pred_arc`].
+    pub pred_arc: Vec<i64>,
+    /// See [`ShortestPaths::popped`].
+    pub popped: Vec<bool>,
+}
+
+impl FusedSolveState {
+    /// Move `net.potential` into the fused layout (leaving it empty) with
+    /// every distance at "unreached".
+    pub fn take_from(net: &mut crate::network::Network) -> Self {
+        let pot = std::mem::take(&mut net.potential);
+        let n = pot.len();
+        let pd = pot
+            .into_iter()
+            .map(|p| PotDist {
+                pot: p,
+                dist: i64::MAX,
+            })
+            .collect();
+        Self {
+            pd,
+            pred_arc: vec![-1; n],
+            popped: vec![false; n],
+        }
+    }
+
+    /// Write the potentials back into `net.potential`. Call at every solver
+    /// exit so code outside the fused path (adaptive resume, diagnostics,
+    /// tests) keeps seeing valid potentials.
+    ///
+    /// Consumes the search state: `pred_arc`/`popped` are freed BEFORE the
+    /// new potential vector is allocated, so the restore doesn't add a
+    /// transient on top of the solve's peak RSS.
+    pub fn restore_into(&mut self, net: &mut crate::network::Network) {
+        self.pred_arc = Vec::new();
+        self.popped = Vec::new();
+        net.potential = self.pd.iter().map(|x| x.pot).collect();
+    }
+
+    /// Reset the per-Dijkstra fields (dist/pred/popped), preserving `pot`.
+    pub fn reset_search(&mut self) {
+        for x in self.pd.iter_mut() {
+            x.dist = i64::MAX;
+        }
+        self.pred_arc.fill(-1);
+        self.popped.fill(false);
+    }
+}
+
 /// Result of a multi-source Dijkstra over the residual graph from every
 /// `excess_node` simultaneously, using reduced costs as arc lengths.
 pub struct ShortestPaths {

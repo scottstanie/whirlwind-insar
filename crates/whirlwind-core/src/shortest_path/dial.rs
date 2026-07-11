@@ -14,7 +14,7 @@
 //!   source` and is provably equivalent to the serial Dial on any
 //!   single-shortest-path ties - each (u, qd) pair is processed at most once.
 
-use super::ShortestPaths;
+use super::{FusedSolveState, PotDist, ShortestPaths};
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
 use rayon::prelude::*;
@@ -45,6 +45,28 @@ pub(crate) fn max_reduced_cost_par<G: ResidualGraph>(g: &G, net: &Network) -> i6
             } else {
                 net.reduced_cost(g, a)
             }
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Fused-layout twin of [`max_reduced_cost_par`], reading potentials from
+/// `pd` (which owns them for the duration of the fused solve - see
+/// [`FusedSolveState`]). Linear-only: the fused path asserts away reuse and
+/// convex modes, so no `is_used` / `marginal_cost` branches.
+pub(crate) fn max_reduced_cost_par_fused<G: ResidualGraph>(
+    g: &G,
+    net: &Network,
+    pd: &[PotDist],
+) -> i64 {
+    (0..net.num_arcs())
+        .into_par_iter()
+        .map(|a| {
+            if net.is_arc_saturated(a) {
+                return 0;
+            }
+            let (t, h) = net.arc_endpoints(g, a);
+            net.arc_cost(g, a) as i64 - pd[t].pot + pd[h].pot
         })
         .max()
         .unwrap_or(0)
@@ -355,6 +377,125 @@ pub fn run_full_scratch_into<G: ResidualGraph>(
         let popped_count = sp.popped.iter().filter(|&&p| p).count();
         eprintln!(
             "[run_full] done: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} total_ba={total_bucket_advances} popped={popped_count}/{n_nodes}"
+        );
+    }
+}
+
+/// Fused-layout twin of [`run_full_scratch_into`]: identical algorithm (FIFO
+/// buckets, full completion, linear-only relax), but node potential and
+/// distance are read/written through one [`PotDist`] per node, so each
+/// relaxation touches ONE random cache line where the split layout touched
+/// two. Every i64 operation is unchanged and executed in the same order, so
+/// distances, pred chains, and the resulting flow are byte-identical.
+pub fn run_full_fused_into<G: ResidualGraph>(
+    g: &G,
+    net: &Network,
+    st: &mut FusedSolveState,
+    buckets: &mut Vec<VecDeque<u32>>,
+) {
+    let dbg = crate::primal_dual::debug_enabled();
+    let n_nodes = net.num_nodes();
+    debug_assert_eq!(st.pd.len(), n_nodes);
+    st.reset_search();
+
+    assert!(
+        !net.reuse_mode && !net.convex_mode,
+        "run_full_fused_into only supports linear-cost networks"
+    );
+    let has_ground = net.has_ground();
+
+    let t_rc = std::time::Instant::now();
+    let max_rc = max_reduced_cost_par_fused(g, net, &st.pd);
+    let k = (max_rc as usize).saturating_add(1).max(1);
+    if dbg {
+        eprintln!(
+            "[run_full] max_rc={max_rc} k={k} t={:.3}s",
+            t_rc.elapsed().as_secs_f64()
+        );
+    }
+
+    // Same FIFO bucket discipline as `run_full_scratch_into` (see its decl
+    // comments for the tie-break parity and staleness arguments).
+    for b in buckets.iter_mut() {
+        b.clear();
+    }
+    if buckets.len() < k {
+        buckets.resize_with(k, VecDeque::new);
+    }
+    let mut pending: usize = 0;
+
+    let pd = &mut st.pd;
+    let pred_arc = &mut st.pred_arc;
+    let popped = &mut st.popped;
+
+    for s in net.excess_nodes() {
+        pd[s].dist = 0;
+        buckets[0].push_back(s as u32);
+        pending += 1;
+    }
+    if pending == 0 {
+        return;
+    }
+
+    let mut cur_bucket = 0_usize;
+    let mut cur_dist: i64 = 0;
+    let mut bucket_advances: usize = 0;
+    let mut real_pops: usize = 0;
+    let mut stale_pops: usize = 0;
+    let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
+
+    while pending > 0 {
+        while buckets[cur_bucket].is_empty() {
+            cur_bucket = (cur_bucket + 1) % k;
+            cur_dist += 1;
+            bucket_advances += 1;
+            if bucket_advances > k {
+                return;
+            }
+        }
+        bucket_advances = 0;
+
+        let u = buckets[cur_bucket].pop_front().unwrap() as usize; // FIFO
+        pending -= 1;
+        if pd[u].dist != cur_dist {
+            stale_pops += 1;
+            debug_assert!(!popped[u] || pd[u].dist < cur_dist);
+            continue;
+        }
+        debug_assert!(!popped[u], "node {u} popped twice at dist {cur_dist}");
+        popped[u] = true;
+        real_pops += 1;
+
+        let pot_u = pd[u].pot;
+        out_buf.clear();
+        if u < g.num_nodes() {
+            g.outgoing(u, &mut out_buf);
+        }
+        if has_ground {
+            out_buf.extend(net.extra_outgoing(u));
+        }
+        for &(arc, v) in out_buf.iter() {
+            if net.is_arc_saturated(arc) {
+                continue;
+            }
+            // ONE 16-byte load serves both the reduced-cost and the
+            // improvement test; the dist write below lands on the same line.
+            let pv = pd[v];
+            let rc = net.arc_cost(g, arc) as i64 - pot_u + pv.pot;
+            debug_assert!(rc >= 0, "negative reduced cost on arc {arc}: {rc}");
+            let nd = cur_dist + rc;
+            if nd < pv.dist {
+                pd[v].dist = nd;
+                pred_arc[v] = arc as i64;
+                buckets[(nd as usize) % k].push_back(v as u32); // FIFO
+                pending += 1;
+            }
+        }
+    }
+    if dbg {
+        let popped_count = popped.iter().filter(|&&p| p).count();
+        eprintln!(
+            "[run_full] done: cur_dist={cur_dist} real_pops={real_pops} stale_pops={stale_pops} popped={popped_count}/{n_nodes}"
         );
     }
 }
