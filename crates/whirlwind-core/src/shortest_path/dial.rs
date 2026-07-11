@@ -81,6 +81,7 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
     sp.reset(n_nodes);
     let max_rc = max_reduced_cost_par(g, net);
     let k = (max_rc as usize).saturating_add(1).max(1);
+    let has_ground = net.has_ground();
 
     let (is_sink, total_sinks) = collect_sinks(net);
     let mut sinks_left = total_sinks;
@@ -126,10 +127,17 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
 
         let u = buckets[cur_bucket].pop().unwrap() as usize;
         pending -= 1;
-        // Stale: popped already, or re-relaxed since queuing (see bucket decl).
-        if sp.popped[u] || sp.dist[u] != cur_dist {
+        // Stale ⟺ re-relaxed since queuing. `dist[u] != cur_dist` alone also
+        // covers "already popped": queued distances per node strictly decrease
+        // (pushes require nd < dist[v]), the scan is monotone, and a finalized
+        // node can't be re-improved under rc ≥ 0 - so after u pops, dist[u]
+        // stays frozen below every remaining queued entry for u. The old
+        // `popped[u] ||` read was a redundant random byte-load per pop.
+        if sp.dist[u] != cur_dist {
+            debug_assert!(!sp.popped[u] || sp.dist[u] < cur_dist);
             continue;
         }
+        debug_assert!(!sp.popped[u], "node {u} popped twice at dist {cur_dist}");
         sp.popped[u] = true;
         if is_sink[u] {
             sinks_left -= 1;
@@ -174,8 +182,10 @@ pub fn run_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) 
         for &(arc, v) in out_buf.iter() {
             relax(arc, v, &mut *sp, &mut pending);
         }
-        for &(arc, v) in net.extra_outgoing(u).iter() {
-            relax(arc, v, &mut *sp, &mut pending);
+        if has_ground {
+            for &(arc, v) in net.extra_outgoing(u).iter() {
+                relax(arc, v, &mut *sp, &mut pending);
+            }
         }
     }
 }
@@ -197,9 +207,34 @@ pub fn run_full<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
 
 /// Reusable-buffer variant of [`run_full`].
 pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPaths) {
+    let mut buckets: Vec<VecDeque<u32>> = Vec::new();
+    run_full_scratch_into(g, net, sp, &mut buckets);
+}
+
+/// [`run_full_into`] with caller-owned bucket scratch. The FIFO bucket
+/// vectors grow to hold roughly one entry per successful relaxation
+/// (~n_nodes · 4 bytes at peak); a primal-dual run calls this once per
+/// iteration, so reusing the scratch avoids re-growing ~n_nodes-sized
+/// VecDeques eight times per frame.
+pub fn run_full_scratch_into<G: ResidualGraph>(
+    g: &G,
+    net: &Network,
+    sp: &mut ShortestPaths,
+    buckets: &mut Vec<VecDeque<u32>>,
+) {
     let dbg = crate::primal_dual::debug_enabled();
     let n_nodes = net.num_nodes();
     sp.reset(n_nodes);
+
+    // The full-completion Dial serves only the linear parity path: reuse-mode
+    // networks route through the early-exit backends and convex through the
+    // binary heap (see `dijkstra_multi_source_full_into`). The relax loop
+    // below exploits that - no `is_used` / `marginal_cost` branches.
+    assert!(
+        !net.reuse_mode && !net.convex_mode,
+        "run_full_scratch_into only supports linear-cost networks"
+    );
+    let has_ground = net.has_ground();
 
     let t_rc = std::time::Instant::now();
     let max_rc = max_reduced_cost_par(g, net);
@@ -225,7 +260,17 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
     // Entries are bare node ids (u32): every entry in a bucket pops at exactly
     // the distance it was queued with (rc < k + buckets drain before the scan
     // wraps), so staleness reduces to `dist[u] != cur_dist` - see `run_into`.
-    let mut buckets: Vec<VecDeque<u32>> = vec![VecDeque::new(); k];
+    //
+    // Caller-owned scratch: clear whatever a previous call left (termination
+    // normally drains every bucket, but the defensive k-advance exit can bail
+    // with entries queued), then grow to at least k buckets. A longer vec is
+    // fine - indexing stays within [0, k).
+    for b in buckets.iter_mut() {
+        b.clear();
+    }
+    if buckets.len() < k {
+        buckets.resize_with(k, VecDeque::new);
+    }
     let mut pending: usize = 0;
 
     for s in net.excess_nodes() {
@@ -264,26 +309,25 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
 
         let u = buckets[cur_bucket].pop_front().unwrap() as usize; // FIFO (see decl)
         pending -= 1;
-        if sp.popped[u] || sp.dist[u] != cur_dist {
+        // Staleness needs no popped[] read - see `run_into`.
+        if sp.dist[u] != cur_dist {
             stale_pops += 1;
+            debug_assert!(!sp.popped[u] || sp.dist[u] < cur_dist);
             continue;
         }
+        debug_assert!(!sp.popped[u], "node {u} popped twice at dist {cur_dist}");
         sp.popped[u] = true;
         real_pops += 1;
         // No early-exit - keep going until all reachable nodes are finalized.
 
         let pot_u = net.potential[u];
+        // Linear-only relax (assert at entry): rc = cost - π_u + π_v, no
+        // reuse/convex branches in the hottest loop of the parity solve.
         let mut relax = |arc: usize, v: usize, sp: &mut ShortestPaths, pending: &mut usize| {
             if net.is_arc_saturated(arc) {
                 return;
             }
-            let rc = if net.is_used(arc) {
-                0
-            } else if net.convex_mode {
-                net.marginal_cost(arc) - pot_u + net.potential[v]
-            } else {
-                net.arc_cost(g, arc) as i64 - pot_u + net.potential[v]
-            };
+            let rc = net.arc_cost(g, arc) as i64 - pot_u + net.potential[v];
             debug_assert!(rc >= 0, "negative reduced cost on arc {arc}: {rc}");
             let nd = cur_dist + rc;
             if nd < sp.dist[v] {
@@ -301,8 +345,10 @@ pub fn run_full_into<G: ResidualGraph>(g: &G, net: &Network, sp: &mut ShortestPa
         for &(arc, v) in out_buf.iter() {
             relax(arc, v, &mut *sp, &mut pending);
         }
-        for &(arc, v) in net.extra_outgoing(u).iter() {
-            relax(arc, v, &mut *sp, &mut pending);
+        if has_ground {
+            for &(arc, v) in net.extra_outgoing(u).iter() {
+                relax(arc, v, &mut *sp, &mut pending);
+            }
         }
     }
     if dbg {
@@ -337,6 +383,7 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
 
     let (is_sink, total_sinks) = collect_sinks(net);
     let mut sinks_left = total_sinks;
+    let has_ground = net.has_ground();
 
     // Bare node ids per entry - same staleness argument as `run_into`.
     let mut buckets: Vec<Vec<u32>> = vec![Vec::new(); k];
@@ -425,8 +472,10 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                 for &(arc, v) in out_buf.iter() {
                     relax(arc, v, &mut sp, &mut pending);
                 }
-                for &(arc, v) in net.extra_outgoing(u).iter() {
-                    relax(arc, v, &mut sp, &mut pending);
+                if has_ground {
+                    for &(arc, v) in net.extra_outgoing(u).iter() {
+                        relax(arc, v, &mut sp, &mut pending);
+                    }
                 }
             }
         } else {
@@ -499,8 +548,10 @@ pub fn run_parallel<G: ResidualGraph>(g: &G, net: &Network) -> ShortestPaths {
                         for &(arc, v) in out_buf.iter() {
                             consider(arc, v, &mut props);
                         }
-                        for &(arc, v) in net.extra_outgoing(u).iter() {
-                            consider(arc, v, &mut props);
+                        if has_ground {
+                            for &(arc, v) in net.extra_outgoing(u).iter() {
+                                consider(arc, v, &mut props);
+                            }
                         }
                         (props, pops, nsinks, out_buf)
                     },

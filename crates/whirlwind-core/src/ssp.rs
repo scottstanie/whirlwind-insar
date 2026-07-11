@@ -22,10 +22,16 @@ use crate::shortest_path::{ShortestPaths, dijkstra_multi_source_into};
 use std::collections::VecDeque;
 
 pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
+    let mut sp = ShortestPaths::new(net.num_nodes());
+    run_scratch(g, net, &mut sp);
+}
+
+/// [`run`] with a caller-owned `ShortestPaths` buffer (the primal-dual driver
+/// reuses its Dijkstra-phase allocation here instead of holding two).
+pub fn run_scratch<G: ResidualGraph>(g: &G, net: &mut Network, sp: &mut ShortestPaths) {
     let dbg = crate::primal_dual::debug_enabled();
     let mut safety = 0;
     let safety_limit = 4 * net.num_nodes();
-    let mut sp = ShortestPaths::new(net.num_nodes());
     while net.excess_nodes().next().is_some() {
         if dbg && safety % 50 == 0 {
             let ex: i64 = net
@@ -43,7 +49,7 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
             eprintln!("[ssp] iter={safety} excess={ex} deficit={df}");
         }
         crate::primal_dual::record_ssp_iter();
-        dijkstra_multi_source_into(g, net, &mut sp);
+        dijkstra_multi_source_into(g, net, sp);
         let nearest_deficit = net
             .deficit_nodes()
             .filter(|&d| sp.was_reached(d))
@@ -125,13 +131,34 @@ pub fn run<G: ResidualGraph>(g: &G, net: &mut Network) {
 /// `run` (its `d_max`-capped potentials can be negative on frontier arcs); use
 /// the multi-source [`run`] there.
 pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
+    let mut sp = ShortestPaths::new(net.num_nodes());
+    let mut buckets: Vec<VecDeque<u32>> = Vec::new();
+    run_single_source_scratch(g, net, &mut sp, &mut buckets);
+}
+
+/// [`run_single_source`] with caller-owned scratch: the per-node
+/// `dist`/`pred_arc`/`popped` triple lives in `sp` and the Dial FIFO buckets
+/// in `buckets`, so the primal-dual driver can hand over the (identically
+/// shaped) buffers its Dijkstra phase already allocated instead of holding
+/// both sets alive - on a NISAR-scale frame that duplicate scratch was the
+/// peak-RSS high-water mark of the whole unwrap.
+pub fn run_single_source_scratch<G: ResidualGraph>(
+    g: &G,
+    net: &mut Network,
+    sp: &mut ShortestPaths,
+    buckets: &mut Vec<VecDeque<u32>>,
+) {
     let dbg = crate::primal_dual::debug_enabled();
     let n_nodes = net.num_nodes();
-    let mut dist = vec![i64::MAX; n_nodes];
-    let mut pred_arc: Vec<i64> = vec![-1; n_nodes];
-    let mut popped = vec![false; n_nodes];
+    // Same initial state the old fresh allocations had (dist=MAX, pred=-1,
+    // popped=false); per-source resets below only touch `touched` nodes.
+    sp.reset(n_nodes);
+    let dist = &mut sp.dist;
+    let pred_arc = &mut sp.pred_arc;
+    let popped = &mut sp.popped;
     let mut touched: Vec<usize> = Vec::new();
     let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
+    let has_ground = net.has_ground();
     // Dial buckets, reused across sources (grown to the largest k seen, cleared
     // between sources). Entries are bare node ids (u32): every entry pops at
     // exactly the distance it was queued with (rc < k + buckets drain before
@@ -140,7 +167,10 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
     // FRONT) to match ww-orig's `std::queue` Dial buckets: equal-distance ties
     // across the cost-0 masked sea must resolve BFS/fewest-hops first (short
     // cuts), not LIFO/DFS (long cuts) - see `dial::run_full_into` decl comment.
-    let mut buckets: Vec<VecDeque<u32>> = Vec::new();
+    // Caller-owned: clear anything a previous user (the PD Dijkstra) left.
+    for b in buckets.iter_mut() {
+        b.clear();
+    }
 
     let sources: Vec<usize> = net.excess_nodes().collect();
     let total = sources.len();
@@ -263,10 +293,13 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                 bucket_advances = 0;
                 let u = buckets[cur_bucket].pop_front().unwrap() as usize; // FIFO (see decl)
                 pending -= 1;
-                // Stale: popped already, or re-relaxed since queuing (see decl).
-                if popped[u] || dist[u] != cur_dist {
+                // Stale ⟺ dist[u] != cur_dist; covers already-popped too
+                // (see `dial::run_into`) - no popped[] read on the pop path.
+                if dist[u] != cur_dist {
+                    debug_assert!(!popped[u] || dist[u] < cur_dist);
                     continue;
                 }
+                debug_assert!(!popped[u], "node {u} popped twice at dist {cur_dist}");
                 popped[u] = true;
                 if net.excess[u] < 0 {
                     sink_found = Some((u, cur_dist));
@@ -277,9 +310,13 @@ pub fn run_single_source<G: ResidualGraph>(g: &G, net: &mut Network) {
                 if u < g.num_nodes() {
                     g.outgoing(u, &mut out_buf);
                 }
-                // extra_outgoing is empty when there is no ground node (the
-                // unwrap_linear case), so it does not allocate on the hot path.
-                for &(arc, v) in out_buf.iter().chain(net.extra_outgoing(u).iter()) {
+                // Ground arcs exist only on grounded networks; skip the
+                // per-pop extra_outgoing call entirely on the (default)
+                // ground-free path.
+                if has_ground {
+                    out_buf.extend(net.extra_outgoing(u));
+                }
+                for &(arc, v) in out_buf.iter() {
                     if net.is_arc_saturated(arc) {
                         continue;
                     }
@@ -497,6 +534,7 @@ pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
     let mut touched: Vec<usize> = Vec::new();
     let mut queue: VecDeque<u32> = VecDeque::new();
     let mut out_buf: Vec<(usize, usize)> = Vec::with_capacity(8);
+    let has_ground = net.has_ground();
 
     let sources: Vec<usize> = net.excess_nodes().collect();
     let mut paired = 0_usize;
@@ -521,7 +559,10 @@ pub fn drain_residual_bfs<G: ResidualGraph>(g: &G, net: &mut Network) -> usize {
                 if u < g.num_nodes() {
                     g.outgoing(u, &mut out_buf);
                 }
-                for &(arc, v) in out_buf.iter().chain(net.extra_outgoing(u).iter()) {
+                if has_ground {
+                    out_buf.extend(net.extra_outgoing(u));
+                }
+                for &(arc, v) in out_buf.iter() {
                     if net.is_arc_saturated(arc) || visited[v] {
                         continue;
                     }

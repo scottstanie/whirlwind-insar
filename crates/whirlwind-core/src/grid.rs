@@ -134,6 +134,7 @@ impl RectangularGridGraph {
     }
 
     /// Direction and (i,j) of the *tail* of a forward arc.
+    #[inline]
     pub fn forward_arc_info(&self, arc: usize) -> (Dir, usize, usize) {
         debug_assert!(arc < self.num_forward);
         if arc < self.n_v {
@@ -161,6 +162,7 @@ impl RectangularGridGraph {
     }
 
     /// Get (tail_id, head_id) for any arc (forward or reverse).
+    #[inline]
     pub fn arc_endpoints(&self, arc: usize) -> (usize, usize) {
         let (fwd_arc, swap) = if arc < self.num_forward {
             (arc, false)
@@ -233,11 +235,43 @@ impl ResidualGraph for RectangularGridGraph {
     fn arc_endpoints(&self, arc: usize) -> (usize, usize) {
         RectangularGridGraph::arc_endpoints(self, arc)
     }
+    // Writes the (arc, head) pairs straight into `out` - this runs once per
+    // popped node in every Dijkstra/BFS flood, and the profile showed the
+    // SmallVec8-then-copy detour surviving as two non-inlined calls worth
+    // ~10% of a full-frame solve.
+    #[inline]
     fn outgoing(&self, node: usize, out: &mut Vec<(usize, usize)>) {
         let (i, j) = self.node_ij(node);
-        let buf = self.outgoing_ij(i, j);
-        for &(a, h) in buf.iter() {
-            out.push((a, h));
+        let n = self.n;
+        // Forward arcs out of (i, j), then residual reverses of forward arcs
+        // pointing INTO (i, j) - same order as `outgoing_ij`.
+        if let Some(a) = self.down_arc(i, j) {
+            out.push((a, node + n));
+        }
+        if let Some(a) = self.up_arc(i, j) {
+            out.push((a, node - n));
+        }
+        if let Some(a) = self.right_arc(i, j) {
+            out.push((a, node + 1));
+        }
+        if let Some(a) = self.left_arc(i, j) {
+            out.push((a, node - 1));
+        }
+        if i + 1 < self.m {
+            let fwd = self.up_arc(i + 1, j).unwrap();
+            out.push((self.transpose(fwd), node + n));
+        }
+        if i >= 1 {
+            let down_into = self.down_arc(i - 1, j).unwrap();
+            out.push((self.transpose(down_into), node - n));
+        }
+        if j + 1 < n {
+            let left_into = self.left_arc(i, j + 1).unwrap();
+            out.push((self.transpose(left_into), node + 1));
+        }
+        if j >= 1 {
+            let right_into = self.right_arc(i, j - 1).unwrap();
+            out.push((self.transpose(right_into), node - 1));
         }
     }
 }
@@ -287,6 +321,23 @@ mod tests {
             let (t, h) = g.arc_endpoints(a);
             let (t2, h2) = g.arc_endpoints(g.transpose(a));
             assert_eq!((t, h), (h2, t2));
+        }
+    }
+
+    /// The direct-write trait `outgoing` must yield exactly the same pairs in
+    /// exactly the same ORDER as `outgoing_ij`: relaxation order feeds the
+    /// FIFO Dial's tie-breaking, which the ww-orig parity path depends on.
+    #[test]
+    fn trait_outgoing_matches_outgoing_ij_order() {
+        use crate::residual_graph::ResidualGraph;
+        let g = RectangularGridGraph::new(5, 4);
+        let mut out = Vec::new();
+        for node in 0..g.num_nodes() {
+            let (i, j) = g.node_ij(node);
+            let expect: Vec<(usize, usize)> = g.outgoing_ij(i, j).iter().copied().collect();
+            out.clear();
+            ResidualGraph::outgoing(&g, node, &mut out);
+            assert_eq!(out, expect, "order/content mismatch at node ({i}, {j})");
         }
     }
 

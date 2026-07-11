@@ -27,7 +27,8 @@
 
 use crate::grid::RectangularGridGraph;
 use crate::network::Network;
-use ndarray::{Array2, ArrayView2};
+use ndarray::parallel::prelude::*;
+use ndarray::{Array2, ArrayView2, Axis};
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
 
@@ -52,27 +53,33 @@ pub fn integrate(
     assert_eq!(g.m, m + 1);
     assert_eq!(g.n, n + 1);
 
+    // Pass 1 (serial, O(m)): running integer cycle count `K[i, 0]` for each
+    // head-of-row pixel, walking the first column downward.
+    let mut col0_cycles = vec![0_i32; m];
+    for i in 1..m {
+        // Vertical step (i-1, 0) → (i, 0). Pixel edge between
+        // (i-1, 0) and (i, 0) is *vertical* - its residue arcs are
+        // RIGHT (forward = j increasing) between residues (i, 0)
+        // and (i, 1).
+        let n_cyc = wrap_n_cycle(wrapped_phase[(i, 0)], wrapped_phase[(i - 1, 0)]);
+        let fwd = g.right_arc(i, 0).unwrap();
+        let rev = g.left_arc(i, 1).unwrap();
+        let net_flow = net.arc_flow(g, rev) - net.arc_flow(g, fwd);
+        col0_cycles[i] = col0_cycles[i - 1] + n_cyc + net_flow;
+    }
+
+    // Pass 2 (parallel): each row's interior prefix depends only on its own
+    // head-of-row count, so rows integrate independently. The arithmetic per
+    // pixel is identical to the serial walk - integer accumulation, one float
+    // multiply at emission - so the output is bit-identical.
     let mut unw = Array2::<f32>::zeros((m, n));
-
-    // Running integer cycle count `K[i, 0]` for the head-of-row pixel.
-    // Each row's interior pixels inherit this and grow from it.
-    let mut col0_cycles: i32 = 0;
-
-    for i in 0..m {
-        if i > 0 {
-            // Vertical step (i-1, 0) → (i, 0). Pixel edge between
-            // (i-1, 0) and (i, 0) is *vertical* - its residue arcs are
-            // RIGHT (forward = j increasing) between residues (i, 0)
-            // and (i, 1).
-            let n_cyc = wrap_n_cycle(wrapped_phase[(i, 0)], wrapped_phase[(i - 1, 0)]);
-            let fwd = g.right_arc(i, 0).unwrap();
-            let rev = g.left_arc(i, 1).unwrap();
-            let net_flow = net.arc_flow(g, rev) - net.arc_flow(g, fwd);
-            col0_cycles += n_cyc + net_flow;
-        }
-        let mut cycles = col0_cycles;
-        for j in 0..n {
-            if j > 0 {
+    unw.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            let mut cycles = col0_cycles[i];
+            row[0] = wrapped_phase[(i, 0)] + TAU * (cycles as f32);
+            for j in 1..n {
                 // Horizontal step (i, j-1) → (i, j). Pixel edge is
                 // *horizontal*; residue arcs are DOWN/UP between
                 // (i, j) and (i+1, j).
@@ -81,10 +88,9 @@ pub fn integrate(
                 let rev = g.up_arc(i + 1, j).unwrap();
                 let net_flow = net.arc_flow(g, fwd) - net.arc_flow(g, rev);
                 cycles += n_cyc + net_flow;
+                row[j] = wrapped_phase[(i, j)] + TAU * (cycles as f32);
             }
-            unw[(i, j)] = wrapped_phase[(i, j)] + TAU * (cycles as f32);
-        }
-    }
+        });
 
     unw
 }
