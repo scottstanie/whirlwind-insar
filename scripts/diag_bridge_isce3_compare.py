@@ -15,7 +15,7 @@ Runs ONE whirlwind solve (bridge=False) and then applies, in Python:
   - isce3-bridge   : isce3.unwrap.bridge_unwrapped_phase (MST, local endpoints),
                      with the NISAR GUNW default knobs.
 
-Usage: python scripts/diag_bridge_isce3_compare.py [FRAME=A_016]
+Usage: python scripts/diag_bridge_isce3_compare.py [FRAME=005_A_016]
 Run in the mapping-312 env (has isce3 + whirlwind).
 """
 
@@ -71,19 +71,19 @@ def region_offsets(u, prod_unw, region, ref_lab, valid, min_px=500):
 
 
 ALL_FRAMES = [
-    "A_013",
-    "A_016",
-    "A_018",
-    "A_020",
-    "A_022",
-    "A_025",
-    "A_028",
-    "A_030",
-    "A_035",
-    "D_074",
-    "D_075",
-    "D_077",
-    "D_078",
+    "005_A_013",
+    "005_A_016",
+    "005_A_018",
+    "005_A_020",
+    "005_A_022",
+    "005_A_025",
+    "005_A_028",
+    "005_A_030",
+    "006_A_035",
+    "005_D_074",
+    "005_D_075",
+    "005_D_077",
+    "005_D_078",
 ]
 
 
@@ -158,7 +158,7 @@ def run_frame(frame):
 
 
 def main():
-    arg = sys.argv[1] if len(sys.argv) > 1 else "A_016"
+    arg = sys.argv[1] if len(sys.argv) > 1 else "005_A_016"
     frames = ALL_FRAMES if arg.lower() == "all" else sys.argv[1:]
     for fr in frames:
         run_frame(fr)

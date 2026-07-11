@@ -7,7 +7,7 @@
 # skipped. Run in the background; tail the log to watch progress.
 #
 #   9x9  -> all 13 frames (the suspect, concurrent-fork config)
-#   1x1  -> D_077 only, as a same-frame cold-single-tile comparison + a check
+#   1x1  -> 005_D_077 only, as a same-frame cold-single-tile comparison + a check
 #           that the tree sampler agrees with /usr/bin/time for a single process
 set -uo pipefail
 
@@ -42,11 +42,11 @@ measure() {  # frame  engine  ntiles  h5  [--plot path]
   echo "    tree_peak=$(awk "BEGIN{printf \"%.2f\",${bytes:-0}/1e9}") GB  nproc=${nproc:-?}  rt=${rt:-?}s"
 }
 
-# Same-frame cold-vs-reoptimize comparison on D_077 (with RSS(t) plots).
+# Same-frame cold-vs-reoptimize comparison on 005_D_077 (with RSS(t) plots).
 D077=$(ls "$H5DIR"/*_D_077_*.h5 2>/dev/null | head -1)
 if [ -n "$D077" ]; then
-  measure D_077 snaphu1_tree   1 "$D077" --plot "$OUT/D_077_snaphu1_rss.png"
-  measure D_077 snaphu9x9_tree 9 "$D077" --plot "$OUT/D_077_snaphu9x9_rss.png"
+  measure 005_D_077 snaphu1_tree   1 "$D077" --plot "$OUT/005_D_077_snaphu1_rss.png"
+  measure 005_D_077 snaphu9x9_tree 9 "$D077" --plot "$OUT/005_D_077_snaphu9x9_rss.png"
 fi
 
 # 9x9 across all 13 frames for the chart.

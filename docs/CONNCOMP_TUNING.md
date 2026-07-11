@@ -27,21 +27,21 @@ Comparing the connected-component algorithms on a set of NISAR frames, the SNAPH
 
 | Frame | Production SNAPHU comps | Old linear comps | New SNAPHU comps |
 | ----- | ----------------------: | ---------------: | ---------------: |
-| A_018 |                       1 |               69 |                3 |
-| A_025 |                       2 |               41 |                3 |
-| A_030 |                       3 |              230 |                3 |
-| A_035 |                       2 |              119 |                5 |
-| D_075 |                       1 |               64 |                3 |
-| D_077 |                       2 |               46 |                1 |
+| 005_A_018 |                       1 |               69 |                3 |
+| 005_A_025 |                       2 |               41 |                3 |
+| 005_A_030 |                       3 |              230 |                3 |
+| 006_A_035 |                       2 |              119 |                5 |
+| 005_D_075 |                       1 |               64 |                3 |
+| 005_D_077 |                       2 |               46 |                1 |
 
 The reliability sweep showed why a positive threshold should not be the package default. It can make labeled percentage closer to production on some frames, but it often fragments the map:
 
 | Frame | Production labeled % / comps | Default `0.0` labeled % / comps | Threshold example    |     Result |
 | ----- | ---------------------------: | ------------------------------: | -------------------- | ---------: |
-| D_077 |                     82.8 / 2 |                       100.0 / 1 | `min_coherence=0.20` |  81.3 / 18 |
-| A_025 |                     92.0 / 2 |                       100.0 / 3 | `min_coherence=0.15` |  90.2 / 15 |
-| D_075 |                     64.4 / 1 |                        99.9 / 3 | `min_coherence=0.20` |  62.3 / 28 |
-| A_030 |                     81.8 / 3 |                       100.0 / 3 | `min_coherence=0.15` | 72.1 / 125 |
+| 005_D_077 |                     82.8 / 2 |                       100.0 / 1 | `min_coherence=0.20` |  81.3 / 18 |
+| 005_A_025 |                     92.0 / 2 |                       100.0 / 3 | `min_coherence=0.15` |  90.2 / 15 |
+| 005_D_075 |                     64.4 / 1 |                        99.9 / 3 | `min_coherence=0.20` |  62.3 / 28 |
+| 005_A_030 |                     81.8 / 3 |                       100.0 / 3 | `min_coherence=0.15` | 72.1 / 125 |
 
 Those examples use a floor of 0.15-0.20. At 0.08 (16 looks) the component count stays at the no-floor baseline across the frames tested, dropping under 1% of pixels; the count starts to climb above about 0.10.
 

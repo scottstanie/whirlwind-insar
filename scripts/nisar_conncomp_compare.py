@@ -42,7 +42,7 @@ Title / naming (team question 1)
 --------------------------------
 Each figure title and output filename carry the TRACK NUMBER (read from the GUNW
 ``/science/LSAR/identification``), e.g. ``T005_A_016`` = track 5, Ascending,
-frame 16. (All 13 sample frames are track 5 except A_035, which is track 6.)
+frame 16. (All 13 sample frames are track 5 except 006_A_035, which is track 6.)
 
 Data flow / how to reproduce from scratch
 -----------------------------------------
@@ -57,8 +57,8 @@ Data flow / how to reproduce from scratch
 Usage
 -----
   .venv/bin/python scripts/nisar_conncomp_compare.py            # all 13 frames
-  .venv/bin/python scripts/nisar_conncomp_compare.py A_016 D_077
-  .venv/bin/python scripts/nisar_conncomp_compare.py --reunwrap A_016
+  .venv/bin/python scripts/nisar_conncomp_compare.py 005_A_016 005_D_077
+  .venv/bin/python scripts/nisar_conncomp_compare.py --reunwrap 005_A_016
 
 Requires a whirlwind build with `components_snaphu` (this branch):
   RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup" \
@@ -100,19 +100,19 @@ MIN_SIZE_PX = 100
 MAX_NCOMPS = 4096
 
 ALL_FRAMES = [
-    "A_013",
-    "A_016",
-    "A_018",
-    "A_020",
-    "A_022",
-    "A_025",
-    "A_028",
-    "A_030",
-    "A_035",
-    "D_074",
-    "D_075",
-    "D_077",
-    "D_078",
+    "005_A_013",
+    "005_A_016",
+    "005_A_018",
+    "005_A_020",
+    "005_A_022",
+    "005_A_025",
+    "005_A_028",
+    "005_A_030",
+    "006_A_035",
+    "005_D_074",
+    "005_D_075",
+    "005_D_077",
+    "005_D_078",
 ]
 
 

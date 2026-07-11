@@ -1,9 +1,9 @@
 """Bisect the Rust `unwrap_linear` vs Python ww-orig divergence, stage by stage.
 
-On the "problem" NISAR frames (D_074, D_075, A_035) Rust `unwrap_linear`
+On the "problem" NISAR frames (005_D_074, 005_D_075, 006_A_035) Rust `unwrap_linear`
 (capacity-1, parity path) scores far below Python ww-orig per-component, even
 though both implement the *same* capacity-1 Carballo MCF algorithm and match to
-99.5% on D_077. This script isolates WHICH stage diverges by feeding identical
+99.5% on 005_D_077. This script isolates WHICH stage diverges by feeding identical
 intermediate state across the Rust<->Python boundary:
 
   STAGE 0  residues   : ww._native.compute_residues  vs  ww_orig._lib.residue
@@ -22,7 +22,7 @@ Heavy unwraps run SEQUENTIALLY (one NISAR-scale solve at a time; see memory).
 A synthetic self-test guards the Python->Rust cost-layout conversion before any
 heavy run, so a layout bug can't masquerade as a solver divergence.
 
-Usage: python scripts/diag_divergence.py D_074
+Usage: python scripts/diag_divergence.py 005_D_074
 """
 
 import sys

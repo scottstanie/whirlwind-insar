@@ -4,7 +4,7 @@
 # uses scripts/peak_rss_tree.py (whole-tree summed RSS).
 #
 # Primary: all 13 frames at default nproc (cpu_count -> all 9 tiles parallel).
-# Plus: A_025 capped at nproc=4 as the "report both" low-memory example.
+# Plus: 005_A_025 capped at nproc=4 as the "report both" low-memory example.
 #
 # STRICTLY SEQUENTIAL (one heavy unwrap at a time). Resume-friendly.
 set -uo pipefail
@@ -37,9 +37,9 @@ run() {  # frame engine h5 nproc(optional)
   echo "    $(awk "BEGIN{printf \"%.2f\",${b:-0}/1e9}") GB  nproc=${n:-?}  rt=${rt:-?}s"
 }
 
-# Capped-concurrency example on A_025.
+# Capped-concurrency example on 005_A_025.
 A025=$(ls "$H5DIR"/*_A_025_*.h5 2>/dev/null | head -1)
-[ -n "$A025" ] && run A_025 snaphu_np4 "$A025" 4
+[ -n "$A025" ] && run 005_A_025 snaphu_np4 "$A025" 4
 
 # All frames, all tiles parallel (default nproc = cpu_count).
 for h5 in "$H5DIR"/*.h5; do

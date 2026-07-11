@@ -24,7 +24,7 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 cutoff = 0.1
 if "--cutoff" in sys.argv:
     cutoff = float(sys.argv[sys.argv.index("--cutoff") + 1])
-frames = args or ["A_025", "A_016"]
+frames = args or ["005_A_025", "005_A_016"]
 OUT = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_final"
 
 for frame in frames:

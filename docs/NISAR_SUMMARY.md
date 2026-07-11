@@ -7,7 +7,7 @@ The comparison uses 13 HH NISAR GUNW frames with `nlooks=16`. Runtimes and memor
 ## Summary
 
 - Whirlwind agrees with the production SNAPHU unwrap on at least 98.8 percent of pixels on 12 of 13 frames (99 percent or better on 11 of them).
-- The remaining frame, D_075, is the outlier. The sweep's own SNAPHU runs also score 88.2 percent against the production reference there, so this appears to be a configuration mismatch with the production unwrap rather than a Whirlwind-specific failure; PHASS agrees on 48.4 percent.
+- The remaining frame, 005_D_075, is the outlier. The sweep's own SNAPHU runs also score 88.2 percent against the production reference there, so this appears to be a configuration mismatch with the production unwrap rather than a Whirlwind-specific failure; PHASS agrees on 48.4 percent.
 - Runtime is 10-27 seconds per frame for Whirlwind, compared with 465-1242 seconds for single-tile SNAPHU and about 100-200 seconds for SNAPHU 3x3 tiled (9 tiles in parallel) plus reoptimization.
 - Peak memory is about 2.5 GB per NISAR frame for Whirlwind (2.2-2.8 GB), compared with about 8 GB for single-tile SNAPHU and about 6-13 GB for 3x3 tiled SNAPHU. The tiled peak is not intrinsic: it is dominated by the parallel tile phase, so it scales with how many tiles unwrap at once (`nproc`) -- capping concurrency roughly halves it (see the note under the table).
 
@@ -19,19 +19,19 @@ The quality number is per-connected-component 2pi ambiguity agreement with the p
 
 | Frame | Whirlwind vs production SNAPHU | PHASS vs production SNAPHU |
 | ----- | -----------------------------: | -------------------------: |
-| A_013 |                          100.0 |                       99.3 |
-| A_016 |                          100.0 |                       99.6 |
-| A_018 |                          100.0 |                       85.7 |
-| A_020 |                           99.8 |                       99.4 |
-| A_022 |                          100.0 |                       99.4 |
-| A_025 |                          100.0 |                       67.0 |
-| A_028 |                          100.0 |                       92.9 |
-| A_030 |                          100.0 |                       75.4 |
-| D_074 |                           98.8 |                       91.2 |
-| D_075 |                           88.2 |                       48.4 |
-| D_077 |                           99.5 |                       94.7 |
-| D_078 |                           99.8 |                       96.9 |
-| A_035 |                          100.0 |                       94.6 |
+| 005_A_013 |                          100.0 |                       99.3 |
+| 005_A_016 |                          100.0 |                       99.6 |
+| 005_A_018 |                          100.0 |                       85.7 |
+| 005_A_020 |                           99.8 |                       99.4 |
+| 005_A_022 |                          100.0 |                       99.4 |
+| 005_A_025 |                          100.0 |                       67.0 |
+| 005_A_028 |                          100.0 |                       92.9 |
+| 005_A_030 |                          100.0 |                       75.4 |
+| 005_D_074 |                           98.8 |                       91.2 |
+| 005_D_075 |                           88.2 |                       48.4 |
+| 005_D_077 |                           99.5 |                       94.7 |
+| 005_D_078 |                           99.8 |                       96.9 |
+| 006_A_035 |                          100.0 |                       94.6 |
 
 ![13-frame NISAR GUNW comparison](figures/nisar_summary.png)
 
@@ -70,29 +70,29 @@ production component count closely; the threshold barely moves the partition fro
 
 | Frame | Track | per-comp match % | production SNAPHU | whirlwind old (linear) | whirlwind new (SNAPHU-faithful) |
 | ----- | ----: | ---------------: | ----------------: | ---------------------: | ------------------------------: |
-| A_013 |     5 |            100.0 |                 1 |                      1 |                               1 |
-| A_016 |     5 |            100.0 |                 3 |                      8 |                               8 |
-| A_018 |     5 |            100.0 |                 1 |                     69 |                               3 |
-| A_020 |     5 |             99.8 |                 1 |                      1 |                               1 |
-| A_022 |     5 |            100.0 |                 1 |                      2 |                               1 |
-| A_025 |     5 |            100.0 |                 2 |                     41 |                               3 |
-| A_028 |     5 |            100.0 |                 1 |                     36 |                               2 |
-| A_030 |     5 |            100.0 |                 3 |                    230 |                               3 |
-| A_035 |     6 |            100.0 |                 2 |                    119 |                               5 |
-| D_074 |     5 |             98.8 |                 1 |                     45 |                               2 |
-| D_075 |     5 |             88.2 |                 1 |                     64 |                               3 |
-| D_077 |     5 |             99.5 |                 2 |                     46 |                               1 |
-| D_078 |     5 |             99.8 |                 1 |                      4 |                               1 |
+| 005_A_013 |     5 |            100.0 |                 1 |                      1 |                               1 |
+| 005_A_016 |     5 |            100.0 |                 3 |                      8 |                               8 |
+| 005_A_018 |     5 |            100.0 |                 1 |                     69 |                               3 |
+| 005_A_020 |     5 |             99.8 |                 1 |                      1 |                               1 |
+| 005_A_022 |     5 |            100.0 |                 1 |                      2 |                               1 |
+| 005_A_025 |     5 |            100.0 |                 2 |                     41 |                               3 |
+| 005_A_028 |     5 |            100.0 |                 1 |                     36 |                               2 |
+| 005_A_030 |     5 |            100.0 |                 3 |                    230 |                               3 |
+| 006_A_035 |     6 |            100.0 |                 2 |                    119 |                               5 |
+| 005_D_074 |     5 |             98.8 |                 1 |                     45 |                               2 |
+| 005_D_075 |     5 |             88.2 |                 1 |                     64 |                               3 |
+| 005_D_077 |     5 |             99.5 |                 2 |                     46 |                               1 |
+| 005_D_078 |     5 |             99.8 |                 1 |                      4 |                               1 |
 
-The new path collapses the splinter (A_030 230→3, A_035 119→5, A_018 69→3,
-D_075 64→3, D_077 46→1) to component counts close to production SNAPHU, with the
-phase match unchanged. The one residual is A_016, a heavily water-fragmented
+The new path collapses the splinter (005_A_030 230→3, 006_A_035 119→5, 005_A_018 69→3,
+005_D_075 64→3, 005_D_077 46→1) to component counts close to production SNAPHU, with the
+phase match unchanged. The one residual is 005_A_016, a heavily water-fragmented
 coastal scene where genuinely disconnected islands stay separate components
 (8 vs production's 3); the phase still matches at 100%.
 
 The full SNAPHU `GrowConnCompsMask` would additionally re-level and re-grow
 components across thin masked gaps; matching that bridging of *labels* (so
-water-separated slabs share a component id, as on A_016) is the remaining gap and
+water-separated slabs share a component id, as on 005_A_016) is the remaining gap and
 is tracked as future work.
 
 **Tuning coverage.** `components_snaphu` is the default in `ww.unwrap`
@@ -119,7 +119,7 @@ per-frame conncomp label images across the sweep (figures + CSV under
 | PHASS                          |   5.5-23 s |  1.7-2.4 GB | faster, lower agreement on several frames    |
 | isce2 ICU                      |  109-204 s |  1.5-2.8 GB | leaves some low-coherence areas disconnected |
 
-Memory note: the SNAPHU tiled numbers are peak RSS summed over the whole process tree (`scripts/peak_rss_tree.py`), because SNAPHU forks one worker per concurrent tile and a per-process measure such as `/usr/bin/time` undercounts them. SNAPHU's tiled peak is dominated by the parallel tile phase, not the final reoptimize, so it scales with concurrency: on A_025 the 3x3 tiling peaks at about 12 GB with all 9 tiles unwrapping at once, but about 6 GB capped at `nproc=4` (at roughly +45% runtime). The single-process engines (Whirlwind, PHASS, ICU, single-tile SNAPHU) are one process, so their `nisar_4way_results.csv` figures are unaffected by this distinction.
+Memory note: the SNAPHU tiled numbers are peak RSS summed over the whole process tree (`scripts/peak_rss_tree.py`), because SNAPHU forks one worker per concurrent tile and a per-process measure such as `/usr/bin/time` undercounts them. SNAPHU's tiled peak is dominated by the parallel tile phase, not the final reoptimize, so it scales with concurrency: on 005_A_025 the 3x3 tiling peaks at about 12 GB with all 9 tiles unwrapping at once, but about 6 GB capped at `nproc=4` (at roughly +45% runtime). The single-process engines (Whirlwind, PHASS, ICU, single-tile SNAPHU) are one process, so their `nisar_4way_results.csv` figures are unaffected by this distinction.
 
 ## Reproduce
 
@@ -142,7 +142,7 @@ arrays (`CACHE_DIR`); **outputs:** the figures below.
 
    ```
    .venv/bin/python scripts/nisar_conncomp_compare.py            # all 13 frames
-   .venv/bin/python scripts/nisar_conncomp_compare.py A_016 D_077 # a subset
+   .venv/bin/python scripts/nisar_conncomp_compare.py 005_A_016 005_D_077 # a subset
    ```
 
    Needs a whirlwind build that exports `components_snaphu`:

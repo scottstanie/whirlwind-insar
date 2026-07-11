@@ -175,7 +175,7 @@ def main():
         rcA, rcB = remap_py_to_rust(cA, m, n), remap_py_to_rust(cB, m, n)
         # REAL shipping solver (capacity-1 linear / unwrap_linear), external costs,
         # + the same default bridge post-pass ww.unwrap applies (load-bearing on
-        # bridging-dependent frames like A_025).
+        # bridging-dependent frames like 005_A_025).
         unwA = np.asarray(ww._native.unwrap_linear_ext_costs(igram, mask, rcA)).astype(
             np.float32
         )

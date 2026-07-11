@@ -1,9 +1,9 @@
 """Profile the PD-vs-SSP cost split of whirlwind's single-tile linear unwrap by
-sweeping WHIRLWIND_LINEAR_PD_ITERS on D_077 (the slowest NISAR frame). If more PD
+sweeping WHIRLWIND_LINEAR_PD_ITERS on 005_D_077 (the slowest NISAR frame). If more PD
 iterations make it FASTER, the multi-source SSP fallback dominates wall-clock (the
 ATBD's hypothesis); if slower, PD dominates. One heavy unwrap at a time.
 
-Usage (base miniforge3 env): python scripts/prof_pdssp.py [FRAME=D_077] [PD_ITERS...]
+Usage (base miniforge3 env): python scripts/prof_pdssp.py [FRAME=005_D_077] [PD_ITERS...]
 """
 
 import glob
@@ -18,7 +18,7 @@ sys.path.insert(0, "scripts")
 from tophu_compare import gunw_layers, water_only_mask, wrap_phase, percomp_match
 import whirlwind as ww
 
-frame = sys.argv[1] if len(sys.argv) > 1 else "D_077"
+frame = sys.argv[1] if len(sys.argv) > 1 else "005_D_077"
 pd_iters = sys.argv[2:] or ["8", "64", "256"]
 h5 = glob.glob(
     f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"

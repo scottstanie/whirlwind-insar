@@ -5,7 +5,7 @@ region) for raw / whirlwind-bridge / isce3-bridge, plus coherence. The error
 panels make the inter-region gauge jumps visible - exactly what the per-component
 agreement metric hides.
 
-Usage: python scripts/plot_bridge_compare.py [FRAME=A_016]
+Usage: python scripts/plot_bridge_compare.py [FRAME=005_A_016]
 """
 
 import sys
@@ -35,7 +35,7 @@ def region_cycle_error(u, prod_unw, region, ref_lab, valid):
 
 
 def main():
-    frame = sys.argv[1] if len(sys.argv) > 1 else "A_016"
+    frame = sys.argv[1] if len(sys.argv) > 1 else "005_A_016"
     d = np.load(f"{BASE}/{frame}_bridge_compare.npz")
     prod_unw = d["prod_unw"]
     mask = d["mask"]

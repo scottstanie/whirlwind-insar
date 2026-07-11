@@ -8,7 +8,7 @@ whirlwind-vs-snaphu-vs-phass-vs-icu comparison.
 
 Run in an env that has tophu + isce3 (NOT the whirlwind .venv):
     ~/miniforge3/envs/mapping-312/bin/python scripts/tophu_compare.py \
-        --local-h5 <WD>/nisar_gunw/*D_077*.h5 --nlooks 16 --unwrappers snaphu phass
+        --local-h5 <WD>/nisar_gunw/*005_D_077*.h5 --nlooks 16 --unwrappers snaphu phass
 
 tophu callbacks: SnaphuUnwrap(cost='smooth', init_method='mcf'),
 PhassUnwrap(good_coherence=0.7, min_region_size=200), ICUUnwrap(...). Each is

@@ -11,7 +11,7 @@ Rust unwrap_linear on the SAME inputs. Decides the pivotal question:
 ww-orig's cost via Network.total_cost(); Rust's via the [pd_full] FINAL debug
 line (set WHIRLWIND_DEBUG=1 when running this script).
 
-Usage: WHIRLWIND_DEBUG=1 python scripts/diag_cost_compare.py D_074
+Usage: WHIRLWIND_DEBUG=1 python scripts/diag_cost_compare.py 005_D_074
 """
 
 import sys

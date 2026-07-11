@@ -469,8 +469,9 @@ fn unwrap_reuse<'py>(
 
 /// Capacity-1 (linear) MCF solver - exact replica of Python `whirlwind_orig`.
 ///
-/// Uses unit-capacity arcs with an adaptive primal-dual / shortest-path
-/// fallback. This is the validated single-tile path that the public `unwrap`
+/// Uses unit-capacity arcs, solved by successive shortest paths that augment
+/// many paths per multi-source Dijkstra iteration, with a single-source
+/// finishing pass. This is the single-tile path that the public `unwrap`
 /// uses by default.
 #[pyfunction]
 #[pyo3(signature = (igram, corr, nlooks = 1.0, mask = None))]

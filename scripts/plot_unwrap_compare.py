@@ -9,7 +9,7 @@ Runs whirlwind once per frame (heavy) -- SEQUENTIAL, one at a time. ICU phase is
 read from the already-written icu_scratch/<frame>.unw rasters (no recompute).
 
 Usage (base miniforge3 env -- has whirlwind + matplotlib):
-    /Users/staniewi/miniforge3/bin/python scripts/plot_unwrap_compare.py [A_025 A_016 D_074 D_077]
+    /Users/staniewi/miniforge3/bin/python scripts/plot_unwrap_compare.py [005_A_025 005_A_016 005_D_074 005_D_077]
 """
 
 import sys
@@ -34,7 +34,7 @@ OUT_DIR = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_sweep"
 CACHE_DIR = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/bridge_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-frames = sys.argv[1:] or ["A_025", "A_016", "D_074", "D_077"]
+frames = sys.argv[1:] or ["005_A_025", "005_A_016", "005_D_074", "005_D_077"]
 
 
 def global_align(u, prod, valid):

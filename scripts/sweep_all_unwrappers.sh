@@ -52,7 +52,9 @@ cd "$REPO"
 i=0
 for h5 in "$H5DIR"/*.h5; do
   i=$((i + 1))
-  frame=$(basename "$h5" | sed -E 's/.*_([AD]_[0-9]{3})_.*/\1/')
+  # Track_direction_frame, as it appears in the granule name: frame number alone
+  # is not unique across tracks.
+  frame=$(basename "$h5" | sed -E 's/.*_([0-9]{3}_[AD]_[0-9]{3})_.*/\1/')
   printf '>>> [%d] %s\n' "$i" "$frame"
   run_one "$frame" whirlwind "$MINIFORGE" scripts/run_native_one.py "$h5" whirlwind
   run_one "$frame" wworig    "$MINIFORGE" scripts/run_native_one.py "$h5" wworig
@@ -69,7 +71,7 @@ for h5 in "$H5DIR"/*.h5; do
   fi
   # ICU is ~35x slower (~9 min on the EASY frame); only run it on a representative
   # subset (`ICU_FRAMES`) rather than all 13 - set ICU_FRAMES="" to skip entirely.
-  if [[ " ${ICU_FRAMES:-A_013 D_074} " == *" $frame "* ]]; then
+  if [[ " ${ICU_FRAMES:-005_A_013 005_D_074} " == *" $frame "* ]]; then
     run_one "$frame" icu     "$ISCE3PY"  scripts/tophu_compare.py --local-h5 "$h5" --nlooks "$NLOOKS" --unwrappers icu
   fi
 done

@@ -5,7 +5,7 @@ rayon-parallel; the PD/SSP solver is largely serial - so the speedup depends on
 how cost-build-dominated (residue-light) vs solver-dominated (residue-heavy) the
 frame is.
 
-Usage: WHIRLWIND_NUM_THREADS=1 python scripts/rayon_bench.py D_077
+Usage: WHIRLWIND_NUM_THREADS=1 python scripts/rayon_bench.py 005_D_077
 """
 
 import sys

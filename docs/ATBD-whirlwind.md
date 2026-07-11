@@ -16,7 +16,7 @@ The public Python call is `whirlwind.unwrap(igram, corr, nlooks, mask=mask)`. It
 4. [Residue Computation](#4-residue-computation)
 5. [Statistical Cost Function](#5-statistical-cost-function)
 6. [Network Flow Formulation](#6-network-flow-formulation)
-7. [Primal-Dual Solution](#7-primal-dual-solution)
+7. [Flow Solver: Parallel-Augmenting Shortest Paths](#7-flow-solver-parallel-augmenting-shortest-paths)
 8. [Phase Integration](#8-phase-integration)
 9. [Implementation Details](#9-implementation-details)
 10. [References](#10-references)
@@ -145,7 +145,7 @@ Whirlwind assigns each grid edge a cost based on local wrapped-gradient behavior
 
 ### 3.3 Minimum-cost flow
 
-The flow solve pairs positive and negative residues through low-cost paths. Once the residue charges are balanced, the corrected gradients are path-independent and can be integrated into an unwrapped phase image. Sections 6 and 7 describe the graph, capacity modes, reduced costs, primal-dual iterations, and fallback path.
+The flow solve pairs positive and negative residues through low-cost paths. Once the residue charges are balanced, the corrected gradients are path-independent and can be integrated into an unwrapped phase image. Sections 6 and 7 describe the graph, capacity modes, reduced costs, the parallel-augmentation (PD) iterations, and fallback path.
 
 ### 3.4 Integration and components
 
@@ -269,7 +269,7 @@ The float LLR is converted to `i32` via `round(c · CARBALLO_COST_SCALE)` with `
 
 The default single-tile `unwrap_linear` uses `compute_carballo_costs_parity`, the directly-sampled Carballo spline model:
 
-- **Probabilities** come from embedded, pre-sampled tables read via **trilinear** interpolation (`cost/spline_lut.rs`) - there is no tri-cubic B-spline evaluator in Rust; the model is evaluated on a dense grid offline and the Rust reads it directly. These tables encode the full §2.3 model, including the Touzi (1999) true-coherence marginalization. The model is documented and reproducible in `scripts/generate_carballo_tables.py`: its default analytic mode computes the model from theory and regenerates these embedded blobs byte-for-byte, while a `--source-table-dir` mode re-exports the historical ww-orig `.npz` / `.pkl` tables, retained for provenance. The grid is α: 31 uniform pts in $[-\pi,\pi]$; γ: 11 pts $[0,0.1,\dots,1.0]$; $L$: 11 log-spaced pts $[1,\dots,80]$ (clamped at lookup). Tables ship as five little-endian `f32` blobs embedded in the binary: `carballo_grid_phase.bin` (31), `carballo_grid_corr.bin` (11), `carballo_grid_nlooks.bin` (11), `carballo_p0.bin` and `carballo_p1.bin` (each 31·11·11 = 3751). Here $p_0 = P(\Delta k=0)$ and $p_1 = P(\Delta k=\pm1)$, and in general **$p_0 + p_1 \neq 1$**.
+- **Probabilities** come from embedded, pre-sampled tables read via **trilinear** interpolation (`cost/spline_lut.rs`) - there is no tri-cubic B-spline evaluator in Rust; the model is evaluated on a dense grid offline and the Rust reads it directly. These tables encode the full §2.3 model, including the Touzi (1999) true-coherence marginalization. The model is documented and reproducible in `scripts/generate_carballo_tables.py`: its default analytic mode computes the model from theory and regenerates these embedded blobs byte-for-byte, while a `--source-table-dir` mode re-exports the historical ww-orig `.npz` / `.pkl` tables, retained for provenance. The grid is α: 31 uniform pts in $[-\pi,\pi]$; γ: 11 pts $[0,0.1,\dots,1.0]$; $L$: 11 log-spaced pts $[1,\dots,80]$ (clamped at lookup). Tables ship as five little-endian `f32` blobs embedded in the binary: `carballo_grid_phase.bin` (31), `carballo_grid_corr.bin` (11), `carballo_grid_nlooks.bin` (11), `carballo_p0.bin` and `carballo_p1.bin` (each 31·11·11 = 3751). Here $p_0 = P(\Delta k=0)$ and $p_1 = P(\Delta k=+1)$, and in general **$p_0 + p_1 \neq 1$**. A $-1$ jump is the $+1$ jump of the opposite direction: the cost builder prices each edge's two arcs at $+\hat\alpha$ and $-\hat\alpha$, reproducing the asymmetric directional cost pair $c^+, c^-$ of Carballo & Fieguth eq. (24).
 - **Cost** = `round(100 · max(-ln(p_1/p_0), 0))`, with both probabilities floored at `1e-30`. The scale is `100`, *not* the analytical-CDF path's 6.
 - **Masking** zeros the cost only where **both** endpoint pixels are invalid (zero where `mask[a] && mask[b]`); a boundary arc with one valid pixel keeps a nonzero cost.
 
@@ -355,11 +355,15 @@ An optional **virtual ground node** (`new_with_mask_and_ground`) connects every 
 
 ---
 
-## 7. Primal-Dual Solution
+## 7. Flow Solver: Parallel-Augmenting Shortest Paths
 
 ### 7.1 Algorithm Overview
 
-The primal-dual (PD) algorithm solves the min-cost flow problem through repeated multi-source shortest-path computations. PD and successive shortest paths (SSP, §7.6) are the two MCF solve strategies whirlwind uses: PD routes many paths per Dijkstra search, SSP routes one path per search as a completion fallback. A single shared loop (`primal_dual::run_impl`) implements two completion modes:
+The main solve loop - called "primal-dual" (PD) throughout the code, after the module name `primal_dual.rs` - solves the min-cost flow problem through repeated multi-source shortest-path computations. PD and successive shortest paths (SSP, §7.6) are the two MCF solve strategies whirlwind uses: PD routes many paths per Dijkstra search, SSP routes one path per search as a completion fallback.
+
+**A note on the name.** The PD loop is *not* the primal-dual method of Ahuja, Magnanti & Orlin §9.8, which at each iteration additionally solves a maximum-flow subproblem on the admissible (zero-reduced-cost) network; whirlwind never solves that subproblem. What the loop actually implements is successive shortest paths with *parallel augmentation* - one unit per source along a node-disjoint shortest-path forest each iteration - the strategy introduced for phase unwrapping by PHASS (Wu, 2017), which is also where the loose "primal-dual" label originates. The potential updates preserve the same reduced-cost optimality conditions as textbook SSP.
+
+A single shared loop (`primal_dual::run_impl`) implements two completion modes:
 
 - **Early-exit mode** (`primal_dual::run`, `max_iter = 50`) - used by the opt-in tiled solve, the opt-in `unwrap_reuse`/`unwrap_convex` solvers, conncomp, and integration. Dijkstra stops as soon as all sinks are finalized.
 - **Full-completion mode** (`primal_dual::run_full_dijkstra`, `max_iter = 8`) - used by the public default `unwrap_linear` (and `unwrap_linear_ext_costs`). Dijkstra runs until the queue is empty.
@@ -434,7 +438,7 @@ Because one Dijkstra search is re-run for *every single unit* of augmentation, S
 
 #### 7.6.1 Masked-frame stranding and the guarded adaptive fallback
 
-On **heavily-masked** frames (e.g. NISAR D_074 at ~6 % valid), the masked "sea" is a vast cost-0 region (both-invalid arcs cost 0 and are not forbidden). The single-source SSP processes its source list once and augments greedily one source at a time; on such frames this can **fragment the residual graph** so that a few remaining excess nodes end up trapped in tiny residual components that contain no deficit. Those sources are then **stranded** - the network never reaches balance, and the leftover ±2π discontinuities corrupt large regions of the integrated phase.
+On **heavily-masked** frames (e.g. NISAR 005_D_074 at ~6 % valid), the masked "sea" is a vast cost-0 region (both-invalid arcs cost 0 and are not forbidden). The single-source SSP processes its source list once and augments greedily one source at a time; on such frames this can **fragment the residual graph** so that a few remaining excess nodes end up trapped in tiny residual components that contain no deficit. Those sources are then **stranded** - the network never reaches balance, and the leftover ±2π discontinuities corrupt large regions of the integrated phase.
 
 The fix is a **guarded adaptive fallback** in `run_full_dijkstra` (used by the default `unwrap_linear`): run the usual PD(8) + SSP; if any excess remains, **resume the multi-source primal-dual** (which does not fragment the residual graph the way the single-source SSP does) in chunks, retrying the SSP each round, up to a cap (`WHIRLWIND_LINEAR_PD_CAP`, default 512 iterations). Because the first SSP already drains the easy residues, the resume typically finishes in ~16 more PD iterations, and the final imbalance is always reported. The order matters: SSP-first-then-resume-PD converges far faster than running many PD iterations up front. The change is confined to the single-tile path; the opt-in reuse/tiled solvers are untouched.
 
@@ -444,7 +448,7 @@ The fix is a **guarded adaptive fallback** in `run_full_dijkstra` (used by the d
 - **SSP fallback**: $O(F \cdot \text{Dijkstra search})$, where $F$ is the residual flow remaining after the primal-dual phase. Multi-source SSP can approach one near-global search per unit on large graphs; single-source SSP usually explores only the neighborhood from one source to its nearest deficit.
 - **Space**: $O(|V| + |E|)$
 
-In practice the runtime depends on how much flow reaches SSP. On D_077, SSP does the bulk of the final routing, so the single-source fallback is the runtime lever for the single-tile path. `run_no_ssp` is useful for diagnostics, not for production quality.
+In practice the runtime depends on how much flow reaches SSP. On 005_D_077, SSP does the bulk of the final routing, so the single-source fallback is the runtime lever for the single-tile path. `run_no_ssp` is useful for diagnostics, not for production quality.
 
 ---
 
@@ -697,7 +701,7 @@ Reproduction entry points:
 
 ### Primary References
 
-1. **Carballo, G. F.**, & Fieguth, P. W. (2002). "Probabilistic cost functions for network flow phase unwrapping." *IEEE Transactions on Geoscience and Remote Sensing*, 40(11), 2192-2203.
+1. **Carballo, G. F.**, & Fieguth, P. W. (2000). "Probabilistic cost functions for network flow phase unwrapping." *IEEE Transactions on Geoscience and Remote Sensing*, 38(5), 2192-2201.
 
 2. **Lee, J. S.**, Hoppel, K. W., Mango, S. A., & Miller, A. R. (1994). "Intensity and phase statistics of multilook polarimetric and interferometric SAR imagery." *IEEE Transactions on Geoscience and Remote Sensing*, 32(5), 1017-1028.
 
@@ -714,6 +718,8 @@ Reproduction entry points:
 6. **Ghiglia, D. C.**, & Pritt, M. D. (1998). *Two-Dimensional Phase Unwrapping: Theory, Algorithms, and Software*. Wiley.
 
 7. **Chen, C. W.**, & Zebker, H. A. (2001). "Two-dimensional phase unwrapping with use of statistical models for cost functions in nonlinear optimization." *Journal of the Optical Society of America A*, 18(2), 338-351.
+
+8. **Wu, X.** (2017). "Two-dimensional phase unwrapping with parallel augmenting successive shortest paths." Jet Propulsion Laboratory Interoffice Memorandum IOM 334-XWU. Internal memorandum, unpublished; describes the PHASS algorithm developed for SWOT and implemented in isce3.
 
 ---
 

@@ -34,16 +34,16 @@ Absolute inter-region agreement with the production NISAR GUNW unwrap on the 13-
 
 | Frame | no bridge | whirlwind bridge | isce3 bridge |
 | ----- | --------: | ---------------: | -----------: |
-| A_016 |      93.5 |             99.9 |         99.9 |
-| A_018 |      99.5 |             99.9 |         99.9 |
-| A_025 |      46.2 |             99.9 |         70.3 |
-| A_030 |      98.3 |             99.9 |         98.3 |
+| 005_A_016 |      93.5 |             99.9 |         99.9 |
+| 005_A_018 |      99.5 |             99.9 |         99.9 |
+| 005_A_025 |      46.2 |             99.9 |         70.3 |
+| 005_A_030 |      98.3 |             99.9 |         98.3 |
 
-The other nine frames are single-region (bridging is a no-op) or already consistent. Whirlwind matches isce3 on A_016 / A_018. On A_025 (a low-coherence river) and A_030, Whirlwind corrects regions that remain mis-levelled with the isce3 settings used here. The post-pass needs only the unwrapped phase and mask; it does not need scipy or a coherence raster.
+The other nine frames are single-region (bridging is a no-op) or already consistent. Whirlwind matches isce3 on 005_A_016 / 005_A_018. On 005_A_025 (a low-coherence river) and 005_A_030, Whirlwind corrects regions that remain mis-levelled with the isce3 settings used here. The post-pass needs only the unwrapped phase and mask; it does not need scipy or a coherence raster.
 
 The script removes one global offset, taken as the median cycle of the largest region, then counts valid pixels on the same integer cycle as the reference unwrap.
 
-![A_016 bridging](figures/bridge_compare_A_016.png)
+![005_A_016 bridging](figures/bridge_compare_A_016.png)
 
 The bottom row colors each region by integer cycle error versus production (0 = correct). Without bridging, the two large regions are −3 cycles off; the Whirlwind and isce3 bridges both bring them to zero.
 
@@ -51,8 +51,8 @@ The bottom row colors each region by integer cycle error versus production (0 = 
 
 ```bash
 # absolute-metric comparison vs isce3, one or all frames
-python scripts/diag_bridge_isce3_compare.py A_016
+python scripts/diag_bridge_isce3_compare.py 005_A_016
 python scripts/diag_bridge_isce3_compare.py all
 # figure
-python scripts/plot_bridge_compare.py A_016
+python scripts/plot_bridge_compare.py 005_A_016
 ```

@@ -1,5 +1,12 @@
-//! Primal-dual min-cost-flow loop. Multi-source Dijkstra, augment, update
+//! "Primal-dual" min-cost-flow loop: multi-source Dijkstra, augment, update
 //! potentials, repeat. Falls back to per-source SSP after `max_iter` iters.
+//!
+//! Naming note: this is successive shortest paths with parallel augmentation
+//! (one unit per source along the shortest-path forest each iteration), the
+//! strategy PHASS introduced for phase unwrapping - not the primal-dual
+//! method of Ahuja et al. §9.8, which additionally solves a max-flow
+//! subproblem on the zero-reduced-cost network each iteration. The module
+//! keeps the historical name.
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;

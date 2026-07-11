@@ -3,7 +3,7 @@
 coherence floor cuts regardless of the local gradient. Uses cached (cc, coh, mask)
 so it's a fast pure-numpy post-mask - no heavy unwrap.
 
-Usage: python scripts/conncomp_demo.py [FRAME=A_030] [floor=0.3]
+Usage: python scripts/conncomp_demo.py [FRAME=005_A_030] [floor=0.3]
 """
 
 import sys
@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 CACHE = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/bridge_cache"
-frame = sys.argv[1] if len(sys.argv) > 1 else "A_030"
+frame = sys.argv[1] if len(sys.argv) > 1 else "005_A_030"
 floor = float(sys.argv[2]) if len(sys.argv) > 2 else 0.3
 
 d = np.load(f"{CACHE}/{frame}.npz")

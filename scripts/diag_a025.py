@@ -1,9 +1,9 @@
-"""Characterize the A_025 (low-coherence river) failure: is it a clean
+"""Characterize the 005_A_025 (low-coherence river) failure: is it a clean
 relative-2pi-offset split across the river (a bridging problem), or scattered
 within-region 2pi errors? And is the river cheap/free to cross (so the offset is
 under-determined)? Produces a 6-panel diagnostic figure + prints structure.
 
-Usage: python scripts/diag_a025.py [FRAME=A_025]
+Usage: python scripts/diag_a025.py [FRAME=005_A_025]
 """
 
 import sys
@@ -20,7 +20,7 @@ import whirlwind as ww
 
 tau = 2 * np.pi
 wrap = lambda x: ((x + np.pi) % tau) - np.pi
-frame = sys.argv[1] if len(sys.argv) > 1 else "A_025"
+frame = sys.argv[1] if len(sys.argv) > 1 else "005_A_025"
 h5 = glob.glob(
     f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
 )[0]

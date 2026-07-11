@@ -3,7 +3,7 @@
 frames and save results for comparison plots.
 
 Usage:
-    uv run python scripts/run_whirlwind_orig.py --frames D_077 D_078 A_035
+    uv run python scripts/run_whirlwind_orig.py --frames 005_D_077 005_D_078 006_A_035
 
 Outputs: /Volumes/WD_.../phass_ref/<frame>_wworig.npz
 """
@@ -52,7 +52,9 @@ def gunw_layers(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--frames", nargs="+", default=["D_077", "D_078", "A_035"])
+    ap.add_argument(
+        "--frames", nargs="+", default=["005_D_077", "005_D_078", "006_A_035"]
+    )
     args = ap.parse_args()
 
     from whirlwind_orig._unwrap import unwrap as ww_orig_unwrap

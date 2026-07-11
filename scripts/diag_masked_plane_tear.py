@@ -22,7 +22,7 @@ crossings now ride the gutter for free and the unwrap is EXACT; quality on the
 13-frame NISAR GUNW bench is unchanged (identical per-component match).
 
 Earlier fix attempts that made the linear path mask-aware DID fix this synthetic
-but collapsed real masked NISAR frames (D_077 99.5% -> ~6%): mask-blind residues
+but collapsed real masked NISAR frames (005_D_077 99.5% -> ~6%): mask-blind residues
 and whole-grid integration are a matched pair, which is why the fix had to be
 capacity-side, not mask-side.
 

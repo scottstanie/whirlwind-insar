@@ -1,5 +1,5 @@
 """Demonstrate whirlwind's connected-component (conncomp) tuning knobs on one
-NISAR frame (default A_018, which has a large decorrelated area peppered with
+NISAR frame (default 005_A_018, which has a large decorrelated area peppered with
 small, low-coherence components).
 
 It runs ``ww.unwrap`` under a handful of knob settings and renders a panel grid
@@ -15,7 +15,7 @@ plus a summary table, so a new user can SEE what each knob does:
   min_size_px          drop components smaller than this many pixels.
   max_ncomps           keep only the N largest components.
 
-Usage (base miniforge3 env): python scripts/sweep_conncomp_knobs.py [FRAME=A_018]
+Usage (base miniforge3 env): python scripts/sweep_conncomp_knobs.py [FRAME=005_A_018]
 Output: docs/figures/conncomp_knobs_<frame>.png + a printed table.
 One HEAVY unwrap per config (sequential; ~5 configs).
 """
@@ -78,7 +78,7 @@ def show_labels(ax, cc, valid, title):
 
 
 def main():
-    frame = sys.argv[1] if len(sys.argv) > 1 else "A_018"
+    frame = sys.argv[1] if len(sys.argv) > 1 else "005_A_018"
     h5 = glob.glob(f"{H5DIR}/*_{frame}_*.h5")[0]
     with h5py.File(h5, "r") as h:
         pol, prod_unw, coh, prod_cc, mask_arr = gunw_layers(h)

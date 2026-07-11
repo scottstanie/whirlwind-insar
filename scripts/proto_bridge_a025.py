@@ -4,10 +4,10 @@ here are TINY coarse anchors (~550 px, negligible), never a heavy full-res solve
 FACT 1 (verified, scripts/diag_bridge_partition.py): the free 2pi gauge lives
 between INTEGRATION components (4-connected comps of the valid MASK), NOT conncomp
 labels. Node set = scipy.ndimage.label(mask). A single-integration-component frame
-(D_077, D_074) is a STRUCTURAL no-op. A_025's integration-component oracle = 100%.
+(005_D_077, 005_D_074) is a STRUCTURAL no-op. 005_A_025's integration-component oracle = 100%.
 
-v1 found: the L=8 coarse mask is itself split (ncR=4) on A_025 -> snapping to it
-does nothing; and an UNVETOED snap regresses A_028 (confidently-wrong anchor).
+v1 found: the L=8 coarse mask is itself split (ncR=4) on 005_A_025 -> snapping to it
+does nothing; and an UNVETOED snap regresses 005_A_028 (confidently-wrong anchor).
 v2 fixes both:
   - CONNECTED anchor: morphologically CLOSE the coarse mask so its single
     integration BFS gauge spans the banks (bridges the masked river at x8).
@@ -41,7 +41,14 @@ GATE_FRAC = 0.5
 AMB_BAND = 0.25
 L = 8
 CLOSE_ITERS = 4
-frames = sys.argv[1:] or ["A_025", "A_016", "A_030", "A_028", "D_077", "D_074"]
+frames = sys.argv[1:] or [
+    "005_A_025",
+    "005_A_016",
+    "005_A_030",
+    "005_A_028",
+    "005_D_077",
+    "005_D_074",
+]
 
 
 def block_mean(a, L):
@@ -167,16 +174,16 @@ for frame in frames:
 
     base = percomp(unw)
     # PRIMARY = open x8 anchor (the closed variant fabricated a micro-bridge that
-    # regressed A_030; open already connects A_025's narrow river -> data-supported).
+    # regressed 005_A_030; open already connects 005_A_025's narrow river -> data-supported).
     u_o, no, ncv = snap(anchor_o, cRo, True, True)
     u_or = oracle()
     pc_o, pc_or = percomp(u_o), percomp(u_or)
     u_c = u_o  # figure uses the primary (open) result
 
     flag = ""
-    if frame != "A_025" and pc_o < base - 1e-9:
+    if frame != "005_A_025" and pc_o < base - 1e-9:
         flag = f"  <-- REGRESSION {(pc_o-base)*100:+.3f}"
-    elif frame == "A_025" and pc_o > base + 1e-9:
+    elif frame == "005_A_025" and pc_o > base + 1e-9:
         flag = f"  <-- FIXED {(pc_o-base)*100:+.1f}"
     print(
         f"{frame}: nR={nR} ncR={ncR_o}  base={base*100:.1f}%  "

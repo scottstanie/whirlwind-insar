@@ -3,11 +3,11 @@
 
 Tests FACT 1 from the design synthesis: the free 2pi gauge lives between
 INTEGRATION components (4-connected components of the valid MASK), not between
-conncomp labels. Crux for A_025: are the two river banks the SAME integration
+conncomp labels. Crux for 005_A_025: are the two river banks the SAME integration
 component (river valid-but-low-coh -> gauge already pinned by MCF flow) or
 DIFFERENT integration components (river masked -> genuine free gauge to bridge)?
 
-Usage: python scripts/diag_bridge_partition.py [A_025 D_077 A_016 D_074]
+Usage: python scripts/diag_bridge_partition.py [005_A_025 005_D_077 005_A_016 005_D_074]
 """
 
 import sys
@@ -18,7 +18,7 @@ from scipy import ndimage
 tau = 2 * np.pi
 CACHE = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/bridge_cache"
 S4 = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])  # 4-connectivity
-frames = sys.argv[1:] or ["A_025", "D_077", "A_016", "D_074"]
+frames = sys.argv[1:] or ["005_A_025", "005_D_077", "005_A_016", "005_D_074"]
 
 for frame in frames:
     d = np.load(f"{CACHE}/{frame}.npz")

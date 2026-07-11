@@ -8,7 +8,7 @@ estimates its own correlation (PHASESIGMA) from the phase, so we feed it only th
 unit-magnitude wrapped interferogram (no amplitude, no filtering).
 
 Usage (must be the isce2 env, which injects mroipac onto sys.path via `import isce`):
-    /Users/staniewi/miniforge3/envs/test-isce2/bin/python scripts/icu_isce2_run.py A_013
+    /Users/staniewi/miniforge3/envs/test-isce2/bin/python scripts/icu_isce2_run.py 005_A_013
 """
 
 import sys
@@ -26,7 +26,7 @@ TWOPI = 2.0 * np.pi
 wrap = lambda x: (x + np.pi) % TWOPI - np.pi
 SCRATCH = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/icu_scratch"
 
-frame = sys.argv[1] if len(sys.argv) > 1 else "A_013"
+frame = sys.argv[1] if len(sys.argv) > 1 else "005_A_013"
 h5path = glob.glob(
     f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
 )[0]

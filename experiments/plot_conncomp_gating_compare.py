@@ -22,7 +22,7 @@ import whirlwind as ww
 CACHE = Path("/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/ww_4way_final")
 OUT = Path("gunw_results/conncomp_gating_compare")
 NLOOKS = 16.0
-FRAMES = sys.argv[1:] or ["A_035", "D_077"]
+FRAMES = sys.argv[1:] or ["006_A_035", "005_D_077"]
 
 
 def load(fr: str) -> dict:

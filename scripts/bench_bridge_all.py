@@ -2,7 +2,7 @@
 per-comp-match + how many pixels the bridge moved. One HEAVY unwrap per frame
 (bridge off), then the cheap bridge post-pass applied on top -- so before/after
 is exact without doubling the heavy solves. Sequential (one heavy unwrap at a
-time). Confirms A_025 improves and every other frame is byte-identical (0 moved).
+time). Confirms 005_A_025 improves and every other frame is byte-identical (0 moved).
 
 Usage (base miniforge3 env): python scripts/bench_bridge_all.py
 """

@@ -3,7 +3,8 @@
 //! Pipeline:
 //! 1. Compute residues from wrapped phase.
 //! 2. Compute Carballo-style Bayesian edge costs from the interferogram + coherence.
-//! 3. Solve a min-cost flow problem on the residue grid (primal-dual SSP).
+//! 3. Solve a min-cost flow problem on the residue grid (parallel-augmenting
+//!    successive shortest paths; see `primal_dual.rs`).
 //! 4. Integrate the flow-corrected wrapped gradients to recover unwrapped phase.
 
 // Opinion lints that fire on top-level API surfaces and clear range loops.

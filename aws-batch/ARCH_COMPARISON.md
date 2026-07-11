@@ -11,7 +11,7 @@ costs, so the routing is deterministic regardless of CPU. The output phase is
 
 ## The test
 
-A real 2048×2048 center crop of the canonical D_077 NISAR GUNW frame
+A real 2048×2048 center crop of the canonical 005_D_077 NISAR GUNW frame
 (`...003_005_D_077_004_4000...`), run through both container images built from
 the same `aws-batch/Dockerfile`:
 

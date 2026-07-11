@@ -13,7 +13,9 @@
 //! retained only for provenance.
 //! The tables store `p0(α, γ, L)` and `p1(α, γ, L)`:
 //!   p0 = P(Δk = 0 | observation)
-//!   p1 = P(Δk = ±1 | observation)   [note: p0 + p1 ≠ 1 in general]
+//!   p1 = P(Δk = +1 | observation)   [note: p0 + p1 ≠ 1 in general]
+//! A −1 jump is the +1 jump of the opposite direction: the cost builder
+//! prices each edge's two arcs as cost(α, …) and cost(−α, …).
 //!
 //! Grid dimensions (all in C-row-major order in the stored arrays):
 //!   axis 0 - phase_diff α : 31 samples, uniformly spaced in [-π, π]

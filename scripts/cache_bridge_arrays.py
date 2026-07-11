@@ -24,7 +24,14 @@ import whirlwind as ww
 
 CACHE = "/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/bridge_cache"
 L = 8
-frames = sys.argv[1:] or ["A_025", "A_016", "A_030", "A_028", "D_077", "D_074"]
+frames = sys.argv[1:] or [
+    "005_A_025",
+    "005_A_016",
+    "005_A_030",
+    "005_A_028",
+    "005_D_077",
+    "005_D_074",
+]
 os.makedirs(CACHE, exist_ok=True)
 
 

@@ -24,7 +24,7 @@ from tophu_compare import gunw_layers, water_only_mask, wrap_phase, percomp_matc
 import whirlwind as ww
 
 tau = 2 * np.pi
-frame = sys.argv[1] if len(sys.argv) > 1 else "A_030"
+frame = sys.argv[1] if len(sys.argv) > 1 else "005_A_030"
 T = int(sys.argv[2]) if len(sys.argv) > 2 else 1024
 O = int(sys.argv[3]) if len(sys.argv) > 3 else 128
 

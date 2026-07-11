@@ -42,8 +42,8 @@ NLOOKS = 16.0
 GAMMAS = [0.0, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5]
 # Subset shown as conncomp images per frame.
 IMAGE_GAMMAS = [0.0, 0.15, 0.2, 0.25, 0.3, 0.4]
-FRAMES = ["D_077", "A_025", "D_075", "A_016", "A_030"]
-IMAGE_FRAMES = ["D_077", "A_025", "A_030"]
+FRAMES = ["005_D_077", "005_A_025", "005_D_075", "005_A_016", "005_A_030"]
+IMAGE_FRAMES = ["005_D_077", "005_A_025", "005_A_030"]
 
 
 def reliability_for_gamma(gamma: float) -> float:

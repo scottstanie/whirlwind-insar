@@ -1,9 +1,9 @@
-"""Prototype the 'minimum-jumpy' bridge for A_025: anchor whirlwind's regions to
+"""Prototype the 'minimum-jumpy' bridge for 005_A_025: anchor whirlwind's regions to
 a coarse multilook unwrap (which averages the decorrelation river into coherence,
 so its relative bank offset is well-determined). Snap each whirlwind connected
 component to the coarse anchor's integer 2pi level. Reports per-comp before/after.
 
-Usage: python scripts/proto_anchor_a025.py [FRAME=A_025] [L=8]
+Usage: python scripts/proto_anchor_a025.py [FRAME=005_A_025] [L=8]
 """
 
 import sys, glob
@@ -12,7 +12,7 @@ import whirlwind as ww
 
 tau = 2 * np.pi
 wrap = lambda x: ((x + np.pi) % tau) - np.pi
-frame = sys.argv[1] if len(sys.argv) > 1 else "A_025"
+frame = sys.argv[1] if len(sys.argv) > 1 else "005_A_025"
 L = int(sys.argv[2]) if len(sys.argv) > 2 else 8
 h5 = glob.glob(
     f"/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw/*_{frame}_*.h5"
@@ -119,8 +119,8 @@ for snap_all in (False, True):  # gated vs ungated, for comparison
         unw_gated = unw_fix.copy()
 
 # --- Codex's region definition: connected components of the HIGH-COHERENCE land
-# (NOT the fine conncomps). D_077 is then ~one coherent region -> one global
-# shift (no regression); A_025 is the banks cut by the low-coh river -> per-bank
+# (NOT the fine conncomps). 005_D_077 is then ~one coherent region -> one global
+# shift (no regression); 005_A_025 is the banks cut by the low-coh river -> per-bank
 # anchor vote. Low-coh pixels (river) keep their fine value.
 from scipy import ndimage
 
@@ -148,9 +148,9 @@ print(
 
 # --- ROBUST region definition: connected components of COARSE coherent land.
 # At x8 the speckle that fragmented the fine coh-mask averages into coherence,
-# while a WIDE river/water gap persists as low-coh. So a coherent frame (A_030)
+# while a WIDE river/water gap persists as low-coh. So a coherent frame (005_A_030)
 # collapses to ~one coarse region (one global shift = unobservable, no
-# regression), while A_025's banks stay separate (real barrier -> data-supported
+# regression), while 005_A_025's banks stay separate (real barrier -> data-supported
 # anchor). This IS Codex's "same coarse component => data-supported" test.
 coarse_land = cmask & (ccoh > COH_T)
 clabels, ncr = ndimage.label(coarse_land)

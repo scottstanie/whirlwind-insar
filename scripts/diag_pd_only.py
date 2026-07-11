@@ -8,7 +8,7 @@ Comparing total_cost / is_balanced / total_excess across maxiter tells us whethe
 ww-orig's PD alone solves the frame or leans on SSP - locating where Rust's PD
 (which strands 4 sources) diverges. Pure diagnostic; no rebuild needed.
 
-Usage: python scripts/diag_pd_only.py D_074
+Usage: python scripts/diag_pd_only.py 005_D_074
 """
 
 import sys, glob, time
