@@ -111,13 +111,26 @@ pub fn dijkstra_multi_source_full_into<G: ResidualGraph>(
     net: &Network,
     sp: &mut ShortestPaths,
 ) {
+    let mut buckets = Vec::new();
+    dijkstra_multi_source_full_scratch_into(g, net, sp, &mut buckets);
+}
+
+/// [`dijkstra_multi_source_full_into`] with caller-owned Dial bucket scratch,
+/// so a primal-dual loop can reuse the ~n_nodes-sized bucket vectors across
+/// its iterations instead of re-growing them every call.
+pub fn dijkstra_multi_source_full_scratch_into<G: ResidualGraph>(
+    g: &G,
+    net: &Network,
+    sp: &mut ShortestPaths,
+    buckets: &mut Vec<std::collections::VecDeque<u32>>,
+) {
     // Full completion only implemented for Dial serial; fall back to early-exit
     // heap for convex mode (marginal costs can be large → Dial bucket count
     // would explode).
     if net.convex_mode {
         heap::run_into(g, net, sp);
     } else {
-        dial::run_full_into(g, net, sp);
+        dial::run_full_scratch_into(g, net, sp, buckets);
     }
 }
 

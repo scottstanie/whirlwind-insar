@@ -318,6 +318,61 @@ impl Network {
         }
     }
 
+    /// Build a linear (unit-capacity, no ground, no mask-forbidding) network
+    /// taking ownership of already-packed `u16` forward costs.
+    ///
+    /// Identical to [`Network::new`] except the cost vector is moved instead
+    /// of converted: `unwrap_linear` on a NISAR-scale frame otherwise holds
+    /// the `i32` cost vector (~4 arcs/pixel · 4 bytes) alive next to the
+    /// packed copy during construction - the largest single transient of the
+    /// whole setup phase.
+    pub fn new_linear_packed(
+        g: &RectangularGridGraph,
+        residues: ArrayView2<i32>,
+        cost_fwd: Vec<u16>,
+    ) -> Self {
+        assert_eq!(residues.dim(), (g.m, g.n));
+        assert_eq!(cost_fwd.len(), g.num_forward);
+
+        let excess: Vec<i32> = if let Some(slice) = residues.as_slice() {
+            slice.to_vec()
+        } else {
+            let mut v = Vec::with_capacity(g.num_nodes());
+            for i in 0..g.m {
+                for j in 0..g.n {
+                    v.push(residues[(i, j)]);
+                }
+            }
+            v
+        };
+
+        let nf = g.num_forward;
+        let mut sat = bitvec![1; 2 * nf];
+        sat[..nf].fill(false);
+
+        let num_grid_nodes = g.num_nodes();
+        let mut net = Self {
+            excess,
+            potential: vec![0_i64; num_grid_nodes],
+            cost_fwd,
+            is_saturated: sat,
+            flow_count: Vec::new(),
+            reuse_mode: false,
+            convex_mode: false,
+            offsets: Vec::new(),
+            weights: Vec::new(),
+            multi_unit: BitVec::new(),
+            num_grid_forward: nf,
+            num_grid_nodes,
+            num_ground: 0,
+            num_boundary: 0,
+            boundary_nodes: Vec::new(),
+            node_to_ground_idx: Vec::new(),
+        };
+        net.mark_gutter_multi_unit(g);
+        net
+    }
+
     /// Build a network with optional `ground_cost`. When `Some(c)`, a virtual
     /// ground node is appended and connected to every boundary residue (rows
     /// 0/m, cols 0/n of the residue grid) via unit-capacity forward arcs of
@@ -486,6 +541,14 @@ impl Network {
         self.num_grid_nodes + (self.num_ground > 0) as usize
     }
 
+    /// True when a virtual ground node exists. Lets the shortest-path hot
+    /// loops skip the per-pop [`Network::extra_outgoing`] call entirely on
+    /// ground-free networks (the `unwrap_linear` default).
+    #[inline]
+    pub fn has_ground(&self) -> bool {
+        self.num_ground > 0
+    }
+
     /// ID of the ground node, if enabled. `None` for ground-disabled networks.
     #[inline]
     pub fn ground_node(&self) -> Option<usize> {
@@ -554,6 +617,7 @@ impl Network {
     }
 
     /// Endpoints of a (possibly ground) arc, as `(tail, head)`.
+    #[inline]
     pub fn arc_endpoints<G: ResidualGraph>(&self, g: &G, arc: usize) -> (usize, usize) {
         let nf = self.num_forward();
         let (fwd_arc, is_reverse) = if arc < nf {
@@ -678,7 +742,16 @@ impl Network {
 
     #[inline]
     pub fn is_arc_saturated(&self, arc: usize) -> bool {
-        self.is_saturated[arc]
+        // Raw-word bit test instead of `self.is_saturated[arc]`: this is the
+        // single hottest load in every Dijkstra relax (8 probes per popped
+        // node, billions per frame), and bitvec's `Index` goes through BitRef
+        // machinery the optimizer doesn't always flatten. The layout contract
+        // (`BitVec<usize, Lsb0>`: bit i lives at word i/BITS, bit i%BITS) is
+        // pinned by the `raw_word_bit_test_matches_bitvec` test below.
+        const BITS: usize = usize::BITS as usize;
+        let words = self.is_saturated.as_raw_slice();
+        debug_assert!(arc < self.is_saturated.len());
+        (words[arc / BITS] >> (arc % BITS)) & 1 != 0
     }
 
     /// In `reuse_mode`, an arc with `|flow_count| > 0` is "used" - Dial will
@@ -881,6 +954,60 @@ impl Network {
     }
     pub fn decrease_excess(&mut self, node: usize, d: i32) {
         self.excess[node] -= d;
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use ndarray::Array2;
+
+    /// Pins the bitvec layout contract behind `is_arc_saturated`'s raw-word
+    /// bit test: `BitVec<usize, Lsb0>` stores bit `i` at word `i / BITS`,
+    /// bit position `i % BITS`. If bitvec ever changed its default ordering,
+    /// this test fails before the solver silently mis-reads saturation.
+    #[test]
+    fn raw_word_bit_test_matches_bitvec() {
+        let g = RectangularGridGraph::new(9, 7);
+        let residues = Array2::<i32>::zeros((9, 7));
+        let costs = vec![3_i32; g.num_forward];
+        let mut net = Network::new(&g, residues.view(), &costs);
+        // Scatter a deterministic pattern via the bitvec setter.
+        for a in (0..net.num_arcs()).step_by(3) {
+            let bit = (a * 2654435761_usize).is_multiple_of(2);
+            net.is_saturated.set(a, bit);
+        }
+        for a in 0..net.num_arcs() {
+            assert_eq!(
+                net.is_arc_saturated(a),
+                net.is_saturated[a],
+                "raw-word bit test diverges from bitvec indexing at arc {a}"
+            );
+        }
+    }
+
+    /// `new_linear_packed` must be state-identical to `Network::new` when
+    /// handed the same costs.
+    #[test]
+    fn packed_constructor_matches_new() {
+        let g = RectangularGridGraph::new(6, 8);
+        let mut residues = Array2::<i32>::zeros((6, 8));
+        residues[(2, 3)] = 1;
+        residues[(4, 5)] = -1;
+        let costs: Vec<i32> = (0..g.num_forward).map(|a| (a % 900) as i32).collect();
+        let packed: Vec<u16> = costs.iter().map(|&c| c as u16).collect();
+
+        let a = Network::new(&g, residues.view(), &costs);
+        let b = Network::new_linear_packed(&g, residues.view(), packed);
+
+        assert_eq!(a.excess, b.excess);
+        assert_eq!(a.potential, b.potential);
+        assert_eq!(a.cost_fwd, b.cost_fwd);
+        assert_eq!(a.is_saturated, b.is_saturated);
+        assert_eq!(a.multi_unit, b.multi_unit);
+        assert_eq!(a.num_forward(), b.num_forward());
+        assert_eq!(a.num_nodes(), b.num_nodes());
+        assert!(!b.has_ground());
     }
 }
 

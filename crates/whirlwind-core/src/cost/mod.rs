@@ -424,6 +424,38 @@ pub fn compute_carballo_costs_parity(
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
 ) -> Vec<i32> {
+    compute_carballo_costs_parity_impl(igram, corr, nlooks, mask, |c| c)
+}
+
+/// [`compute_carballo_costs_parity`] emitting the `u16` word `Network` stores
+/// internally, so `unwrap_linear` can hand the vector to
+/// [`crate::network::Network::new_linear_packed`] by move. Skipping the `i32`
+/// intermediate removes the largest setup-phase transient (~4 arcs/pixel · 4
+/// bytes) plus one full repack pass. Values are identical: the parity spline
+/// cost is bounded (≤ ~6,908) and the conversion asserts the `u16` range the
+/// same way `Network` construction does.
+pub fn compute_carballo_costs_parity_packed(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+) -> Vec<u16> {
+    compute_carballo_costs_parity_impl(igram, corr, nlooks, mask, |c| {
+        assert!(
+            (0..=u16::MAX as i32).contains(&c),
+            "arc cost {c} outside the u16 range [0, 65535] - the cost builder must clamp"
+        );
+        c as u16
+    })
+}
+
+fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    pack: impl Fn(i32) -> T + Sync,
+) -> Vec<T> {
     let (m_phase, n_phase) = igram.dim();
     let m = m_phase + 1;
     let n = n_phase + 1;
@@ -484,9 +516,9 @@ pub fn compute_carballo_costs_parity(
     let sp_lut = spline_lut::get_or_load();
 
     // Masked "sea" arcs are cost-0, matching ww-orig (free sea).
-    let sea = 0;
+    let sea = pack(0);
 
-    let mut cost = vec![0_i32; g.num_forward];
+    let mut cost = vec![T::default(); g.num_forward];
     let (down_slab, rest) = cost.split_at_mut(g.n_v);
     let (up_slab, rest) = rest.split_at_mut(g.n_v);
     let (right_slab, left_slab) = rest.split_at_mut(g.n_h);
@@ -520,8 +552,8 @@ pub fn compute_carballo_costs_parity(
                     (sea, sea)
                 } else {
                     (
-                        sp_lut.cost(-alpha, gamma, nlooks),
-                        sp_lut.cost(alpha, gamma, nlooks),
+                        pack(sp_lut.cost(-alpha, gamma, nlooks)),
+                        pack(sp_lut.cost(alpha, gamma, nlooks)),
                     )
                 };
                 right_row[j] = c_rt;
@@ -546,8 +578,8 @@ pub fn compute_carballo_costs_parity(
                     (sea, sea)
                 } else {
                     (
-                        sp_lut.cost(alpha, gamma, nlooks),
-                        sp_lut.cost(-alpha, gamma, nlooks),
+                        pack(sp_lut.cost(alpha, gamma, nlooks)),
+                        pack(sp_lut.cost(-alpha, gamma, nlooks)),
                     )
                 };
                 let col = j + 1;

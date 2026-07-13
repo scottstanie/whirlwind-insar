@@ -71,9 +71,27 @@ pub fn cost_threshold_from_sigma(sigma: f64) -> i32 {
     cost_threshold_from_cycle_prob(cycle_prob)
 }
 
-use ndarray::{Array2, ArrayView2};
+use ndarray::parallel::prelude::*;
+use ndarray::{Array2, ArrayView2, Axis};
 use num_complex::Complex32;
 use thiserror::Error;
+
+/// Row-parallel `igram.mapv(|z| z.arg())`. The atan2 over a full frame is a
+/// few hundred milliseconds single-threaded; every core-path unwrap starts
+/// with it, so spread it like the residue/cost builders already are.
+fn wrapped_phase_par(igram: ArrayView2<Complex32>) -> Array2<f32> {
+    let (m, n) = igram.dim();
+    let mut out = Array2::<f32>::zeros((m, n));
+    out.axis_iter_mut(Axis(0))
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(i, mut row)| {
+            for j in 0..n {
+                row[j] = igram[(i, j)].arg();
+            }
+        });
+    out
+}
 
 #[derive(Debug, Error)]
 pub enum UnwrapError {
@@ -379,7 +397,7 @@ pub fn unwrap_linear(
     if m < 2 || n < 2 {
         return Err(UnwrapError::TooSmall((m, n)));
     }
-    let wrapped_phase = igram.mapv(|z| z.arg());
+    let wrapped_phase = wrapped_phase_par(igram);
     let residues = residue::compute(wrapped_phase.view());
     // KEEP the boundary-frame deposits (wrap counts where fringes exit the
     // image; see `residue::compute`). They terminate boundary-exiting wrap
@@ -398,13 +416,15 @@ pub fn unwrap_linear(
     // (no mask forbidding) to match Python. Masked arcs have cost=0 so MCF
     // routes through them freely, then we NaN masked pixels post-integration.
     // Parity cost mode: 100x scale + zero only where both endpoints are
-    // invalid - matches Python _cost.compute_carballo_costs exactly.
-    let costs = cost::compute_carballo_costs_parity(igram, corr, nlooks, mask);
+    // invalid - matches Python _cost.compute_carballo_costs exactly. Built
+    // directly in the u16 word the network stores, and MOVED into it - the
+    // i32 intermediate (~4 arcs/pixel · 4 bytes) was the largest setup-phase
+    // transient on full frames.
+    let costs = cost::compute_carballo_costs_parity_packed(igram, corr, nlooks, mask);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new(&graph, residues.view(), &costs);
-    // The network has copied both into its own buffers; free them now (~1.5 i32
-    // arc/node vectors) so they don't sit alive through the Dijkstra peak.
-    drop(costs);
+    let mut net = network::Network::new_linear_packed(&graph, residues.view(), costs);
+    // The network has copied the residues into its excess buffer; free them
+    // now so they don't sit alive through the Dijkstra peak.
     drop(residues);
     // Use full-completion Dijkstra to match Python ww-orig's `dijkstra_pd`
     // which runs `while (!dijkstra.done())`. Early-exit Dijkstra leaves

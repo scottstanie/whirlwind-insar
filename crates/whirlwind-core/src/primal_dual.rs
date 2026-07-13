@@ -11,10 +11,11 @@
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;
 use crate::shortest_path::{
-    ShortestPaths, dijkstra_multi_source_full_into, dijkstra_multi_source_into,
+    ShortestPaths, dijkstra_multi_source_full_scratch_into, dijkstra_multi_source_into,
 };
 use crate::ssp;
 use rayon::prelude::*;
+use std::collections::VecDeque;
 use std::sync::OnceLock;
 
 /// If set, primal-dual prints per-iteration state to stderr. Cached after the
@@ -112,6 +113,11 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(512);
+        // One scratch set shared across every resume round's SSP (this loop
+        // only runs on stranding frames, but when it does it can go tens of
+        // rounds - reallocating ~n_nodes-sized buffers each round is waste).
+        let mut sp = ShortestPaths::new(net.num_nodes());
+        let mut fifo_buckets: Vec<VecDeque<u32>> = Vec::new();
         let mut total = max_iter;
         while excess_now(net) > 0 && deficit_now(net) > 0 && total < cap {
             let before = excess_now(net);
@@ -127,7 +133,7 @@ pub fn run_full_dijkstra<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: u
             }
             // SSP cleanup each round (drains anything PD's reached but didn't pair).
             record_ssp_call();
-            ssp::run_single_source(g, net);
+            ssp::run_single_source_scratch(g, net, &mut sp, &mut fifo_buckets);
             if excess_now(net) == 0 {
                 break;
             }
@@ -186,6 +192,10 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     let mut path_info: Vec<(usize, usize, Vec<usize>)> = Vec::new();
     let mut deficits: Vec<usize> = Vec::new();
     let mut sp = ShortestPaths::new(n_nodes);
+    // FIFO Dial buckets, reused across the full-completion Dijkstras (they
+    // grow to ~n_nodes u32 entries; re-growing them every iteration was pure
+    // allocator churn) and handed to the SSP tail below.
+    let mut fifo_buckets: Vec<VecDeque<u32>> = Vec::new();
     // Epoch counter persists across PD iterations too - wrap-on-zero handles
     // the (vanishingly rare) ~4B-walk overflow.
     let mut epoch: u32 = 0;
@@ -226,7 +236,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
         }
         let t0 = std::time::Instant::now();
         if full_dijkstra {
-            dijkstra_multi_source_full_into(g, net, &mut sp);
+            dijkstra_multi_source_full_scratch_into(g, net, &mut sp, &mut fifo_buckets);
         } else {
             dijkstra_multi_source_into(g, net, &mut sp);
         }
@@ -378,11 +388,21 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize, full_di
     // catastrophic (a near-graph-wide Dijkstra per unit) - use single-source
     // there. The early-exit path is tiled / small-graph, where multi-source is
     // fast and robust to its d_max-capped potentials.
+    //
+    // The augment-phase scratch is dead from here on - free it first, and hand
+    // the SSP the Dijkstra buffers (`sp`, the Dial buckets) instead of letting
+    // it allocate an identically-shaped second set. Holding both sets alive
+    // through the SSP tail used to be the peak-RSS high-water mark of a
+    // NISAR-scale `unwrap_linear` (~390 MB of dead weight at 17.8M nodes).
+    drop(visited_epoch);
+    drop(source_used);
+    drop(path_info);
+    drop(deficits);
     record_ssp_call();
     if full_dijkstra {
-        ssp::run_single_source(g, net);
+        ssp::run_single_source_scratch(g, net, &mut sp, &mut fifo_buckets);
     } else {
-        ssp::run(g, net);
+        ssp::run_scratch(g, net, &mut sp);
     }
 
     if dbg {
