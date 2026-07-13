@@ -240,11 +240,11 @@ struct Cli {
     interp_cutoff: f32,
     /// Number of nearest high-coherence pixels averaged per interpolated
     /// pixel (only with `--interpolate`).
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = 30)]
     interp_num_neighbors: usize,
     /// Maximum search radius in pixels for the neighbor search (only with
     /// `--interpolate`).
-    #[arg(long, default_value_t = 51)]
+    #[arg(long, default_value_t = 101)]
     interp_max_radius: usize,
     /// Minimum search radius in pixels; closer neighbors are skipped (only
     /// with `--interpolate`).
@@ -267,6 +267,15 @@ struct Cli {
     /// smoothing in the filter.
     #[arg(long, default_value_t = 64)]
     goldstein_psize: usize,
+    /// Sliding-window size (pixels) for averaging wrapped phase gradients into
+    /// the local mean slope used by the cost model, given as PARALLEL then
+    /// PERPENDICULAR to the examined phase difference — SNAPHU's KPARDPSI /
+    /// KPERPDPSI. Bigger = smoother expected slope (steadier on high-fringe-rate
+    /// deformation / topography, but blurs across wrap lines). Shapes the default
+    /// whole-image solver's phase and the `snaphu` connected components; the
+    /// tiled (`--downsample > 1`) path uses the default. Both values must be ≥ 1.
+    #[arg(long, num_args = 2, value_names = ["PAR", "PERP"], default_values_t = [7usize, 7usize])]
+    phase_grad_window: Vec<usize>,
     /// Connected-components output path. By default, writes next to
     /// `--out` (`foo.conncomp.tif` for TIFF output, `foo.unw.conncomp`
     /// for flat `.unw`). TIFF paths write uint16; other paths write one
@@ -418,9 +427,23 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         conncomp_algorithm,
         conncomp_reliability,
         conncomp_min_coherence,
+        phase_grad_window,
         out,
     } = args;
     let bridge = !no_bridge;
+
+    // Slope window (parallel, perpendicular) = KPARDPSI / KPERPDPSI. clap
+    // guarantees exactly two values; reject a zero extent (SNAPHU's one rule).
+    let phase_grad_window = {
+        let (par, perp) = (phase_grad_window[0], phase_grad_window[1]);
+        if par < 1 || perp < 1 {
+            anyhow::bail!("--phase-grad-window values must be >= 1, got {par} {perp}");
+        }
+        whirlwind_core::cost::PhaseGradWindow {
+            parallel: par,
+            perpendicular: perp,
+        }
+    };
 
     // Reject nonphysical looks early (NaN included), and note the high-end cap.
     if nlooks.is_nan() || nlooks < 1.0 {
@@ -632,6 +655,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         0,
         0,
         downsample,
+        phase_grad_window,
     )?;
 
     // K-transfer to original wrapped phase (dolphin PR #364 convention).
@@ -706,6 +730,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
                     min_size_px,
                     min_size_frac: min_component_frac,
                     max_ncomps,
+                    phase_grad_window,
                 };
                 whirlwind_core::components_snaphu(
                     igram_orig.view(),
@@ -730,6 +755,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
                     nlooks,
                     mk.as_ref().map(|m| m.view()),
                     params,
+                    phase_grad_window,
                 )?
             }
         };

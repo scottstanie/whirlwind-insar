@@ -243,6 +243,7 @@ def unwrap(
     max_ncomps: int = 1024,
     goldstein_alpha: float = 0.0,
     goldstein_psize: int = 64,
+    phase_grad_window: "tuple[int, int]" = (7, 7),
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
     """Unwrap a wrapped interferogram with a minimum-cost-flow (MCF) solver.
 
@@ -328,6 +329,19 @@ def unwrap(
         preserved.
     goldstein_psize : int, default 64
         Goldstein FFT patch size (only used when ``goldstein_alpha > 0``).
+    phase_grad_window : tuple of int, default ``(7, 7)``
+        Size, in pixels, of the sliding window used to average wrapped phase
+        gradients into the local mean (non-layover) slope that enters the cost
+        model, as ``(parallel, perpendicular)`` to the examined phase
+        difference. These are SNAPHU's ``KPARDPSI`` / ``KPERPDPSI`` (and mirror
+        snaphu-py's ``phase_grad_window``). A larger window smooths the expected
+        slope more -- steadier on high-fringe-rate deformation or topography,
+        but it blurs the slope estimate across wrap lines; a smaller window is
+        more local. The default ``(7, 7)`` matches SNAPHU and reproduces
+        whirlwind's reference results exactly. Both entries must be ``>= 1``.
+        This shapes the phase on the default whole-image solver and the default
+        (``"snaphu"``) connected components; the ``downsample > 1`` (tiled) path
+        uses the default window regardless.
     conncomp_algorithm : {"snaphu", "linear"}, default "snaphu"
         Which connected-component grow to use. ``"snaphu"`` (default) is the
         SNAPHU-faithful ambiguity-wiggle on the unwrapped output (see
@@ -388,6 +402,12 @@ def unwrap(
         Connected-component labels; ``0`` = background / dropped.
     """
     _validate_nlooks(nlooks)
+
+    pgw = (int(phase_grad_window[0]), int(phase_grad_window[1]))
+    if pgw[0] < 1 or pgw[1] < 1:
+        raise ValueError(
+            f"phase_grad_window entries must be >= 1, got {phase_grad_window!r}"
+        )
 
     # NaN inputs are treated as nodata: zero them (so the default mask drops
     # them) and warn, rather than letting a NaN propagate through the solve.
@@ -465,6 +485,7 @@ def unwrap(
         cost_threshold=cost_threshold,
         min_size_px=min_size_px,
         max_ncomps=max_ncomps,
+        phase_grad_window=pgw,
     )
 
     if ig_solve is igram:
@@ -515,6 +536,7 @@ def unwrap(
             reliability_raw,
             min_size_px,
             max_ncomps,
+            pgw,
         )
     else:
         cc = cc_linear

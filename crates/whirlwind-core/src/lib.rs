@@ -126,6 +126,7 @@ pub fn unwrap_coherence(
     tile_size: usize,
     tile_overlap: usize,
     multilook: usize,
+    window: cost::PhaseGradWindow,
 ) -> Result<Array2<f32>, UnwrapError> {
     let solver = unwrap_solver();
     let explicit_tile = tile_size >= 4 && tile_overlap >= 2 && tile_overlap < tile_size;
@@ -133,7 +134,9 @@ pub fn unwrap_coherence(
     // (noisy / moderate-coherence scenes coherently down-look then unwrap the
     // coarse frame), or `WHIRLWIND_UNWRAP_SOLVER=tiled`. The tiled robustness
     // layer is still empirically tuned and not validated across all NISAR
-    // frames, so it is no longer the silent default for large frames.
+    // frames, so it is no longer the silent default for large frames. It (like
+    // the `reuse` kernel) uses the default slope window; `phase_grad_window`
+    // shapes the phase only on the default whole-image `linear`/`convex` paths.
     if multilook > 1 || explicit_tile || solver == "tiled" {
         let (ts, to) = if tile_size == 0 {
             (512, 64)
@@ -145,9 +148,9 @@ pub fn unwrap_coherence(
     // Whole-image default kernel.
     match solver.as_str() {
         "reuse" => unwrap_reuse(igram, corr, nlooks, mask),
-        "convex" => unwrap_convex(igram, corr, nlooks, mask),
+        "convex" => unwrap_convex(igram, corr, nlooks, mask, window),
         // DEFAULT: the verified single-tile ww-orig-parity linear solver.
-        _ => unwrap_linear(igram, corr, nlooks, mask),
+        _ => unwrap_linear(igram, corr, nlooks, mask, window),
     }
 }
 
@@ -167,6 +170,7 @@ pub fn components_only(
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
     params: ConnCompParams,
+    window: cost::PhaseGradWindow,
 ) -> Result<Array2<u32>, UnwrapError> {
     let (m, n) = igram.dim();
     if (m, n) != corr.dim() {
@@ -177,7 +181,7 @@ pub fn components_only(
     }
     let wrapped_phase = igram.mapv(|z| z.arg());
     let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
-    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
+    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask, window);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let net = network::Network::new_with_mask(&graph, residues.view(), &costs, mask);
     Ok(conncomp::grow_components(&graph, &net, mask, &params))
@@ -238,6 +242,7 @@ pub fn unwrap_coherence_with_components(
     tile_overlap: usize,
     multilook: usize,
     params: ConnCompParams,
+    window: cost::PhaseGradWindow,
 ) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
     let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
     let t = std::time::Instant::now();
@@ -249,6 +254,7 @@ pub fn unwrap_coherence_with_components(
         tile_size,
         tile_overlap,
         multilook,
+        window,
     )?;
     if dbg {
         eprintln!(
@@ -257,7 +263,7 @@ pub fn unwrap_coherence_with_components(
         );
     }
     let t = std::time::Instant::now();
-    let comps = components_only(igram, corr, nlooks, mask, params)?;
+    let comps = components_only(igram, corr, nlooks, mask, params, window)?;
     if dbg {
         eprintln!(
             "[ww] conncomp (components_only, global no-solve): {:.2}s",
@@ -301,7 +307,8 @@ pub fn unwrap_grounded(
     }
     let wrapped_phase = igram.mapv(|z| z.arg());
     let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
-    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
+    // Experimental path: uses the default slope window (not `phase_grad_window`).
+    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask, cost::PhaseGradWindow::default());
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_with_mask_and_ground(
         &graph,
@@ -339,6 +346,7 @@ pub fn unwrap_convex(
     corr: ArrayView2<f32>,
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
+    window: cost::PhaseGradWindow,
 ) -> Result<Array2<f32>, UnwrapError> {
     let (m, n) = igram.dim();
     if (m, n) != corr.dim() {
@@ -349,7 +357,7 @@ pub fn unwrap_convex(
     }
     let wrapped_phase = igram.mapv(|z| z.arg());
     let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
-    let (offsets, weights) = cost::compute_snaphu_smooth_costs(igram, corr, nlooks, mask);
+    let (offsets, weights) = cost::compute_snaphu_smooth_costs(igram, corr, nlooks, mask, window);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net =
         network::Network::new_convex_with_mask(&graph, residues.view(), &offsets, &weights, mask);
@@ -389,6 +397,7 @@ pub fn unwrap_linear(
     corr: ArrayView2<f32>,
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
+    window: cost::PhaseGradWindow,
 ) -> Result<Array2<f32>, UnwrapError> {
     let (m, n) = igram.dim();
     if (m, n) != corr.dim() {
@@ -420,7 +429,7 @@ pub fn unwrap_linear(
     // directly in the u16 word the network stores, and MOVED into it - the
     // i32 intermediate (~4 arcs/pixel · 4 bytes) was the largest setup-phase
     // transient on full frames.
-    let costs = cost::compute_carballo_costs_parity_packed(igram, corr, nlooks, mask);
+    let costs = cost::compute_carballo_costs_parity_packed(igram, corr, nlooks, mask, window);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_linear_packed(&graph, residues.view(), costs);
     // The network has copied the residues into its excess buffer; free them
@@ -514,7 +523,8 @@ pub fn unwrap_reuse(
     // and degrading quality from ~99% to ~42% on ~50%-masked NISAR scenes.
     // Masked arcs have cost=0 so MCF routes through them freely; post-integration
     // we NaN masked pixels.
-    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask);
+    // Experimental path: uses the default slope window (not `phase_grad_window`).
+    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask, cost::PhaseGradWindow::default());
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_reuse_with_mask(&graph, residues.view(), &costs, None);
     primal_dual::run(&graph, &mut net, 50);

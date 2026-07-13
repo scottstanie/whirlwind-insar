@@ -165,6 +165,37 @@ class TestUnwrap:
         with pytest.raises(ValueError):
             ww.unwrap(igram, corr, nlooks=5.0, conncomp_algorithm="bogus")
 
+    def test_phase_grad_window_default_and_effect(self):
+        """`phase_grad_window` mirrors SNAPHU's KPARDPSI/KPERPDPSI. The default
+        (7, 7) must reproduce the no-argument result bit-for-bit, a non-default
+        window must be able to change the solved phase, the parallel/perpendicular
+        orientation must matter on an anisotropic scene, and a zero extent must
+        raise cleanly rather than panic in Rust."""
+        rng = np.random.default_rng(3)
+        m, n = 160, 160
+        yy, xx = np.mgrid[0:m, 0:n].astype(np.float32)
+        # Anisotropic wrapping phase: fast vertical fringes + a y-dependent bend.
+        true = 0.8 * xx + 0.002 * (yy - n / 2) ** 2
+        wrapped = np.angle(np.exp(1j * true)).astype(np.float32)
+        noise = rng.normal(0, 0.7, (m, n)).astype(np.float32)
+        igram = np.exp(1j * (wrapped + noise)).astype(np.complex64)
+        corr = np.full((m, n), 0.35, np.float32)
+
+        base, _ = ww.unwrap(igram, corr, nlooks=4.0)
+        same, _ = ww.unwrap(igram, corr, nlooks=4.0, phase_grad_window=(7, 7))
+        np.testing.assert_array_equal(base, same)
+
+        # A different window can change the integer-cycle field, and the
+        # parallel/perpendicular orientation is not symmetric here.
+        a, _ = ww.unwrap(igram, corr, nlooks=4.0, phase_grad_window=(25, 3))
+        b, _ = ww.unwrap(igram, corr, nlooks=4.0, phase_grad_window=(3, 25))
+        assert not np.array_equal(np.nan_to_num(a), np.nan_to_num(base))
+        assert not np.array_equal(np.nan_to_num(a), np.nan_to_num(b))
+
+        for bad in [(0, 7), (7, 0), (-1, 7)]:
+            with pytest.raises(ValueError, match="phase_grad_window"):
+                ww.unwrap(igram, corr, nlooks=4.0, phase_grad_window=bad)
+
     def test_conncomp_reliability_raises_to_more_conservative(self):
         """Raising `conncomp_reliability` cuts more edges (more conservative):
         an absurdly high threshold cuts every edge, so all pixels are isolated
