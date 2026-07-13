@@ -142,8 +142,10 @@ ax2.set_xticks(x)
 ax2.set_xticklabels(frames, rotation=45, ha="right")
 
 fig.tight_layout()
-fig.savefig(OUT, dpi=120, bbox_inches="tight")
-print(f"summary figure -> {OUT}", flush=True)
+_stem = _os.path.splitext(str(OUT))[0]
+for _ext in (".png", ".pdf"):
+    fig.savefig(_stem + _ext, dpi=120, bbox_inches="tight")
+    print(f"summary figure -> {_stem + _ext}", flush=True)
 
 # Printed table: every engine, all three metrics.
 hdr = " | ".join(f"{e:>10s}" for e, _ in engines)
