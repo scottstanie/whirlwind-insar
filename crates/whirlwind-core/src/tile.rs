@@ -397,6 +397,15 @@ pub fn unwrap_tiled(
             cov,
             1,
         )?;
+        // Blocks that are mostly nodata (`cnt*2 < lk*lk` in `multilook_complex`)
+        // are excluded from the coarse solve, but their valid fine pixels still
+        // need a 2π level to borrow. Fill each NaN coarse cell from its finite
+        // neighbors: only the *cycle* is borrowed per pixel below, so a
+        // neighbor's level is the right estimate at a partially-valid boundary
+        // block. Cells deep inside nodata may get filled too, harmlessly - the
+        // per-pixel validity gate below still drops them.
+        let mut coarse = coarse;
+        fill_nan_from_neighbors(&mut coarse);
         // Transfer ambiguities (cf. dolphin `transfer_ambiguities`): the coarse
         // solve only fixes which 2π cycle each block sits on; every fine pixel
         // keeps its own wrapped value via `K = round((coarse - wrapped)/2π)`,
@@ -1239,16 +1248,63 @@ pub(crate) fn multilook_complex(
     (cig, ccorr, cmask)
 }
 
+/// Grow finite values into NaN cells by repeated 4-neighbor averaging, one
+/// ring per pass, until nothing changes. Used to give partially-valid boundary
+/// blocks (excluded from the coarse multilook solve) a 2π level to borrow from
+/// their nearest solved neighbor. A fully-NaN input is left unchanged.
+fn fill_nan_from_neighbors(a: &mut Array2<f32>) {
+    let (m, n) = a.dim();
+    loop {
+        let mut fills: Vec<(usize, usize, f32)> = Vec::new();
+        for i in 0..m {
+            for j in 0..n {
+                if a[(i, j)].is_finite() {
+                    continue;
+                }
+                let (mut sum, mut cnt) = (0.0_f32, 0_usize);
+                if i > 0 && a[(i - 1, j)].is_finite() {
+                    sum += a[(i - 1, j)];
+                    cnt += 1;
+                }
+                if i + 1 < m && a[(i + 1, j)].is_finite() {
+                    sum += a[(i + 1, j)];
+                    cnt += 1;
+                }
+                if j > 0 && a[(i, j - 1)].is_finite() {
+                    sum += a[(i, j - 1)];
+                    cnt += 1;
+                }
+                if j + 1 < n && a[(i, j + 1)].is_finite() {
+                    sum += a[(i, j + 1)];
+                    cnt += 1;
+                }
+                if cnt > 0 {
+                    fills.push((i, j, sum / cnt as f32));
+                }
+            }
+        }
+        if fills.is_empty() {
+            return;
+        }
+        for (i, j, v) in fills {
+            a[(i, j)] = v;
+        }
+    }
+}
+
 /// Block-replicate a coarse field to `(m, n)` (nearest-neighbor). The trailing
-/// `< lk` strip (when `m`/`n` aren't divisible by `lk`) has no coarse cell and
-/// stays NaN.
+/// `< lk` strip (when `m`/`n` aren't divisible by `lk`) has no coarse cell of
+/// its own and borrows the nearest edge cell.
 fn upsample_blockrep(coarse: &Array2<f32>, lk: usize, m: usize, n: usize) -> Array2<f32> {
     let (cm, cn) = coarse.dim();
     let mut out = Array2::<f32>::from_elem((m, n), f32::NAN);
+    if cm == 0 || cn == 0 {
+        return out;
+    }
     for i in 0..m {
         for j in 0..n {
-            let (ci, cj) = (i / lk, j / lk);
-            if ci < cm && cj < cn && coarse[(ci, cj)].is_finite() {
+            let (ci, cj) = ((i / lk).min(cm - 1), (j / lk).min(cn - 1));
+            if coarse[(ci, cj)].is_finite() {
                 out[(i, j)] = coarse[(ci, cj)];
             }
         }
@@ -2241,6 +2297,41 @@ mod tests {
             max_diff < 1e-6,
             "robust must equal plain tiled on a clean scene (no gate), diff {max_diff}"
         );
+    }
+
+    #[test]
+    fn multilook_covers_partially_valid_boundary_blocks() {
+        use ndarray::Array2;
+        // A diagonal nodata edge (like a rotated satellite frame) leaves the
+        // boundary 3x3 blocks with fewer than half their pixels valid, so
+        // `multilook_complex` excludes them from the coarse solve. Their valid
+        // fine pixels must still get a 2π level (from a neighboring block)
+        // instead of NaN. Sizes are also indivisible by the multilook factor to
+        // cover the trailing-strip borrow in `upsample_blockrep`.
+        let (m, n) = (97, 98);
+        let truth: Array2<f32> =
+            Array2::from_shape_fn((m, n), |(i, j)| 0.04 * i as f32 + 0.03 * j as f32);
+        let igram = truth.mapv(|p| Complex32::new(p.cos(), p.sin()));
+        let corr = Array2::<f32>::from_elem((m, n), 0.9);
+        let mask = Array2::from_shape_fn((m, n), |(i, j)| i + j >= 20);
+        let unw =
+            unwrap_tiled(igram.view(), corr.view(), 10.0, Some(mask.view()), 64, 8, 3).unwrap();
+        let n_nan_valid = mask
+            .indexed_iter()
+            .filter(|&((i, j), &v)| v && !unw[(i, j)].is_finite())
+            .count();
+        assert_eq!(
+            n_nan_valid, 0,
+            "valid pixels must not be NaN after the multilook coarse solve"
+        );
+        // And the borrowed levels must be right: rewrap equals the input phase.
+        for ((i, j), &v) in mask.indexed_iter() {
+            if v {
+                let d = (unw[(i, j)] - truth[(i, j)]).abs() % TAU;
+                let d = d.min(TAU - d);
+                assert!(d < 1e-3, "rewrap mismatch at ({i},{j}): {d}");
+            }
+        }
     }
 
     #[test]
