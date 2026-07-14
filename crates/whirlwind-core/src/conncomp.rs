@@ -460,7 +460,13 @@ mod tests {
             mask[(i, n / 2)] = false;
         }
         let mask_view = mask.view();
-        let costs = cost::compute_carballo_costs(igram.view(), corr.view(), 5.0, Some(mask_view), cost::PhaseGradWindow::default());
+        let costs = cost::compute_carballo_costs(
+            igram.view(),
+            corr.view(),
+            5.0,
+            Some(mask_view),
+            cost::PhaseGradWindow::default(),
+        );
         let graph = RectangularGridGraph::new(m + 1, n + 1);
         let residues = residue::compute_with_mask(igram.mapv(|z| z.arg()).view(), Some(mask_view));
         let mut net = Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));
@@ -496,7 +502,13 @@ mod tests {
             }
         }
         let mask_view = mask.view();
-        let costs = cost::compute_carballo_costs(igram.view(), corr.view(), 5.0, Some(mask_view), cost::PhaseGradWindow::default());
+        let costs = cost::compute_carballo_costs(
+            igram.view(),
+            corr.view(),
+            5.0,
+            Some(mask_view),
+            cost::PhaseGradWindow::default(),
+        );
         let graph = RectangularGridGraph::new(m + 1, n + 1);
         let residues = residue::compute_with_mask(igram.mapv(|z| z.arg()).view(), Some(mask_view));
         let mut net = Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));

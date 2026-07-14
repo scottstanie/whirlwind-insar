@@ -33,7 +33,14 @@ fn diagonal_ramp_512_convex() {
     let wrapped = simulate::wrap_phase(&truth);
     let igram = wrapped.mapv(|p| Complex32::new(p.cos(), p.sin()));
     let corr = Array2::<f32>::from_elem(igram.dim(), 0.999);
-    let unw = unwrap_convex(igram.view(), corr.view(), 1.0, None, whirlwind_core::cost::PhaseGradWindow::default()).unwrap();
+    let unw = unwrap_convex(
+        igram.view(),
+        corr.view(),
+        1.0,
+        None,
+        whirlwind_core::cost::PhaseGradWindow::default(),
+    )
+    .unwrap();
     let aligned = align_to_truth(&unw, &truth);
     let err = max_abs_err(&aligned, &truth);
     assert!(
@@ -146,7 +153,14 @@ fn single_source_ssp_keeps_nonnegative_reduced_costs() {
     let (igram, corr) = simulate::simulate_ifg(&truth, &gamma, 4, &mut rng);
 
     // run_full_dijkstra(8) → ssp::run_single_source; debug_assert is active.
-    let unw = whirlwind_core::unwrap_linear(igram.view(), corr.view(), 4.0, None, whirlwind_core::cost::PhaseGradWindow::default()).unwrap();
+    let unw = whirlwind_core::unwrap_linear(
+        igram.view(),
+        corr.view(),
+        4.0,
+        None,
+        whirlwind_core::cost::PhaseGradWindow::default(),
+    )
+    .unwrap();
 
     // Confirm the single-source SSP fallback was actually reached (else the
     // assertion above guards nothing on this input).
@@ -191,8 +205,14 @@ fn masked_band_plane_no_tear() {
     });
     let corr = Array2::from_shape_fn((n, n), |(i, j)| if mask[(i, j)] { 0.999 } else { 0.0 });
 
-    let unw =
-        whirlwind_core::unwrap_linear(igram.view(), corr.view(), 1.0, Some(mask.view()), whirlwind_core::cost::PhaseGradWindow::default()).unwrap();
+    let unw = whirlwind_core::unwrap_linear(
+        igram.view(),
+        corr.view(),
+        1.0,
+        Some(mask.view()),
+        whirlwind_core::cost::PhaseGradWindow::default(),
+    )
+    .unwrap();
 
     // Align on the band's mean offset, then require ZERO cycle error on every
     // valid pixel - the pre-fix solver left ~42% of the band one cycle low.
@@ -262,7 +282,14 @@ fn edge_touching_noisy_scene_no_row_tears() {
         .expect("no seed produced a net frame charge >= 3; scene generator changed");
     assert!(net != 0);
 
-    let unw = whirlwind_core::unwrap_linear(igram.view(), corr.view(), 6.0, None, whirlwind_core::cost::PhaseGradWindow::default()).unwrap();
+    let unw = whirlwind_core::unwrap_linear(
+        igram.view(),
+        corr.view(),
+        6.0,
+        None,
+        whirlwind_core::cost::PhaseGradWindow::default(),
+    )
+    .unwrap();
 
     // Alignment-free banding check: the per-row MEDIAN integer cycle error
     // must be one global constant. Isolated speckle errors cannot move a row
@@ -307,8 +334,14 @@ fn single_source_ssp_bounded_on_zero_cost_masked_sea() {
     // so leftover residues must route across cost-0 masked region in the SSP.
     let mask = Array2::from_shape_fn((m, n), |(i, j)| (i % 16 < 2) || (j % 16 < 2));
 
-    let unw =
-        whirlwind_core::unwrap_linear(igram.view(), corr.view(), 4.0, Some(mask.view()), whirlwind_core::cost::PhaseGradWindow::default()).unwrap();
+    let unw = whirlwind_core::unwrap_linear(
+        igram.view(),
+        corr.view(),
+        4.0,
+        Some(mask.view()),
+        whirlwind_core::cost::PhaseGradWindow::default(),
+    )
+    .unwrap();
     let t = whirlwind_core::primal_dual::last_timings();
     assert!(
         t.ssp_iters > 0,

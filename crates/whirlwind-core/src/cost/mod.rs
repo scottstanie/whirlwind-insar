@@ -1221,7 +1221,7 @@ mod crlb_tests {
 #[cfg(test)]
 mod convex_tests {
     use super::*;
-    use ndarray::{array, Array2};
+    use ndarray::{Array2, array};
 
     /// Rectangular box filter normalizes by its true tap count in each axis and
     /// centers odd windows. A constant field must come back unchanged.
@@ -1242,12 +1242,17 @@ mod convex_tests {
     #[test]
     fn unit_window_equals_raw_gradients() {
         let igram = array![
-            [Complex32::from_polar(1.0, 0.0), Complex32::from_polar(1.0, 0.3)],
-            [Complex32::from_polar(1.0, 0.7), Complex32::from_polar(1.0, 1.1)],
+            [
+                Complex32::from_polar(1.0, 0.0),
+                Complex32::from_polar(1.0, 0.3)
+            ],
+            [
+                Complex32::from_polar(1.0, 0.7),
+                Complex32::from_polar(1.0, 1.1)
+            ],
         ];
         let (raw_dy, raw_dx) = phase_gradients_raw(igram.view());
-        let (s_dy, s_dx) =
-            smooth_phase_gradients(igram.view(), PhaseGradWindow::new(1, 1));
+        let (s_dy, s_dx) = smooth_phase_gradients(igram.view(), PhaseGradWindow::new(1, 1));
         assert_eq!(raw_dy, s_dy);
         assert_eq!(raw_dx, s_dx);
     }
@@ -1265,14 +1270,15 @@ mod convex_tests {
             let ph = if i < m / 2 { 0.0 } else { 0.9 };
             Complex32::from_polar(1.0, ph)
         });
-        let (a_dy, _) =
-            smooth_phase_gradients(igram.view(), PhaseGradWindow::new(9, 1));
-        let (b_dy, _) =
-            smooth_phase_gradients(igram.view(), PhaseGradWindow::new(1, 9));
+        let (a_dy, _) = smooth_phase_gradients(igram.view(), PhaseGradWindow::new(9, 1));
+        let (b_dy, _) = smooth_phase_gradients(igram.view(), PhaseGradWindow::new(1, 9));
         // (9,1) smooths dy over 9 rows; (1,9) smooths dy over 1 row (=raw). The
         // step region must differ between the two.
         let diff: f32 = (&a_dy - &b_dy).iter().map(|v| v.abs()).sum();
-        assert!(diff > 1e-3, "orientation swap should change dy smoothing, diff={diff}");
+        assert!(
+            diff > 1e-3,
+            "orientation swap should change dy smoothing, diff={diff}"
+        );
     }
 
     /// Smooth-phase IG: every smoothed gradient ≈ 0, so every offset
@@ -1283,8 +1289,13 @@ mod convex_tests {
         let n = 16;
         let igram = Array2::from_shape_fn((m, n), |_| Complex32::from_polar(1.0, 0.0));
         let corr = Array2::<f32>::from_elem((m, n), 0.7);
-        let (offsets, weights) =
-            compute_snaphu_smooth_costs(igram.view(), corr.view(), 4.0, None, PhaseGradWindow::default());
+        let (offsets, weights) = compute_snaphu_smooth_costs(
+            igram.view(),
+            corr.view(),
+            4.0,
+            None,
+            PhaseGradWindow::default(),
+        );
 
         // Every offset is zero on a constant-phase IG (smoothed gradient = 0).
         for &o in &offsets {
@@ -1319,8 +1330,13 @@ mod convex_tests {
         // (1) Uniform ramp, 1.0 rad/px along columns: deviation ≈ 0 (raw == mean
         // everywhere but the truncated-box border). Expect very few nonzeros.
         let ramp = Array2::from_shape_fn((m, n), |(_, j)| Complex32::from_polar(1.0, j as f32));
-        let (off_ramp, _) =
-            compute_snaphu_smooth_costs(ramp.view(), corr.view(), 10.0, None, PhaseGradWindow::default());
+        let (off_ramp, _) = compute_snaphu_smooth_costs(
+            ramp.view(),
+            corr.view(),
+            10.0,
+            None,
+            PhaseGradWindow::default(),
+        );
         let nz_ramp = off_ramp.iter().filter(|&&o| o != 0).count();
         assert!(
             nz_ramp <= off_ramp.len() / 5,
@@ -1334,8 +1350,13 @@ mod convex_tests {
         let wall = Array2::from_shape_fn((m, n), |(_, j)| {
             Complex32::from_polar(1.0, if (15..=16).contains(&j) { 3.0 } else { 0.0 })
         });
-        let (off_wall, _) =
-            compute_snaphu_smooth_costs(wall.view(), corr.view(), 10.0, None, PhaseGradWindow::default());
+        let (off_wall, _) = compute_snaphu_smooth_costs(
+            wall.view(),
+            corr.view(),
+            10.0,
+            None,
+            PhaseGradWindow::default(),
+        );
         let nz_wall = off_wall.iter().filter(|&&o| o != 0).count();
         assert!(
             nz_wall > 0,
@@ -1362,8 +1383,13 @@ mod convex_tests {
         mask[(0, 1)] = false;
         mask[(1, 0)] = false;
         mask[(1, 1)] = false;
-        let (offsets, weights) =
-            compute_snaphu_smooth_costs(igram.view(), corr.view(), 4.0, Some(mask.view()), PhaseGradWindow::default());
+        let (offsets, weights) = compute_snaphu_smooth_costs(
+            igram.view(),
+            corr.view(),
+            4.0,
+            Some(mask.view()),
+            PhaseGradWindow::default(),
+        );
         // Some arcs must end up with zero weight (the ones spanning the masked corner).
         let n_zero = weights.iter().filter(|&&w| w == 0).count();
         assert!(

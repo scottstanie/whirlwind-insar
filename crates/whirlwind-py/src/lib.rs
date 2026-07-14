@@ -486,7 +486,13 @@ fn unwrap_linear<'py>(
     let co = corr.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
     let unw = py.detach(|| {
-        whirlwind_core::unwrap_linear(ig, co, nlooks, m, whirlwind_core::cost::PhaseGradWindow::default())
+        whirlwind_core::unwrap_linear(
+            ig,
+            co,
+            nlooks,
+            m,
+            whirlwind_core::cost::PhaseGradWindow::default(),
+        )
     });
     let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(unw.into_pyarray(py))

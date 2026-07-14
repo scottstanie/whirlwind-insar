@@ -328,8 +328,13 @@ mod tests {
         let wrapped = igram.mapv(|z: Complex32| z.arg());
 
         let residues = residue::compute(wrapped.view());
-        let costs =
-            cost::compute_carballo_costs(igram.view(), cor.view(), 4.0, None, cost::PhaseGradWindow::default());
+        let costs = cost::compute_carballo_costs(
+            igram.view(),
+            cor.view(),
+            4.0,
+            None,
+            cost::PhaseGradWindow::default(),
+        );
         let g = RectangularGridGraph::new(m + 1, n + 1);
         let mut net = network::Network::new(&g, residues.view(), &costs);
         crate::primal_dual::run(&g, &mut net, 50);

@@ -308,7 +308,8 @@ pub fn unwrap_grounded(
     let wrapped_phase = igram.mapv(|z| z.arg());
     let residues = residue::compute_with_mask(wrapped_phase.view(), mask);
     // Experimental path: uses the default slope window (not `phase_grad_window`).
-    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask, cost::PhaseGradWindow::default());
+    let costs =
+        cost::compute_carballo_costs(igram, corr, nlooks, mask, cost::PhaseGradWindow::default());
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_with_mask_and_ground(
         &graph,
@@ -524,7 +525,8 @@ pub fn unwrap_reuse(
     // Masked arcs have cost=0 so MCF routes through them freely; post-integration
     // we NaN masked pixels.
     // Experimental path: uses the default slope window (not `phase_grad_window`).
-    let costs = cost::compute_carballo_costs(igram, corr, nlooks, mask, cost::PhaseGradWindow::default());
+    let costs =
+        cost::compute_carballo_costs(igram, corr, nlooks, mask, cost::PhaseGradWindow::default());
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
     let mut net = network::Network::new_reuse_with_mask(&graph, residues.view(), &costs, None);
     primal_dual::run(&graph, &mut net, 50);
