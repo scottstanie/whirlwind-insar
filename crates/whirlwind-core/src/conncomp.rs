@@ -254,6 +254,11 @@ pub struct SnaphuConnCompParams {
     pub min_size_frac: f32,
     /// Keep at most this many components (largest by size). 0 → keep all.
     pub max_ncomps: u32,
+    /// Sliding window for the smoothed-gradient offsets that drive the
+    /// ambiguity-wiggle reliability test (SNAPHU `KPARDPSI`/`KPERPDPSI`). Must
+    /// match the window the phase was solved with for the reliability costs to
+    /// be consistent with the achieved flow.
+    pub phase_grad_window: cost::PhaseGradWindow,
 }
 
 impl Default for SnaphuConnCompParams {
@@ -263,6 +268,7 @@ impl Default for SnaphuConnCompParams {
             min_size_px: 100,
             min_size_frac: 0.0001,
             max_ncomps: 1024,
+            phase_grad_window: cost::PhaseGradWindow::default(),
         }
     }
 }
@@ -309,7 +315,8 @@ pub fn grow_components_snaphu(
 
     // SNAPHU convex per-arc offsets (smoothed-gradient deviation, in
     // nshortcycle units) and weights (inverse Lee variance · COST_SCALE).
-    let (offsets, weights) = cost::compute_snaphu_smooth_costs(igram, corr, nlooks, mask);
+    let (offsets, weights) =
+        cost::compute_snaphu_smooth_costs(igram, corr, nlooks, mask, params.phase_grad_window);
     let g = RectangularGridGraph::new(m + 1, n + 1);
     const NS: i64 = 100; // nshortcycle (matches Network::marginal_cost / cost::NSHORTCYCLE)
 
@@ -453,7 +460,13 @@ mod tests {
             mask[(i, n / 2)] = false;
         }
         let mask_view = mask.view();
-        let costs = cost::compute_carballo_costs(igram.view(), corr.view(), 5.0, Some(mask_view));
+        let costs = cost::compute_carballo_costs(
+            igram.view(),
+            corr.view(),
+            5.0,
+            Some(mask_view),
+            cost::PhaseGradWindow::default(),
+        );
         let graph = RectangularGridGraph::new(m + 1, n + 1);
         let residues = residue::compute_with_mask(igram.mapv(|z| z.arg()).view(), Some(mask_view));
         let mut net = Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));
@@ -489,7 +502,13 @@ mod tests {
             }
         }
         let mask_view = mask.view();
-        let costs = cost::compute_carballo_costs(igram.view(), corr.view(), 5.0, Some(mask_view));
+        let costs = cost::compute_carballo_costs(
+            igram.view(),
+            corr.view(),
+            5.0,
+            Some(mask_view),
+            cost::PhaseGradWindow::default(),
+        );
         let graph = RectangularGridGraph::new(m + 1, n + 1);
         let residues = residue::compute_with_mask(igram.mapv(|z| z.arg()).view(), Some(mask_view));
         let mut net = Network::new_with_mask(&graph, residues.view(), &costs, Some(mask_view));

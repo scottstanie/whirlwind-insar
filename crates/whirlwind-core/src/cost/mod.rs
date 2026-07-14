@@ -41,10 +41,59 @@ pub const CARBALLO_COST_SCALE: f32 = 6.0;
 /// LUT ≤ 300) sit far below it.
 pub const MAX_ARC_COST: f32 = 65_535.0;
 
-/// Compute 7x7 box-filtered phase gradients (vertical & horizontal).
-/// Mode = nearest (edge values replicate).
-pub fn smooth_phase_gradients(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2<f32>) {
-    smooth_phase_gradients_with_mask(igram, None)
+/// Size of the sliding window used to average wrapped phase gradients into the
+/// local mean (non-layover) slope that enters the cost model, expressed in the
+/// two directions *relative to the examined phase difference* — exactly
+/// SNAPHU's `KPARDPSI` / `KPERPDPSI` (and the `phase_grad_window` pair in
+/// snaphu-py). A bigger window smooths the expected slope more (steadier in
+/// high-fringe-rate deformation / topography, but blurs across wrap lines); a
+/// smaller one is more local. The default `(7, 7)` matches SNAPHU.
+///
+/// The window is applied to each gradient array with its orientation swapped
+/// so the *parallel* extent always runs along the gradient's own difference
+/// direction: the vertical (azimuth) gradient is smoothed with `parallel`
+/// rows × `perpendicular` cols, the horizontal (range) gradient with
+/// `perpendicular` rows × `parallel` cols.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhaseGradWindow {
+    /// Extent (pixels) parallel to the examined phase difference (`KPARDPSI`).
+    pub parallel: usize,
+    /// Extent (pixels) perpendicular to the examined phase difference (`KPERPDPSI`).
+    pub perpendicular: usize,
+}
+
+impl Default for PhaseGradWindow {
+    fn default() -> Self {
+        Self {
+            parallel: 7,
+            perpendicular: 7,
+        }
+    }
+}
+
+impl PhaseGradWindow {
+    /// Build a window, panicking if either extent is 0 (SNAPHU's only
+    /// requirement). The Python/CLI wrappers validate before reaching here, so
+    /// this is a defensive backstop.
+    pub fn new(parallel: usize, perpendicular: usize) -> Self {
+        assert!(
+            parallel >= 1 && perpendicular >= 1,
+            "phase_grad_window extents must be >= 1, got ({parallel}, {perpendicular})"
+        );
+        Self {
+            parallel,
+            perpendicular,
+        }
+    }
+}
+
+/// Compute box-filtered phase gradients (vertical & horizontal) with the given
+/// smoothing window. Mode = nearest (edge values replicate).
+pub fn smooth_phase_gradients(
+    igram: ArrayView2<Complex32>,
+    window: PhaseGradWindow,
+) -> (Array2<f32>, Array2<f32>) {
+    smooth_phase_gradients_with_mask(igram, None, window)
 }
 
 /// Raw per-arc wrapped phase gradients (no smoothing).
@@ -94,7 +143,14 @@ pub fn phase_gradients_raw(igram: ArrayView2<Complex32>) -> (Array2<f32>, Array2
 pub fn smooth_phase_gradients_with_mask(
     igram: ArrayView2<Complex32>,
     pixel_mask: Option<ArrayView2<bool>>,
+    window: PhaseGradWindow,
 ) -> (Array2<f32>, Array2<f32>) {
+    // Orientation per gradient: the `parallel` extent runs along the gradient's
+    // own difference direction. Vertical (dy) differences run down rows, so
+    // rows = parallel, cols = perpendicular; horizontal (dx) differences run
+    // along cols, so the axes swap.
+    let (dy_krow, dy_kcol) = (window.parallel, window.perpendicular);
+    let (dx_krow, dx_kcol) = (window.perpendicular, window.parallel);
     let (m, n) = igram.dim();
     // Vertical gradient: angle(igram[i+1, j] * conj(igram[i, j])), shape (m-1, n).
     let mut phase_dy = Array2::<f32>::zeros((m - 1, n));
@@ -122,8 +178,8 @@ pub fn smooth_phase_gradients_with_mask(
         });
 
     let Some(mask) = pixel_mask else {
-        let phase_dy_s = box_filter_2d(phase_dy.view(), 7);
-        let phase_dx_s = box_filter_2d(phase_dx.view(), 7);
+        let phase_dy_s = box_filter_2d(phase_dy.view(), dy_krow, dy_kcol);
+        let phase_dx_s = box_filter_2d(phase_dx.view(), dx_krow, dx_kcol);
         return (phase_dy_s, phase_dx_s);
     };
 
@@ -173,10 +229,10 @@ pub fn smooth_phase_gradients_with_mask(
             }
         });
 
-    let sum_dy = box_filter_2d(phase_dy.view(), 7);
-    let cnt_dy = box_filter_2d(valid_dy.view(), 7);
-    let sum_dx = box_filter_2d(phase_dx.view(), 7);
-    let cnt_dx = box_filter_2d(valid_dx.view(), 7);
+    let sum_dy = box_filter_2d(phase_dy.view(), dy_krow, dy_kcol);
+    let cnt_dy = box_filter_2d(valid_dy.view(), dy_krow, dy_kcol);
+    let sum_dx = box_filter_2d(phase_dx.view(), dx_krow, dx_kcol);
+    let cnt_dx = box_filter_2d(valid_dx.view(), dx_krow, dx_kcol);
 
     // mean = sum / count; both passes already include a /(k^2) factor that
     // cancels, so the ratio is the unbiased mean over valid pixels.
@@ -198,13 +254,18 @@ pub fn smooth_phase_gradients_with_mask(
     (out_dy, out_dx)
 }
 
-/// Separable box filter with size `k` (must be odd), nearest-edge replication.
-/// O(k) per output pixel (no rolling-sum trick - kept simple; cost is ~1% of total).
-pub fn box_filter_2d(a: ArrayView2<f32>, k: usize) -> Array2<f32> {
-    assert!(k % 2 == 1);
-    let half = (k / 2) as isize;
+/// Separable box filter, `krow` taps down columns × `kcol` taps across rows,
+/// nearest-edge replication. Both extents must be >= 1; odd sizes are centered,
+/// even sizes lean one pixel toward higher indices (`lo = (k-1)/2`, `hi = k/2`).
+/// O(krow + kcol) per output pixel (no rolling-sum trick - kept simple; cost is
+/// ~1% of total).
+pub fn box_filter_2d(a: ArrayView2<f32>, krow: usize, kcol: usize) -> Array2<f32> {
+    assert!(krow >= 1 && kcol >= 1);
+    let (lo_c, hi_c) = (((kcol - 1) / 2) as isize, (kcol / 2) as isize);
+    let (lo_r, hi_r) = (((krow - 1) / 2) as isize, (krow / 2) as isize);
     let (m, n) = a.dim();
-    let inv_k = 1.0 / (k as f32);
+    let inv_kc = 1.0 / (kcol as f32);
+    let inv_kr = 1.0 / (krow as f32);
 
     // Horizontal pass: each output row depends only on input row i.
     let mut tmp = Array2::<f32>::zeros((m, n));
@@ -214,11 +275,11 @@ pub fn box_filter_2d(a: ArrayView2<f32>, k: usize) -> Array2<f32> {
         .for_each(|(i, mut row)| {
             for j in 0..n {
                 let mut s = 0.0;
-                for dj in -half..=half {
+                for dj in -lo_c..=hi_c {
                     let jj = ((j as isize + dj).clamp(0, n as isize - 1)) as usize;
                     s += a[(i, jj)];
                 }
-                row[j] = s * inv_k;
+                row[j] = s * inv_kc;
             }
         });
 
@@ -232,11 +293,11 @@ pub fn box_filter_2d(a: ArrayView2<f32>, k: usize) -> Array2<f32> {
         .for_each(|(i, mut row)| {
             for j in 0..n {
                 let mut s = 0.0;
-                for di in -half..=half {
+                for di in -lo_r..=hi_r {
                     let ii = ((i as isize + di).clamp(0, m as isize - 1)) as usize;
                     s += tmp_view[(ii, j)];
                 }
-                row[j] = s * inv_k;
+                row[j] = s * inv_kr;
             }
         });
     out
@@ -253,6 +314,7 @@ pub fn compute_carballo_costs(
     corr: ArrayView2<f32>,
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
+    window: PhaseGradWindow,
 ) -> Vec<i32> {
     let (m_phase, n_phase) = igram.dim();
     let m = m_phase + 1;
@@ -268,7 +330,7 @@ pub fn compute_carballo_costs(
     // `smooth_phase_gradients_with_mask` - removes that implicit fence
     // and worsens 2π block errors on real NISAR data. Kept here for
     // possible future use; not the default.
-    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
+    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram, window);
     // phase_dy_s: (m_phase-1, n_phase) = (m-2, n-1)
     // phase_dx_s: (m_phase, n_phase-1) = (m-1, n-2)
 
@@ -423,8 +485,9 @@ pub fn compute_carballo_costs_parity(
     corr: ArrayView2<f32>,
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
+    window: PhaseGradWindow,
 ) -> Vec<i32> {
-    compute_carballo_costs_parity_impl(igram, corr, nlooks, mask, |c| c)
+    compute_carballo_costs_parity_impl(igram, corr, nlooks, mask, window, |c| c)
 }
 
 /// [`compute_carballo_costs_parity`] emitting the `u16` word `Network` stores
@@ -439,8 +502,9 @@ pub fn compute_carballo_costs_parity_packed(
     corr: ArrayView2<f32>,
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
+    window: PhaseGradWindow,
 ) -> Vec<u16> {
-    compute_carballo_costs_parity_impl(igram, corr, nlooks, mask, |c| {
+    compute_carballo_costs_parity_impl(igram, corr, nlooks, mask, window, |c| {
         assert!(
             (0..=u16::MAX as i32).contains(&c),
             "arc cost {c} outside the u16 range [0, 65535] - the cost builder must clamp"
@@ -449,11 +513,14 @@ pub fn compute_carballo_costs_parity_packed(
     })
 }
 
+// The default `PhaseGradWindow` (7x7) reproduces the Python reference exactly;
+// a non-default window is a deliberate opt-out of bit-for-bit parity.
 fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
     igram: ArrayView2<Complex32>,
     corr: ArrayView2<f32>,
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
+    window: PhaseGradWindow,
     pack: impl Fn(i32) -> T + Sync,
 ) -> Vec<T> {
     let (m_phase, n_phase) = igram.dim();
@@ -462,7 +529,7 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
     let g = RectangularGridGraph::new(m, n);
 
     // Biased (non-mask-aware) smoothing - matches Python's uniform_filter.
-    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
+    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram, window);
 
     let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase));
     cor_dy
@@ -673,7 +740,8 @@ pub fn compute_crlb_costs(
     let g = RectangularGridGraph::new(m, n);
 
     // See note in `compute_carballo_costs` re: biased vs mask-aware smoothing.
-    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram);
+    // CRLB path is experimental and always uses the default slope window.
+    let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram, PhaseGradWindow::default());
 
     // Per-edge inverse variance. For vertical edges (between (i,j) and (i+1,j)),
     // the gradient variance is var(i,j) + var(i+1,j); the weight is 1 / that.
@@ -845,6 +913,7 @@ pub fn compute_snaphu_smooth_costs(
     corr: ArrayView2<f32>,
     nlooks: f32,
     mask: Option<ArrayView2<bool>>,
+    window: PhaseGradWindow,
 ) -> (Vec<i32>, Vec<i32>) {
     use std::f32::consts::PI;
     let (m_phase, n_phase) = igram.dim();
@@ -878,7 +947,7 @@ pub fn compute_snaphu_smooth_costs(
     // not a standalone whole-image solve.
     let (raw_dy, raw_dx) = phase_gradients_raw(igram);
     let (phase_dy_s, phase_dx_s) = {
-        let (sm_dy, sm_dx) = smooth_phase_gradients_with_mask(igram, mask);
+        let (sm_dy, sm_dx) = smooth_phase_gradients_with_mask(igram, mask, window);
         (&raw_dy - &sm_dy, &raw_dx - &sm_dx)
     };
 
@@ -1152,7 +1221,65 @@ mod crlb_tests {
 #[cfg(test)]
 mod convex_tests {
     use super::*;
-    use ndarray::Array2;
+    use ndarray::{Array2, array};
+
+    /// Rectangular box filter normalizes by its true tap count in each axis and
+    /// centers odd windows. A constant field must come back unchanged.
+    #[test]
+    fn box_filter_rectangular_preserves_constant() {
+        let a = Array2::<f32>::from_elem((9, 11), 3.5);
+        for &(kr, kc) in &[(1usize, 1usize), (7, 3), (3, 7), (2, 4), (5, 5)] {
+            let out = box_filter_2d(a.view(), kr, kc);
+            assert_eq!(out.dim(), a.dim());
+            for &v in out.iter() {
+                assert!((v - 3.5).abs() < 1e-5, "kr={kr} kc={kc}: got {v}");
+            }
+        }
+    }
+
+    /// A 1x1 window is a no-op, so `smooth_phase_gradients` reduces to the raw
+    /// gradients.
+    #[test]
+    fn unit_window_equals_raw_gradients() {
+        let igram = array![
+            [
+                Complex32::from_polar(1.0, 0.0),
+                Complex32::from_polar(1.0, 0.3)
+            ],
+            [
+                Complex32::from_polar(1.0, 0.7),
+                Complex32::from_polar(1.0, 1.1)
+            ],
+        ];
+        let (raw_dy, raw_dx) = phase_gradients_raw(igram.view());
+        let (s_dy, s_dx) = smooth_phase_gradients(igram.view(), PhaseGradWindow::new(1, 1));
+        assert_eq!(raw_dy, s_dy);
+        assert_eq!(raw_dx, s_dx);
+    }
+
+    /// The window orientation is swapped between the two gradients: for a purely
+    /// row-varying phase (constant along columns), the horizontal gradient is
+    /// zero and only the vertical gradient's `parallel` (row) extent smooths it,
+    /// so `(par, perp)` and `(perp, par)` generally differ.
+    #[test]
+    fn orientation_swap_is_not_symmetric() {
+        // Phase = f(row): step at row 8, zero horizontal gradient everywhere.
+        let m = 24;
+        let n = 12;
+        let igram = Array2::from_shape_fn((m, n), |(i, _)| {
+            let ph = if i < m / 2 { 0.0 } else { 0.9 };
+            Complex32::from_polar(1.0, ph)
+        });
+        let (a_dy, _) = smooth_phase_gradients(igram.view(), PhaseGradWindow::new(9, 1));
+        let (b_dy, _) = smooth_phase_gradients(igram.view(), PhaseGradWindow::new(1, 9));
+        // (9,1) smooths dy over 9 rows; (1,9) smooths dy over 1 row (=raw). The
+        // step region must differ between the two.
+        let diff: f32 = (&a_dy - &b_dy).iter().map(|v| v.abs()).sum();
+        assert!(
+            diff > 1e-3,
+            "orientation swap should change dy smoothing, diff={diff}"
+        );
+    }
 
     /// Smooth-phase IG: every smoothed gradient ≈ 0, so every offset
     /// should round to 0. Coherence is constant ⇒ uniform weight.
@@ -1162,7 +1289,13 @@ mod convex_tests {
         let n = 16;
         let igram = Array2::from_shape_fn((m, n), |_| Complex32::from_polar(1.0, 0.0));
         let corr = Array2::<f32>::from_elem((m, n), 0.7);
-        let (offsets, weights) = compute_snaphu_smooth_costs(igram.view(), corr.view(), 4.0, None);
+        let (offsets, weights) = compute_snaphu_smooth_costs(
+            igram.view(),
+            corr.view(),
+            4.0,
+            None,
+            PhaseGradWindow::default(),
+        );
 
         // Every offset is zero on a constant-phase IG (smoothed gradient = 0).
         for &o in &offsets {
@@ -1197,7 +1330,13 @@ mod convex_tests {
         // (1) Uniform ramp, 1.0 rad/px along columns: deviation ≈ 0 (raw == mean
         // everywhere but the truncated-box border). Expect very few nonzeros.
         let ramp = Array2::from_shape_fn((m, n), |(_, j)| Complex32::from_polar(1.0, j as f32));
-        let (off_ramp, _) = compute_snaphu_smooth_costs(ramp.view(), corr.view(), 10.0, None);
+        let (off_ramp, _) = compute_snaphu_smooth_costs(
+            ramp.view(),
+            corr.view(),
+            10.0,
+            None,
+            PhaseGradWindow::default(),
+        );
         let nz_ramp = off_ramp.iter().filter(|&&o| o != 0).count();
         assert!(
             nz_ramp <= off_ramp.len() / 5,
@@ -1211,7 +1350,13 @@ mod convex_tests {
         let wall = Array2::from_shape_fn((m, n), |(_, j)| {
             Complex32::from_polar(1.0, if (15..=16).contains(&j) { 3.0 } else { 0.0 })
         });
-        let (off_wall, _) = compute_snaphu_smooth_costs(wall.view(), corr.view(), 10.0, None);
+        let (off_wall, _) = compute_snaphu_smooth_costs(
+            wall.view(),
+            corr.view(),
+            10.0,
+            None,
+            PhaseGradWindow::default(),
+        );
         let nz_wall = off_wall.iter().filter(|&&o| o != 0).count();
         assert!(
             nz_wall > 0,
@@ -1238,8 +1383,13 @@ mod convex_tests {
         mask[(0, 1)] = false;
         mask[(1, 0)] = false;
         mask[(1, 1)] = false;
-        let (offsets, weights) =
-            compute_snaphu_smooth_costs(igram.view(), corr.view(), 4.0, Some(mask.view()));
+        let (offsets, weights) = compute_snaphu_smooth_costs(
+            igram.view(),
+            corr.view(),
+            4.0,
+            Some(mask.view()),
+            PhaseGradWindow::default(),
+        );
         // Some arcs must end up with zero weight (the ones spanning the masked corner).
         let n_zero = weights.iter().filter(|&&w| w == 0).count();
         assert!(

@@ -96,7 +96,13 @@ fn run_one(igram: &Array2<Complex32>, cor: &Array2<f32>, nlooks: f32) -> StageTi
     let residue_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     let t = Instant::now();
-    let costs = cost::compute_carballo_costs(igram.view(), cor.view(), nlooks, None);
+    let costs = cost::compute_carballo_costs(
+        igram.view(),
+        cor.view(),
+        nlooks,
+        None,
+        cost::PhaseGradWindow::default(),
+    );
     let cost_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     let t = Instant::now();

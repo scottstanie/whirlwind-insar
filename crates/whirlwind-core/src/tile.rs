@@ -1789,7 +1789,7 @@ fn unwrap_one_tile_coh(
     let graph = RectangularGridGraph::new(tm + 1, tn + 1);
     // Per-tile reuse solver, corner-safe where the linear Carballo cost stacks
     // flow at steep-signal boundaries.
-    let costs = cost::compute_carballo_costs(ig, co, nlooks, mk);
+    let costs = cost::compute_carballo_costs(ig, co, nlooks, mk, cost::PhaseGradWindow::default());
     let mut net = Network::new_reuse_with_mask(&graph, residues.view(), &costs, mk);
     primal_dual::run(&graph, &mut net, 50);
     let unw = if mk.is_some() {

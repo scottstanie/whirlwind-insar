@@ -485,7 +485,15 @@ fn unwrap_linear<'py>(
     let ig = igram.as_array();
     let co = corr.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
-    let unw = py.detach(|| whirlwind_core::unwrap_linear(ig, co, nlooks, m));
+    let unw = py.detach(|| {
+        whirlwind_core::unwrap_linear(
+            ig,
+            co,
+            nlooks,
+            m,
+            whirlwind_core::cost::PhaseGradWindow::default(),
+        )
+    });
     let unw = unw.map_err(|e| PyValueError::new_err(format!("{e}")))?;
     Ok(unw.into_pyarray(py))
 }
@@ -540,6 +548,7 @@ fn unwrap_linear_ext_costs<'py>(
 #[pyo3(signature = (
     igram, corr, nlooks, unwrapped, mask = None,
     reliability_threshold = 0, min_size_px = 100, max_ncomps = 1024,
+    phase_grad_window = (7, 7),
 ))]
 fn components_snaphu<'py>(
     py: Python<'py>,
@@ -551,16 +560,19 @@ fn components_snaphu<'py>(
     reliability_threshold: i64,
     min_size_px: usize,
     max_ncomps: u32,
+    phase_grad_window: (usize, usize),
 ) -> PyResult<Bound<'py, PyArray2<u32>>> {
     let ig = igram.as_array();
     let co = corr.as_array();
     let unw = unwrapped.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
+    let window = parse_phase_grad_window(phase_grad_window)?;
     let params = whirlwind_core::SnaphuConnCompParams {
         reliability_threshold,
         min_size_px,
         min_size_frac: 0.0001,
         max_ncomps,
+        phase_grad_window: window,
     };
     let out = py.detach(|| whirlwind_core::components_snaphu(ig, co, nlooks, unw, m, params));
     let comps = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
@@ -708,11 +720,30 @@ fn closure_refine_mcf<'py>(
 ///   the default of 50 is a per-edge one-cycle probability of ~2.4e-4.
 /// * ``min_size_px`` - absolute component floor in pixels.
 /// * ``max_ncomps`` - keep at most this many components (largest by size).
+///
+/// Validate a `(parallel, perpendicular)` phase-gradient window tuple and build
+/// the core type, raising `ValueError` (not a Rust panic) on a zero extent.
+fn parse_phase_grad_window(
+    window: (usize, usize),
+) -> PyResult<whirlwind_core::cost::PhaseGradWindow> {
+    let (parallel, perpendicular) = window;
+    if parallel < 1 || perpendicular < 1 {
+        return Err(PyValueError::new_err(format!(
+            "phase_grad_window entries must be >= 1, got ({parallel}, {perpendicular})"
+        )));
+    }
+    Ok(whirlwind_core::cost::PhaseGradWindow {
+        parallel,
+        perpendicular,
+    })
+}
+
 #[pyfunction]
 #[pyo3(name = "_unwrap_native", signature = (
     igram, corr, nlooks, mask = None,
     tile_size = 0, tile_overlap = 0, multilook = 1,
     cost_threshold = 50, min_size_px = 100, max_ncomps = 1024,
+    phase_grad_window = (7, 7),
 ))]
 fn unwrap_native<'py>(
     py: Python<'py>,
@@ -726,10 +757,12 @@ fn unwrap_native<'py>(
     cost_threshold: i32,
     min_size_px: usize,
     max_ncomps: u32,
+    phase_grad_window: (usize, usize),
 ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<u32>>)> {
     let ig = igram.as_array();
     let co = corr.as_array();
     let m = mask.as_ref().map(|m| m.as_array());
+    let window = parse_phase_grad_window(phase_grad_window)?;
     let params = whirlwind_core::ConnCompParams {
         cost_threshold,
         min_size_px,
@@ -747,6 +780,7 @@ fn unwrap_native<'py>(
             tile_overlap,
             multilook,
             params,
+            window,
         )
     });
     let (unw, comps) = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;

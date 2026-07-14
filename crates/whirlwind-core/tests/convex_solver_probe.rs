@@ -363,7 +363,13 @@ fn debug_asserts_or_wrong_on_noisy_ramp() {
     // Mirror unwrap_convex internals so we can also probe the post-solve state.
     let wrapped = igram.mapv(|z: Complex32| z.arg());
     let residues = residue::compute(wrapped.view());
-    let (offsets, weights) = cost::compute_snaphu_smooth_costs(igram.view(), cor.view(), 4.0, None);
+    let (offsets, weights) = cost::compute_snaphu_smooth_costs(
+        igram.view(),
+        cor.view(),
+        4.0,
+        None,
+        cost::PhaseGradWindow::default(),
+    );
     let g = RectangularGridGraph::new(m + 1, n + 1);
     let nf = g.num_forward;
 
@@ -615,8 +621,13 @@ fn negative_cycle_certificate_on_noisy_ramp() {
 
         let wrapped = igram.mapv(|z: Complex32| z.arg());
         let residues = residue::compute(wrapped.view());
-        let (offsets, weights) =
-            cost::compute_snaphu_smooth_costs(igram.view(), cor.view(), 4.0, None);
+        let (offsets, weights) = cost::compute_snaphu_smooth_costs(
+            igram.view(),
+            cor.view(),
+            4.0,
+            None,
+            cost::PhaseGradWindow::default(),
+        );
         let g = RectangularGridGraph::new(m + 1, n + 1);
         let nf = g.num_forward;
 
@@ -686,8 +697,14 @@ fn convex_quality_vs_baseline_on_noisy_ramp() {
         let wrapped = igram.mapv(|z: Complex32| z.arg());
 
         // unwrap_convex
-        let unw_convex =
-            whirlwind_core::unwrap_convex(igram.view(), cor.view(), 4.0, None).unwrap();
+        let unw_convex = whirlwind_core::unwrap_convex(
+            igram.view(),
+            cor.view(),
+            4.0,
+            None,
+            whirlwind_core::cost::PhaseGradWindow::default(),
+        )
+        .unwrap();
         let (frac_c, rms_c) = quality_vs_truth(&unw_convex, &truth);
 
         // flow=0 Itoh baseline: integrate wrapped phase with an all-zero flow.
@@ -777,8 +794,13 @@ fn clean_steep_ramp_cost_under_wraps() {
     let mut rng = rand::rngs::StdRng::seed_from_u64(99);
     let (igram, cor) = simulate::simulate_ifg(&truth, &gamma, 16, &mut rng);
 
-    let (offsets, _weights) =
-        cost::compute_snaphu_smooth_costs(igram.view(), cor.view(), 16.0, None);
+    let (offsets, _weights) = cost::compute_snaphu_smooth_costs(
+        igram.view(),
+        cor.view(),
+        16.0,
+        None,
+        cost::PhaseGradWindow::default(),
+    );
     let nf = offsets.len();
     let kstar_nonzero = offsets
         .iter()
@@ -787,7 +809,14 @@ fn clean_steep_ramp_cost_under_wraps() {
     let maxoff = offsets.iter().map(|o| o.abs()).max().unwrap_or(0);
 
     // Convex unwrap quality on the clean ramp.
-    let unw = whirlwind_core::unwrap_convex(igram.view(), cor.view(), 16.0, None).unwrap();
+    let unw = whirlwind_core::unwrap_convex(
+        igram.view(),
+        cor.view(),
+        16.0,
+        None,
+        whirlwind_core::cost::PhaseGradWindow::default(),
+    )
+    .unwrap();
     let (frac, rms) = quality_vs_truth(&unw, &truth);
 
     eprintln!(
