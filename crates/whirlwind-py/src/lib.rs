@@ -720,6 +720,7 @@ fn closure_refine_mcf<'py>(
 ///   the default of 50 is a per-edge one-cycle probability of ~2.4e-4.
 /// * ``min_size_px`` - absolute component floor in pixels.
 /// * ``max_ncomps`` - keep at most this many components (largest by size).
+///
 /// Validate a `(parallel, perpendicular)` phase-gradient window tuple and build
 /// the core type, raising `ValueError` (not a Rust panic) on a zero extent.
 fn parse_phase_grad_window(
