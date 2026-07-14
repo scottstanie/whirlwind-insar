@@ -37,6 +37,11 @@ def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> floa
     below a target coherence (``1 / sigma2(coherence)``). A guessable way to set
     the knob; see the full docstring in ``whirlwind/__init__.py``."""
 
+def solve_min_coherence_auto(nlooks: float) -> float:
+    """Looks-aware default solve gate: the zero-coherence sample-coherence floor
+    sqrt(pi/(4*nlooks)), clipped to [0.02, 0.18]; 0.177 at nlooks=25."""
+    ...
+
 def unwrap(
     igram: NDArray[np.complex64],
     corr: NDArray[np.float32],
@@ -45,6 +50,7 @@ def unwrap(
     *,
     bridge: bool = ...,
     downsample: int = ...,
+    solve_min_coherence: float | str | None = ...,
     interpolate: bool = ...,
     interp_cutoff: float = ...,
     interp_num_neighbors: int = ...,

@@ -219,6 +219,55 @@ def conncomp_min_coherence_auto(nlooks: float) -> float:
     return min(max(0.32 / (nlooks**0.5), 0.02), 0.30)
 
 
+def _borrow_nearest_level(
+    unw: "NDArray[np.float32]",
+    igram: "NDArray[np.complex64]",
+    solved: "NDArray[np.bool_]",
+    fill: "NDArray[np.bool_]",
+) -> "NDArray[np.float32]":
+    """Give each ``fill`` pixel the 2π level of its nearest ``solved`` pixel.
+
+    Only the integer cycle is borrowed (cf. the ``downsample`` transfer and
+    dolphin's ``interpolate_masked_gaps``); each filled pixel keeps its own
+    wrapped phase, so rewrap stays exact. The nearest-neighbor lookup needs
+    scipy; without it the filled pixels keep cycle 0, with a warning.
+    """
+    tau = np.float32(2 * np.pi)
+    phase = np.angle(igram).astype(np.float32)
+    try:
+        from scipy import ndimage
+    except ImportError:
+        logger.warning(
+            "scipy not available: %d coherence-gated pixels keep their wrapped "
+            "value at cycle 0 (install scipy for the nearest-level fill).",
+            int(fill.sum()),
+        )
+        unw[fill] = phase[fill]
+        return unw
+    idx = ndimage.distance_transform_edt(
+        ~solved, return_distances=False, return_indices=True
+    )
+    nearest_unw = unw[tuple(idx)]
+    k = np.round((nearest_unw - phase) / tau).astype(np.float32)
+    unw[fill] = phase[fill] + tau * k[fill]
+    return unw
+
+
+def solve_min_coherence_auto(nlooks: float) -> float:
+    """Looks-aware default for ``solve_min_coherence``.
+
+    Returns the zero-coherence sample-coherence floor
+    ``E[|coh|; gamma=0] = sqrt(pi / (4 * nlooks))`` (about ``0.886 / sqrt(L)``),
+    clipped to ``[0.02, 0.18]``. A pixel measured at or below this value is
+    statistically indistinguishable from pure noise, so it carries no usable
+    phase information for the solve. At typical looks this lands a little
+    below (more forgiving than) the fixed ``coherence_thresh=0.2`` that
+    isce3's PHASS uses for the same purpose: e.g. ``L=25 -> 0.177``,
+    ``L=80 -> 0.099``.
+    """
+    return min(max((np.pi / (4.0 * nlooks)) ** 0.5, 0.02), 0.18)
+
+
 def unwrap(
     igram: "NDArray[np.complex64]",
     corr: "NDArray[np.float32]",
@@ -227,6 +276,7 @@ def unwrap(
     *,
     bridge: bool = True,
     downsample: int = 1,
+    solve_min_coherence: "float | str | None" = "auto",
     interpolate: bool = False,
     interp_cutoff: float = 0.1,
     interp_num_neighbors: int = 30,
@@ -299,6 +349,23 @@ def unwrap(
         for clean scenes. Note this coherently averages an existing
         interferogram, which is not the same as forming a multilooked
         interferogram from the SLCs.
+    solve_min_coherence : float or "auto" or None, default "auto"
+        Coherence below which pixels are excluded from the MCF solve itself
+        (PHASS-style pixel selection; cf. isce3 Phass ``coherence_thresh=0.2``).
+        Pixels statistically indistinguishable from zero coherence carry no
+        phase information, but MCF's complete-solution contract still routes
+        residue pairings through them, and that through-traffic corrupts the
+        relative 2π levels of the coherent regions between them (measurable
+        as unwrapped-network closure error on phase-linked stacks). Gated
+        pixels are given the 2π level of their nearest solved pixel after the
+        solve — their own wrapped value is preserved, so rewrap stays exact —
+        and are labeled ``0`` in the connected components. ``"auto"`` uses
+        :func:`solve_min_coherence_auto` (the zero-coherence sample-coherence
+        floor ``sqrt(pi/(4*nlooks))``, a little more forgiving than PHASS's
+        fixed 0.2 at typical looks). Pass ``0.2`` for PHASS-equivalent
+        selection, or ``None`` to solve every valid pixel (previous behavior).
+        Applies even when ``interpolate`` is True (pass ``None`` to unwrap
+        interpolated low-coherence phase).
     interpolate : bool, default False
         Spiral persistent-scatterer interpolation pre-pass (the Rust port of
         dolphin's ``interpolation.interpolate``, exposed standalone as
@@ -427,6 +494,29 @@ def unwrap(
         mask = (igram != 0) & (corr > 0)
     mask = np.ascontiguousarray(mask, dtype=bool)
 
+    # PHASS-style solve-domain gating: exclude indistinguishable-from-noise
+    # pixels from the solve. They are re-leveled from their nearest solved
+    # neighbor after the solve and labeled 0 in the connected components.
+    solve_mask = mask
+    gated: "NDArray[np.bool_] | None" = None
+    if solve_min_coherence is not None:
+        gate = (
+            solve_min_coherence_auto(nlooks)
+            if solve_min_coherence == "auto"
+            else float(solve_min_coherence)
+        )
+        if gate > 0:
+            kept = mask & (corr >= gate)
+            if not kept.any():
+                logger.warning(
+                    "solve_min_coherence=%.3g would gate every valid pixel; "
+                    "solving ungated instead.",
+                    gate,
+                )
+            elif (mask & ~kept).any():
+                solve_mask = kept
+                gated = mask & ~kept
+
     if conncomp_sigma is not None:
         import math
 
@@ -462,8 +552,7 @@ def unwrap(
         # Pre-pass produced a fresh array; zero masked pixels so the solver sees
         # the same nodata convention as the original phase.
         ig_solve = np.array(ig_solve, dtype=np.complex64, copy=True)
-        if mask is not None:
-            ig_solve[~mask] = 0
+        ig_solve[~solve_mask] = 0
 
     if conncomp_algorithm not in ("snaphu", "linear"):
         raise ValueError(
@@ -478,7 +567,7 @@ def unwrap(
         ig_solve,
         corr,
         nlooks,
-        mask=mask,
+        mask=solve_mask,
         tile_size=0,
         tile_overlap=0,
         multilook=downsample,
@@ -501,11 +590,16 @@ def unwrap(
         phase_orig = np.angle(igram).astype(np.float32)
         k = np.round((np.asarray(unw_solve) - phase_orig) / tau).astype(np.float32)
         unw = (phase_orig + tau * k).astype(np.float32)
-        if mask is not None:
-            unw[~mask] = 0.0
+        unw[~solve_mask] = 0.0
 
     if bridge:
-        unw = bridge_components(unw, mask)
+        unw = bridge_components(unw, solve_mask)
+
+    # Re-level coherence-gated pixels from their nearest solved neighbor, after
+    # bridging (so island levels are settled first). Each keeps its own wrapped
+    # value; only the 2π cycle is borrowed.
+    if gated is not None:
+        unw = _borrow_nearest_level(unw, igram, solve_mask, gated)
 
     # Connected components. The default "snaphu" grow runs on the FINAL (bridged)
     # unwrapped phase via the convex-cost ambiguity wiggle; it is bridge-invariant
@@ -532,7 +626,7 @@ def unwrap(
             corr,
             nlooks,
             unw,
-            mask,
+            solve_mask,
             reliability_raw,
             min_size_px,
             max_ncomps,
@@ -570,6 +664,7 @@ __all__ = [
     "label_components",
     "num_threads",
     "set_num_threads",
+    "solve_min_coherence_auto",
     "unwrap",
     "unwrap_sparse",
     "wrap_phase",

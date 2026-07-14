@@ -395,3 +395,76 @@ class TestBridge:
         full = np.ones((m, n), dtype=np.bool_)
         same = np.asarray(ww.bridge_components(truth.copy(), full), np.float32)
         np.testing.assert_array_equal(same, truth)
+
+
+class TestSolveCoherenceGate:
+    """PHASS-style solve-domain gating (``solve_min_coherence``)."""
+
+    @staticmethod
+    def _islands_scene(rng=None):
+        """Steep ramp with a pure-noise channel splitting two coherent islands.
+
+        The channel's sample coherence sits at the zero-coherence floor for
+        L=25 (0.177), i.e. below the auto gate, and its phase is uniform
+        noise: exactly the indistinguishable-from-noise ocean the gate is for.
+        """
+        rng = np.random.default_rng(1234) if rng is None else rng
+        m, n = 256, 256
+        y, x = np.ogrid[0:m, 0:n]
+        truth = (0.10 * x + 0.04 * y).astype(np.float32)
+        phase = truth.copy()
+        corr = np.full((m, n), 0.9, dtype=np.float32)
+        channel = slice(m // 2 - 20, m // 2 + 20)
+        phase[channel, :] = rng.uniform(-np.pi, np.pi, (40, n)).astype(np.float32)
+        corr[channel, :] = 0.14
+        igram = np.exp(1j * phase).astype(np.complex64)
+        chan_mask = np.zeros((m, n), dtype=bool)
+        chan_mask[channel, :] = True
+        return igram, corr, truth, chan_mask
+
+    def test_gate_noop_on_clean_scene(self):
+        y, x = np.ogrid[-1:1:128j, -1:1:128j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.full(igram.shape, 0.9, dtype=np.float32)
+        gated, cc_g = ww.unwrap(igram, corr, nlooks=25.0)
+        ungated, cc_u = ww.unwrap(igram, corr, nlooks=25.0, solve_min_coherence=None)
+        np.testing.assert_array_equal(gated, ungated)
+        np.testing.assert_array_equal(cc_g, cc_u)
+
+    def test_gated_pixels_relabeled_and_rewrap_exact(self):
+        igram, corr, truth, chan = self._islands_scene()
+        unw, cc = ww.unwrap(igram, corr, nlooks=25.0, min_size_px=10)
+        # Gated pixels: labeled 0, finite, and rewrap-exact.
+        assert cc[chan].max() == 0
+        assert np.isfinite(unw).all()
+        resid = np.angle(np.exp(1j * (unw - np.angle(igram))))
+        assert np.abs(resid).max() < 1e-3
+        # Both islands are recovered exactly (up to one global 2pi level).
+        keep = ~chan
+        aligned = _align_to_truth(unw[keep], truth[keep])
+        # Each island may sit on its own level; check per island instead.
+        top = _align_to_truth(unw[:108, :], truth[:108, :])
+        bot = _align_to_truth(unw[148:, :], truth[148:, :])
+        np.testing.assert_allclose(top, truth[:108, :], atol=1e-2)
+        np.testing.assert_allclose(bot, truth[148:, :], atol=1e-2)
+        del aligned
+
+    def test_gate_threshold_knob(self):
+        igram, corr, truth, chan = self._islands_scene()
+        # A gate below the channel coherence (0.14) solves the channel too:
+        # identical to disabling the gate.
+        loose, _ = ww.unwrap(igram, corr, nlooks=25.0, solve_min_coherence=0.05)
+        off, _ = ww.unwrap(igram, corr, nlooks=25.0, solve_min_coherence=None)
+        np.testing.assert_array_equal(loose, off)
+
+    def test_gate_all_pixels_falls_back(self):
+        igram, corr, truth, _ = self._islands_scene()
+        unw, _cc = ww.unwrap(igram, corr, nlooks=25.0, solve_min_coherence=0.99)
+        off, _ = ww.unwrap(igram, corr, nlooks=25.0, solve_min_coherence=None)
+        np.testing.assert_array_equal(unw, off)
+
+    def test_auto_formula(self):
+        assert ww.solve_min_coherence_auto(25.0) == pytest.approx(0.17725, abs=1e-4)
+        assert ww.solve_min_coherence_auto(1e6) == 0.02
+        assert ww.solve_min_coherence_auto(1.0) == 0.18
