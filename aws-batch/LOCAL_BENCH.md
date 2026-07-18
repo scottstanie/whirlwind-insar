@@ -139,10 +139,26 @@ python run_local.py --manifest interesting.txt --root /data/ww-bench-timing --wo
 
 ### Interrupting and resuming
 
-Ctrl-C is safe: each job appends to `runs.jsonl` as it finishes. Re-running the
-same command skips everything already recorded as successful. Jobs that failed
-are retried automatically on the next run; `--force` re-runs even the
-successful ones.
+**Ctrl-C stops promptly and resume skips finished work.** Queued jobs are
+cancelled, in-flight ones are terminated, and the runner exits within a second
+(exit code 130). Re-run the exact same command to pick up where it left off.
+
+What gets skipped on a rerun, from two independent sources:
+
+- `runs.jsonl` records with a zero exit status — each job appends its own record
+  the moment it finishes, so an interrupt never loses completed work;
+- any granule whose `results/` directory already holds valid comparison JSON,
+  which covers jobs whose record was lost to a hard `kill -9`.
+
+Jobs that failed or were cut off are retried automatically on the next run.
+`--force` re-runs everything, including successes.
+
+A partial download is never mistaken for a complete one: `compare_gunw.py`
+downloads to a `.part` file and renames only on success, so an interrupted
+transfer is simply restarted.
+
+If a kill lands mid-write, the runner refuses to start and names the truncated
+JSON files — delete those and rerun to redo just those granules.
 
 ## 4. Aggregate
 
