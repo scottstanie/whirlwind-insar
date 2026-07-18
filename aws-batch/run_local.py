@@ -112,7 +112,48 @@ def downloaded_files(data_dir: Path, jid: str) -> list[Path]:
     return [p for p in data_dir.glob(f"{jid}*") if p.is_file()]
 
 
-def run_one(token: str, args: argparse.Namespace, log_lock: threading.Lock) -> dict:
+class Campaign:
+    """Shared state for a run: output serialisation, the record file, and the
+    stop signal + live child processes used to shut down on Ctrl-C."""
+
+    def __init__(self, runs_file):
+        self.lock = threading.Lock()
+        self.runs_file = runs_file
+        self.stop = threading.Event()
+        self.running: dict[str, subprocess.Popen] = {}
+
+    def say(self, msg: str) -> None:
+        with self.lock:
+            print(msg, flush=True)
+
+    def record(self, rec: dict) -> None:
+        """Append a finished job immediately, so an interrupt never loses work
+        that was actually done."""
+        with self.lock:
+            self.runs_file.write(json.dumps(rec) + "\n")
+            self.runs_file.flush()
+
+    def register(self, jid: str, proc: subprocess.Popen) -> None:
+        with self.lock:
+            self.running[jid] = proc
+
+    def unregister(self, jid: str) -> None:
+        with self.lock:
+            self.running.pop(jid, None)
+
+    def halt(self) -> int:
+        """Signal queued jobs to stand down and terminate in-flight ones."""
+        self.stop.set()
+        with self.lock:
+            procs = list(self.running.items())
+            for _, proc in procs:
+                proc.terminate()
+        return len(procs)
+
+
+def run_one(token: str, args: argparse.Namespace, camp: Campaign) -> dict | None:
+    if camp.stop.is_set():
+        return None
     jid = job_id(token)
     out_dir = args.root / "results" / jid
     log_path = args.root / "logs" / f"{jid}.log"
@@ -138,13 +179,13 @@ def run_one(token: str, args: argparse.Namespace, log_lock: threading.Lock) -> d
     env["OMP_NUM_THREADS"] = str(args.threads_per_worker)
 
     started = time.time()
-    with log_lock:
-        print(f"[start] {jid}", flush=True)
+    camp.say(f"[start] {jid}")
 
     with open(log_path, "w") as log:
         log.write(f"# {' '.join(cmd)}\n")
         log.flush()
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env)
+        camp.register(jid, proc)
         timer = None
         if args.timeout:
             timer = threading.Timer(args.timeout, proc.kill)
@@ -154,6 +195,7 @@ def run_one(token: str, args: argparse.Namespace, log_lock: threading.Lock) -> d
         finally:
             if timer is not None:
                 timer.cancel()
+            camp.unregister(jid)
 
     record = {
         "job_id": jid,
@@ -173,13 +215,14 @@ def run_one(token: str, args: argparse.Namespace, log_lock: threading.Lock) -> d
             f.unlink()
             record["deleted_download"] = True
 
-    with log_lock:
-        status = "ok" if proc.returncode == 0 else f"FAIL rc={proc.returncode}"
-        print(
-            f"[{status}] {jid}  {wall_s / 60:.1f} min  "
-            f"peak {peak_bytes / 1e9:.1f} GB  log={log_path}",
-            flush=True,
-        )
+    # Record before returning: if the main loop is interrupted, a job that
+    # actually finished is still marked done and will not be re-downloaded.
+    camp.record(record)
+    status = "ok" if proc.returncode == 0 else f"FAIL rc={proc.returncode}"
+    camp.say(
+        f"[{status}] {jid}  {wall_s / 60:.1f} min  "
+        f"peak {peak_bytes / 1e9:.1f} GB  log={log_path}"
+    )
     return record
 
 
@@ -202,16 +245,40 @@ def preflight(launcher: list[str]) -> str:
     return r.stdout.strip()
 
 
-def load_done(runs_path: Path) -> set[str]:
-    """Job ids that already succeeded, so a rerun can skip them."""
-    if not runs_path.exists():
-        return set()
+def load_done(runs_path: Path, root: Path) -> set[str]:
+    """Job ids to skip on a rerun.
+
+    Two independent sources, so an interrupted campaign never redoes work (and
+    never re-downloads a 2 GB product) it has already finished:
+
+    * ``runs.jsonl`` records with a zero exit status;
+    * a results directory that already holds comparison JSON, which covers jobs
+      whose record was lost -- e.g. a hard ``kill -9`` of the runner.
+    """
     done = set()
-    for line in runs_path.read_text().splitlines():
-        if line.strip():
-            rec = json.loads(line)
-            if rec.get("returncode") == 0:
-                done.add(rec["job_id"])
+    if runs_path.exists():
+        for line in runs_path.read_text().splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                if rec.get("returncode") == 0:
+                    done.add(rec["job_id"])
+    # The comparison JSON is not written atomically, so a hard kill landing
+    # mid-write can truncate one. Surface that instead of treating the job as
+    # finished (which would also break the aggregator later).
+    corrupt = []
+    for js in (root / "results").glob("*/*/*.json"):
+        try:
+            json.loads(js.read_text())
+        except json.JSONDecodeError:
+            corrupt.append(js)
+            continue
+        done.add(js.parents[1].name)
+    if corrupt:
+        listing = "\n".join(f"  {c}" for c in corrupt)
+        raise SystemExit(
+            f"Truncated result JSON from an interrupted job:\n{listing}\n"
+            "Delete these files and rerun to redo those granules."
+        )
     return done
 
 
@@ -294,7 +361,7 @@ def main() -> None:
     tokens = read_manifest(args.manifest)
     if args.limit is not None:
         tokens = tokens[: args.limit]
-    done = set() if args.force else load_done(runs_path)
+    done = set() if args.force else load_done(runs_path, args.root)
     todo = [t for t in tokens if job_id(t) not in done]
 
     cores = os.cpu_count() or 1
@@ -325,28 +392,46 @@ def main() -> None:
         print("Nothing to do.")
         return
 
-    log_lock = threading.Lock()
     t0 = time.time()
     n_ok = 0
-    with (
-        open(runs_path, "a") as runs,
-        ThreadPoolExecutor(max_workers=args.workers) as pool,
-    ):
-        futures = {pool.submit(run_one, t, args, log_lock): t for t in todo}
-        for i, fut in enumerate(as_completed(futures), 1):
-            rec = fut.result()
-            runs.write(json.dumps(rec) + "\n")
-            runs.flush()
-            n_ok += rec["returncode"] == 0
-            with log_lock:
-                print(f"  progress {i}/{len(todo)} ({n_ok} ok)", flush=True)
+    n_done = 0
+    interrupted = False
+    with open(runs_path, "a") as runs:
+        camp = Campaign(runs)
+        pool = ThreadPoolExecutor(max_workers=args.workers)
+        futures = [pool.submit(run_one, t, args, camp) for t in todo]
+        try:
+            for fut in as_completed(futures):
+                rec = fut.result()
+                if rec is None:  # stood down after an interrupt
+                    continue
+                n_done += 1
+                n_ok += rec["returncode"] == 0
+                camp.say(f"  progress {n_done}/{len(todo)} ({n_ok} ok)")
+            pool.shutdown(wait=True)
+        except KeyboardInterrupt:
+            # Without this, the pool would drain the entire remaining queue
+            # before exiting -- hours of work the user asked to stop.
+            interrupted = True
+            n_live = camp.halt()
+            print(
+                f"\nInterrupted: cancelled queued jobs, stopping {n_live} in flight. "
+                "Finished jobs are already recorded; rerun the same command to resume.",
+                flush=True,
+            )
+            for f in futures:
+                f.cancel()
+            pool.shutdown(wait=True, cancel_futures=True)
 
+    verb = "Stopped" if interrupted else "Done"
     print(
-        f"\nDone: {n_ok}/{len(todo)} succeeded in {(time.time() - t0) / 3600:.2f} h\n"
+        f"\n{verb}: {n_ok}/{len(todo)} succeeded in {(time.time() - t0) / 3600:.2f} h\n"
         f"  records -> {runs_path.resolve()}\n"
         f"  next: python aggregate_results.py --root {args.root}",
         flush=True,
     )
+    if interrupted:
+        sys.exit(130)
 
 
 if __name__ == "__main__":
