@@ -13,6 +13,11 @@ ASF download URL, or an `s3://` URI and it fetches the product first.
 - `job-definition.json` — AWS Batch job-definition template (Fargate).
 - `submit_batch.py` — submit one Batch job per product.
 - `sample_granules.txt` — three sample products to start with.
+- **`LOCAL_BENCH.md` — running a large campaign on your own CPU server, no AWS.**
+  Companion scripts: `discover_granules.py` (build a spatially spread granule
+  list from the ASF catalog), `run_local.py` (parallel runner with peak-memory
+  tracking and resume), `aggregate_results.py` (campaign roll-up + plots),
+  `make_synthetic_gunw.py` (offline smoke test).
 - `isce3_integration/` — wiring whirlwind into the isce3 GUNW workflow.
 - `ARCH_COMPARISON.md` — x86_64 vs ARM64: results are identical, ARM64 is cheaper.
 
