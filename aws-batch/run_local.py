@@ -311,8 +311,9 @@ def main() -> None:
         "--compare-arg",
         action="append",
         default=[],
-        help="Extra flag passed through to compare_gunw.py. Repeatable, e.g. "
-        "--compare-arg --plot-downsample --compare-arg 4",
+        help="Extra flag passed through to compare_gunw.py. Repeatable, and "
+        "needs the '=' form for values starting with a dash, e.g. "
+        "--compare-arg=--plot-downsample --compare-arg=4",
     )
     p.add_argument(
         "--delete-after",
