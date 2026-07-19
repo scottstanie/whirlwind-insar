@@ -99,6 +99,13 @@ python run_local.py \
 keeps a ~900 GB manifest inside ~20 GB of working disk. Drop it only if you
 want the products kept for re-runs.
 
+To pass extra flags through to `compare_gunw.py`, use `--compare-arg` — with an
+`=`, since argparse cannot take a value that starts with a dash:
+
+```bash
+python run_local.py ... --compare-arg=--plot-downsample --compare-arg=4
+```
+
 Everything lands under `--root`:
 
 ```
@@ -143,15 +150,24 @@ python run_local.py --manifest interesting.txt --root /data/ww-bench-timing --wo
 cancelled, in-flight ones are terminated, and the runner exits within a second
 (exit code 130). Re-run the exact same command to pick up where it left off.
 
-What gets skipped on a rerun, from two independent sources:
+The skip decision is made **once at startup, before anything is downloaded**,
+and is keyed on the granule name (the manifest entry's filename, minus the
+extension). A granule is skipped if either:
 
-- `runs.jsonl` records with a zero exit status — each job appends its own record
-  the moment it finishes, so an interrupt never loses completed work;
-- any granule whose `results/` directory already holds valid comparison JSON,
-  which covers jobs whose record was lost to a hard `kill -9`.
+- `runs.jsonl` holds a record for it with a zero exit status — each job appends
+  its own record the moment it finishes, so an interrupt never loses completed
+  work; or
+- its `results/` directory already holds valid comparison JSON, which covers
+  jobs whose record was lost to a hard `kill -9`.
 
 Jobs that failed or were cut off are retried automatically on the next run.
 `--force` re-runs everything, including successes.
+
+> **The skip is per granule, not per parameter set.** Any one valid result JSON
+> marks that granule done, so changing `--nlooks` or the crop sizes and rerunning
+> will report "Nothing to do". To re-measure with different settings, either pass
+> `--force` or point `--root` at a fresh directory (a fresh root also keeps the
+> two campaigns' `campaign.csv` files separate, which is usually what you want).
 
 A partial download is never mistaken for a complete one: `compare_gunw.py`
 downloads to a `.part` file and renames only on success, so an interrupted
