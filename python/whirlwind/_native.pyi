@@ -126,6 +126,7 @@ def components_snaphu(
     reliability_threshold: int = ...,
     min_size_px: int = ...,
     max_ncomps: int = ...,
+    phase_grad_window: tuple[int, int] = ...,
 ) -> NDArray[np.uint32]:
     """SNAPHU-like connected components via the convex-cost ambiguity wiggle.
 
