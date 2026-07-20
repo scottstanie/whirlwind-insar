@@ -164,9 +164,11 @@ def bridge_components(
     """Re-level the disconnected regions of an unwrapped phase image.
 
     Integration-component gauge bridging (the ``unwrap(bridge=True)``
-    post-pass): MST over closest-boundary distances rooted at the largest
-    region, each child region shifted by an integer number of cycles read from
-    boundary-local medians. See ``crates/whirlwind-core/src/bridge.rs``.
+    post-pass): a size-monotone tree over closest-boundary distances rooted at
+    the largest region, with every region anchored to its nearest
+    already-processed region of equal or larger size. Each child is shifted by
+    an integer number of cycles read from boundary-local medians. See
+    ``crates/whirlwind-core/src/bridge.rs``.
     """
 
 def interpolate(

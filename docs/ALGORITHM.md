@@ -17,7 +17,7 @@ Wrapped gradients (differences between adjacent pixels) can be locally inconsist
 3. Build coherence-based edge costs using the Carballo/Lee statistical model.
 4. Solve a minimum-cost-flow problem that pairs positive and negative residues through low-cost paths.
 5. Integrate the corrected gradients through the valid mask.
-6. If the valid mask has disconnected regions, apply a bridge post-pass to set their relative $2\pi$ offsets from the unwrapped phase at the region boundaries (a spanning tree rooted at the largest region).
+6. If the valid mask has disconnected regions, apply a bridge post-pass to set their relative $2\pi$ offsets from local phase at the region boundaries (a size-monotone tree in which large regions anchor smaller ones).
 7. Grow SNAPHU-faithful connected-component labels from the final unwrapped phase by the ambiguity-wiggle reliability test.
 
 ## Inputs
@@ -42,6 +42,6 @@ The unwrapped phase is congruent with the wrapped input modulo $2\pi$. Connected
 
 ## Bridge post-pass
 
-If a valid mask splits the scene into disconnected regions, the relative $2\pi$ offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region, then builds a minimum spanning tree over the nearest boundary-pixel pairs (rooted at the largest region) and reads the relative level from the unwrapped phase in a small box at each bridge endpoint, rounding it to an integer number of cycles.
+If a valid mask splits the scene into disconnected regions, the relative $2\pi$ offset between those regions is not observed directly from the wrapped phase. Whirlwind unwraps each region, then visits regions from largest to smallest and anchors each one to the nearest region already processed. It reads the relative level from the unwrapped phase in a small box at each bridge endpoint, rounding it to an integer number of cycles. The size ordering keeps tiny islands from setting the level of large land regions.
 
 Our implementation is a port of isce3's NISAR GUNW bridging algorithm, which borrows from Yunjun, 2019.
