@@ -106,6 +106,20 @@ To pass extra flags through to `compare_gunw.py`, use `--compare-arg` — with a
 python run_local.py ... --compare-arg=--plot-downsample --compare-arg=4
 ```
 
+The comparison wrapper also exposes the main preprocessing A/B controls. Use a
+fresh `--root` (or pass through `--force`) so resumability does not reuse the
+baseline JSON:
+
+```bash
+# Valid low-coherence pixels only; masked water remains masked.
+python run_local.py ... \
+  --compare-arg=--interpolate --compare-arg=--interp-cutoff --compare-arg=0.2
+
+# Coarse solve or Goldstein-informed solve.
+python run_local.py ... --compare-arg=--downsample --compare-arg=4
+python run_local.py ... --compare-arg=--goldstein-alpha --compare-arg=0.7
+```
+
 Everything lands under `--root`:
 
 ```

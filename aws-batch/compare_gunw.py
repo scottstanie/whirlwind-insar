@@ -674,7 +674,9 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
 
         print(
             f"  {label}: running ww.unwrap on shape={ig.shape}, "
-            f"valid={mask.mean():.3f}, nlooks={args.nlooks}",
+            f"valid={mask.mean():.3f}, nlooks={args.nlooks}, "
+            f"downsample={args.downsample}, interpolate={args.interpolate}, "
+            f"goldstein_alpha={args.goldstein_alpha}",
             flush=True,
         )
         # ZERO the phase outside the mask: the production unwrappedPhase is not
@@ -704,7 +706,14 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             coh_solver,
             float(args.nlooks),
             mask,
+            bridge=args.bridge,
+            downsample=args.downsample,
+            interpolate=args.interpolate,
+            interp_cutoff=args.interp_cutoff,
             conncomp_min_coherence=mc,
+            goldstein_alpha=args.goldstein_alpha,
+            goldstein_psize=args.goldstein_psize,
+            phase_grad_window=tuple(args.phase_grad_window),
         )
         runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
@@ -730,6 +739,13 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "crop": label,
                 "pol": pol,
                 "nlooks": args.nlooks,
+                "bridge": args.bridge,
+                "downsample": args.downsample,
+                "interpolate": args.interpolate,
+                "interp_cutoff": args.interp_cutoff,
+                "goldstein_alpha": args.goldstein_alpha,
+                "goldstein_psize": args.goldstein_psize,
+                "phase_grad_window": list(args.phase_grad_window),
                 "conncomp_min_coherence": args.conncomp_min_coherence,
                 "mask_policy": args.mask_policy,
                 "whirlwind_version": getattr(ww, "__version__", "unknown"),
@@ -869,6 +885,49 @@ def parse_args() -> argparse.Namespace:
         "mask). Default 'auto' is whirlwind's gentle looks-aware floor "
         "(0.32/sqrt(nlooks), e.g. 0.08 at 16 looks). Pass a number for a fixed "
         "cutoff, or 'none' to label every unwrapped pixel.",
+    )
+    p.add_argument(
+        "--no-bridge",
+        dest="bridge",
+        action="store_false",
+        help="Disable the disconnected-mask component re-leveling post-pass.",
+    )
+    p.add_argument(
+        "--downsample",
+        type=int,
+        default=1,
+        help="Coarse-solve factor passed to whirlwind.unwrap.",
+    )
+    p.add_argument(
+        "--interpolate",
+        action="store_true",
+        help="Interpolate valid low-coherence pixels before the solve.",
+    )
+    p.add_argument(
+        "--interp-cutoff",
+        type=float,
+        default=0.1,
+        help="Coherence cutoff for --interpolate.",
+    )
+    p.add_argument(
+        "--goldstein-alpha",
+        type=float,
+        default=0.0,
+        help="Goldstein prefilter strength; 0 disables it.",
+    )
+    p.add_argument(
+        "--goldstein-psize",
+        type=int,
+        default=64,
+        help="Goldstein FFT patch size.",
+    )
+    p.add_argument(
+        "--phase-grad-window",
+        type=int,
+        nargs=2,
+        metavar=("PARALLEL", "PERPENDICULAR"),
+        default=(7, 7),
+        help="Local phase-gradient averaging window passed to whirlwind.unwrap.",
     )
     p.add_argument("--pol", default=None, help="Polarization, e.g. HH. Default: first.")
     p.add_argument(
