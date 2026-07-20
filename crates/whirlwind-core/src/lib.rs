@@ -102,7 +102,9 @@ pub enum UnwrapError {
 }
 
 /// Whole-image default phase kernel, read once from `WHIRLWIND_UNWRAP_SOLVER`
-/// ∈ {`linear` (default), `tiled`, `reuse`, `convex`}.
+/// ∈ {`linear` (default), `multi`, `tiled`, `reuse`, `convex`}. `multi` is
+/// the uncapacitated (true Costantini) twin of `linear` - see
+/// [`unwrap_linear_multi`].
 ///
 /// **`linear` is the default** - the verified ww-orig-parity single-tile solver
 /// (`unwrap_linear`; its adaptive PD/SSP fallback drains heavily-masked frames,
@@ -149,6 +151,7 @@ pub fn unwrap_coherence(
     match solver.as_str() {
         "reuse" => unwrap_reuse(igram, corr, nlooks, mask),
         "convex" => unwrap_convex(igram, corr, nlooks, mask, window),
+        "multi" => unwrap_linear_multi(igram, corr, nlooks, mask, window),
         // DEFAULT: the verified single-tile ww-orig-parity linear solver.
         _ => unwrap_linear(igram, corr, nlooks, mask, window),
     }
@@ -400,6 +403,41 @@ pub fn unwrap_linear(
     mask: Option<ArrayView2<bool>>,
     window: cost::PhaseGradWindow,
 ) -> Result<Array2<f32>, UnwrapError> {
+    unwrap_linear_impl(igram, corr, nlooks, mask, window, false)
+}
+
+/// Uncapacitated variant of [`unwrap_linear`] - the true Costantini linear
+/// MCF objective. Reachable via `WHIRLWIND_UNWRAP_SOLVER=multi`.
+///
+/// Same cost model, residues, solver driver, and integration as
+/// [`unwrap_linear`]; the only difference is arc capacity. The capacity-1
+/// network cannot put two units of correction on the same arc, so when
+/// several cycle corrections need to cross the same cheap corridor (e.g. a
+/// low-coherence shear margin beside a steep smooth signal) the extras are
+/// forced onto expensive neighboring arcs, laying stacked parallel cuts.
+/// Here every arc is multi-unit and each unit pays the full arc cost again
+/// (constant marginal - not `unwrap_reuse`'s free-after-first rule), so
+/// shared crossings are chosen whenever they are genuinely cheapest. Costs
+/// stay linear, so the reduced-cost machinery of the parity solver applies
+/// unchanged.
+pub fn unwrap_linear_multi(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    window: cost::PhaseGradWindow,
+) -> Result<Array2<f32>, UnwrapError> {
+    unwrap_linear_impl(igram, corr, nlooks, mask, window, true)
+}
+
+fn unwrap_linear_impl(
+    igram: ArrayView2<Complex32>,
+    corr: ArrayView2<f32>,
+    nlooks: f32,
+    mask: Option<ArrayView2<bool>>,
+    window: cost::PhaseGradWindow,
+    multi: bool,
+) -> Result<Array2<f32>, UnwrapError> {
     let (m, n) = igram.dim();
     if (m, n) != corr.dim() {
         return Err(UnwrapError::ShapeMismatch((m, n), corr.dim()));
@@ -432,7 +470,11 @@ pub fn unwrap_linear(
     // transient on full frames.
     let costs = cost::compute_carballo_costs_parity_packed(igram, corr, nlooks, mask, window);
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = network::Network::new_linear_packed(&graph, residues.view(), costs);
+    let mut net = if multi {
+        network::Network::new_multi_linear_packed(&graph, residues.view(), costs)
+    } else {
+        network::Network::new_linear_packed(&graph, residues.view(), costs)
+    };
     // The network has copied the residues into its excess buffer; free them
     // now so they don't sit alive through the Dijkstra peak.
     drop(residues);
