@@ -172,17 +172,21 @@ impl SlopeGuard {
     /// that frees no more than `budget` of the valid edges, never going below
     /// `threshold_rad`.
     ///
-    /// `edges` pairs each raw gradient array with its per-edge coherence, so
-    /// mask-boundary edges (coherence 0, meaningless gradient) are excluded
-    /// from the distribution exactly as they are excluded from firing.
-    fn resolve(&self, edges: &[(ArrayView2<f32>, ArrayView2<f32>)]) -> ResolvedSlopeGuard {
+    /// `edges` pairs each raw gradient array with its per-edge coherence and an
+    /// optional explicit-validity map. Mask-boundary edges have meaningless
+    /// gradients and are excluded from both the distribution and firing even
+    /// if a caller left their coherence nonzero.
+    fn resolve(
+        &self,
+        edges: &[(ArrayView2<f32>, ArrayView2<f32>, Option<ArrayView2<bool>>)],
+    ) -> ResolvedSlopeGuard {
         let mut threshold_rad = self.threshold_rad;
         if self.budget > 0.0 {
             let mut hist = vec![0_u64; GUARD_HIST_BINS];
             let mut total = 0_u64;
-            for (raw, cor) in edges {
-                ndarray::Zip::from(raw).and(cor).for_each(|&d, &g| {
-                    if g > 1e-9 {
+            for (raw, cor, valid) in edges {
+                ndarray::Zip::indexed(raw).and(cor).for_each(|idx, &d, &g| {
+                    if g > 1e-9 && valid.as_ref().is_none_or(|v| v[idx]) {
                         total += 1;
                         let frac = d.abs() / std::f32::consts::PI;
                         let b = (frac * GUARD_HIST_BINS as f32) as usize;
@@ -228,13 +232,22 @@ impl ResolvedSlopeGuard {
 
     /// Whether the guard fires for the edge at `(i, j)`.
     ///
-    /// `gamma > 0` excludes mask-boundary edges, whose raw gradient is
-    /// meaningless because masked pixels enter the interferogram as `0+0j`.
-    /// PHASS gates its rule the same way (`corr > small` on both endpoints).
+    /// `valid` excludes mask-boundary edges, whose raw gradient is meaningless;
+    /// `gamma > 0` independently excludes zero-information edges. PHASS gates
+    /// its rule the same way (`corr > small` on both endpoints).
     #[inline]
-    fn fires(&self, raw: Option<&ArrayView2<f32>>, i: usize, j: usize, gamma: f32) -> bool {
+    fn fires(
+        &self,
+        raw: Option<&ArrayView2<f32>>,
+        i: usize,
+        j: usize,
+        gamma: f32,
+        valid: bool,
+    ) -> bool {
         match raw {
-            Some(r) => self.enabled() && gamma > 1e-9 && r[(i, j)].abs() >= self.threshold_rad,
+            Some(r) => {
+                self.enabled() && valid && gamma > 1e-9 && r[(i, j)].abs() >= self.threshold_rad
+            }
             None => false,
         }
     }
@@ -759,11 +772,42 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
         out
     });
 
+    // The guard's raw gradient is meaningful only when BOTH endpoint pixels
+    // are valid. Keep this separate from the parity cost mask above: ww-orig
+    // treats only both-invalid arcs as sea, while the guard must also exclude
+    // one-sided mask-boundary arcs. Do not rely on callers zeroing coherence
+    // outside the explicit mask.
+    let guard_valid_dy = raw_dy_v.and_then(|_| {
+        mask.map(|m_| {
+            Array2::<bool>::from_shape_fn((m_phase - 1, n_phase), |(i, j)| {
+                m_[(i, j)] && m_[(i + 1, j)]
+            })
+        })
+    });
+    let guard_valid_dx = raw_dx_v.and_then(|_| {
+        mask.map(|m_| {
+            Array2::<bool>::from_shape_fn((m_phase, n_phase - 1), |(i, j)| {
+                m_[(i, j)] && m_[(i, j + 1)]
+            })
+        })
+    });
+
     // Resolve the guard's per-frame threshold now that the per-edge coherence
     // arrays exist (a budget picks the threshold from the |Δφ| distribution
     // over edges that could actually fire).
     let guard = match (raw_dy_v, raw_dx_v) {
-        (Some(rdy), Some(rdx)) => guard_cfg.resolve(&[(rdy, cor_dy.view()), (rdx, cor_dx.view())]),
+        (Some(rdy), Some(rdx)) => guard_cfg.resolve(&[
+            (
+                rdy,
+                cor_dy.view(),
+                guard_valid_dy.as_ref().map(|v| v.view()),
+            ),
+            (
+                rdx,
+                cor_dx.view(),
+                guard_valid_dx.as_ref().map(|v| v.view()),
+            ),
+        ]),
         _ => ResolvedSlopeGuard::off(),
     };
 
@@ -784,6 +828,8 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
     let cor_dx_v = cor_dx.view();
     let mask_dy_bi_ref = mask_dy_bi.as_ref().map(|a| a.view());
     let mask_dx_bi_ref = mask_dx_bi.as_ref().map(|a| a.view());
+    let guard_valid_dy_ref = guard_valid_dy.as_ref().map(|a| a.view());
+    let guard_valid_dx_ref = guard_valid_dx.as_ref().map(|a| a.view());
 
     let stride_h = g.n - 1;
     let right_body = &mut right_slab[stride_h..];
@@ -805,7 +851,13 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
                     .unwrap_or(false);
                 let (c_rt, c_lt) = if both_invalid {
                     (sea, sea)
-                } else if guard.fires(raw_dy_v.as_ref(), i, j, gamma) {
+                } else if guard.fires(
+                    raw_dy_v.as_ref(),
+                    i,
+                    j,
+                    gamma,
+                    guard_valid_dy_ref.as_ref().is_none_or(|v| v[(i, j)]),
+                ) {
                     match guard.mode {
                         SlopeGuardMode::ZeroCost => (sea, sea),
                         SlopeGuardMode::ZeroSlope => {
@@ -839,7 +891,13 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
                     .unwrap_or(false);
                 let (c_dn, c_up) = if both_invalid {
                     (sea, sea)
-                } else if guard.fires(raw_dx_v.as_ref(), i, j, gamma) {
+                } else if guard.fires(
+                    raw_dx_v.as_ref(),
+                    i,
+                    j,
+                    gamma,
+                    guard_valid_dx_ref.as_ref().is_none_or(|v| v[(i, j)]),
+                ) {
                     match guard.mode {
                         SlopeGuardMode::ZeroCost => (sea, sea),
                         SlopeGuardMode::ZeroSlope => {
@@ -1380,25 +1438,32 @@ mod slope_guard_tests {
         let v = raw.view();
         let g = fixed(1.0);
 
-        assert!(!g.fires(Some(&v), 0, 0, 0.8), "0.5 rad is below threshold");
-        assert!(g.fires(Some(&v), 0, 1, 0.8), "1.5 rad is aliased");
         assert!(
-            g.fires(Some(&v), 1, 0, 0.8),
+            !g.fires(Some(&v), 0, 0, 0.8, true),
+            "0.5 rad is below threshold"
+        );
+        assert!(g.fires(Some(&v), 0, 1, 0.8, true), "1.5 rad is aliased");
+        assert!(
+            g.fires(Some(&v), 1, 0, 0.8, true),
             "guard keys off |dphi|, not sign"
         );
         assert!(
-            !g.fires(Some(&v), 1, 1, 0.8),
+            !g.fires(Some(&v), 1, 1, 0.8, true),
             "0.99 rad is just below a 1.0 threshold"
         );
         // A mask-boundary edge has gamma == 0; its raw gradient is meaningless
         // (masked pixels enter as 0+0j), so the guard must not fire there.
         assert!(
-            !g.fires(Some(&v), 0, 1, 0.0),
+            !g.fires(Some(&v), 0, 1, 0.8, false),
+            "guard must not fire across an explicit mask boundary"
+        );
+        assert!(
+            !g.fires(Some(&v), 0, 1, 0.0, true),
             "guard must not fire on a zero-coherence (mask boundary) edge"
         );
         // Disabled guard never fires, and no raw gradients means no guard.
-        assert!(!fixed(0.0).fires(Some(&v), 0, 1, 0.8));
-        assert!(!g.fires(None, 0, 1, 0.8));
+        assert!(!fixed(0.0).fires(Some(&v), 0, 1, 0.8, true));
+        assert!(!g.fires(None, 0, 1, 0.8, true));
     }
 
     /// The budget picks the threshold from the data so that only the requested
@@ -1422,10 +1487,10 @@ mod slope_guard_tests {
             budget: 0.10,
             mode: SlopeGuardMode::ZeroCost,
         }
-        .resolve(&[(raw.view(), cor.view())]);
+        .resolve(&[(raw.view(), cor.view(), None)]);
         let fired = (0..10)
             .flat_map(|i| (0..10).map(move |j| (i, j)))
-            .filter(|&(i, j)| g.fires(Some(&raw.view()), i, j, 0.8))
+            .filter(|&(i, j)| g.fires(Some(&raw.view()), i, j, 0.8, true))
             .count();
         assert_eq!(fired, 10, "a 10% budget must free the steep decile");
 
@@ -1436,10 +1501,10 @@ mod slope_guard_tests {
             budget: 0.01,
             mode: SlopeGuardMode::ZeroCost,
         }
-        .resolve(&[(raw.view(), cor.view())]);
+        .resolve(&[(raw.view(), cor.view(), None)]);
         let fired_tight = (0..10)
             .flat_map(|i| (0..10).map(move |j| (i, j)))
-            .filter(|&(i, j)| tight.fires(Some(&raw.view()), i, j, 0.8))
+            .filter(|&(i, j)| tight.fires(Some(&raw.view()), i, j, 0.8, true))
             .count();
         assert_eq!(
             fired_tight, 0,
@@ -1453,12 +1518,27 @@ mod slope_guard_tests {
             budget: 0.90,
             mode: SlopeGuardMode::ZeroCost,
         }
-        .resolve(&[(raw.view(), cor.view())]);
+        .resolve(&[(raw.view(), cor.view(), None)]);
         let fired_floored = (0..10)
             .flat_map(|i| (0..10).map(move |j| (i, j)))
-            .filter(|&(i, j)| floored.fires(Some(&raw.view()), i, j, 0.8))
+            .filter(|&(i, j)| floored.fires(Some(&raw.view()), i, j, 0.8, true))
             .count();
         assert_eq!(fired_floored, 10, "the radian floor must bound the budget");
+    }
+
+    #[test]
+    fn budget_excludes_explicit_mask_boundaries_with_nonzero_coherence() {
+        let raw = arr2(&[[0.1_f32, 3.0]]);
+        let cor = arr2(&[[0.8_f32, 0.8]]);
+        let valid = arr2(&[[true, false]]);
+        let g = SlopeGuard {
+            threshold_rad: 0.0,
+            budget: 0.50,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+        .resolve(&[(raw.view(), cor.view(), Some(valid.view()))]);
+
+        assert!(!g.fires(Some(&raw.view()), 0, 1, 0.8, false));
     }
 
     /// The `ZeroSlope` arm must stay *expensive* on a coherent edge - that is
