@@ -136,14 +136,18 @@ Both were plausible, both are **dead** - do not re-investigate without new
 evidence:
 
 1. **The slope estimator / circular mean.** Whirlwind box-averages raw wrapped
-   angles arithmetically (`cost/mod.rs`), which is genuinely wrong near the ±π
-   branch cut. But it understates steep slopes by only **11%** on this frame,
-   and only 2.5% of edges are steep - it cannot explain a 48-point gap. Proven
-   directly by the `zeroslope` guard arm, which re-evaluates the cost at zero
-   slope while keeping coherence weighting: **50.55% vs 50.57% baseline, i.e.
-   nothing.** (The estimator is still worth fixing on its own merits - a
-   complex-domain circular mean is wrap-safe and coherence-weighted - but it is
-   not this bug.)
+   angles arithmetically (`cost/mod.rs`). That is **deliberate** - it matches
+   SNAPHU's estimator, and the resulting pull toward zero across the ±π branch
+   cut is the intended bias, not an oversight. It is worth knowing that the
+   bias exists and is measurable (it understates steep slopes by ~11% on this
+   frame), but it is **not** this bug: only 2.5% of edges are steep, so it
+   cannot explain a 48-point gap, and the `zeroslope` guard arm - which
+   re-evaluates the cost at zero slope while keeping coherence weighting -
+   scores **50.55% vs 50.57% baseline, i.e. nothing**. Whether SNAPHU's
+   bias-toward-zero is the right choice for whirlwind's cost model is a
+   separate open question; a complex-domain circular mean would be wrap-safe
+   and coherence-weighted, but changing it is a deliberate divergence from
+   SNAPHU and should be evaluated as such, not filed as a bug fix.
 2. **A coherence gate** (fire only on coherent edges, so a steep gradient means
    discontinuity rather than noise). Aliased edges are low-coherence in *every*
    frame, including both frames the guard fixes: cryo 0.241 vs 0.381 overall,
@@ -233,8 +237,23 @@ Data: 15 hard frames at
    `budget=0.03` / floor 1.0 defensible as a default. The one thing not yet
    done is a full 1,382-frame campaign re-run, which is the only way to see
    the tail - recommended before flipping the default.
-3. **The circular-mean estimator fix** - a real defect, small effect, worth
-   doing on its own merits and cleanly separable from the guard.
+3. **Should the slope estimator keep SNAPHU's arithmetic mean?** Currently a
+   deliberate SNAPHU match (see above). A complex-domain circular mean is
+   wrap-safe and coherence-weighted; whether its ~11% difference on steep
+   edges helps or hurts is untested. Evaluate as a modelling change, not a fix.
+4. **Interpolating ACROSS masked water.** The interpolator can already smooth
+   over small water bodies so that river-separated regions integrate together
+   without bridging - but two things currently prevent it, both ours rather
+   than inherent. (a) `interpolate.rs` skips pixels whose complex value is
+   exactly 0 ("masked / invalid pixel stays 0"), and `compare_gunw.py` zeroes
+   masked pixels *before* calling `unwrap`, so water is invisible to the
+   interpolator. Dolphin uses the same `ifg != 0` convention but is fed a raw
+   interferogram where water still carries noisy non-zero values, so it does
+   interpolate there. (b) `unwrap()` re-zeroes masked pixels *after*
+   interpolation. Integration already crosses masked regions (masked pixels are
+   NaN'd only afterwards), so filling water with interpolated phase should let
+   the two banks level correctly with no bridge. `max_radius` self-limits this
+   to small bodies - a wide ocean finds no neighbours and stays amplitude-only.
 4. **`143_D_060` is a poor test frame** (production unwraps only 4.7% of it).
    Judge it on imagery, not score.
 5. **Paper angle.** This is a clean ablation showing the cost surface, not the
