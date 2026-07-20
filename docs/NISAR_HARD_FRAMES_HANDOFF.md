@@ -250,11 +250,13 @@ Data: 15 hard frames at
    on the bridge post-pass; `interp_max_radius` bounds the neighbor search. The
    benchmark wrapper exposes the same mode as `--interpolate
    --interp-across-mask`. It remains off by default pending a campaign-scale A/B.
-   On the worst river frame (`008_055_D_073`), an isolated no-bridge run moved
-   per-component agreement from the historical 8.13% to **99.9993%** (99.856%
-   global), proving the interpolated phase itself levels the banks. The full
-   neighbor search took 100 s on the local machine, so the faster bridge remains
-   the appropriate default; this mode is an independent preprocessing A/B.
+   On the worst river frame (`008_055_D_073`), isolated no-bridge agreement
+   improved from 99.8400% to **99.9993%** per component (99.5662% to 99.8560%
+   global), proving the interpolated phase itself levels the banks. The original
+   8.13% campaign score was the old, actively harmful bridge—not the no-bridge
+   control. The full neighbor search took 67–100 s locally versus ~11–12 s for
+   the no-interpolation/bridge paths, so the faster bridge remains the appropriate
+   default; this mode is an independent preprocessing A/B.
 4. **`143_D_060` is a poor test frame** (production unwraps only 4.7% of it).
    Judge it on imagery, not score.
 5. **Paper angle.** This is a clean ablation showing the cost surface, not the
