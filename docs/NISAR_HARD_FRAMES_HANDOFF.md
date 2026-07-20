@@ -225,13 +225,14 @@ Data: 15 hard frames at
 
 ## 4. Open items
 
-1. **13-frame parity gate under the guard** - the baseline is established
-   (0.9891); the `budget-0.03` arm is the last gate before considering any
-   default change. Nothing should become a default until this passes.
-2. **Auto-enable heuristic.** Even with one scene-independent knob the guard is
-   opt-in. A trigger on the aliased-edge fraction is the obvious candidate, but
-   an always-on budget may simply be safe - the measured worst case is
-   −0.25 pp.
+1. **Make the guard the default?** The 13-frame parity gate **passed**:
+   5 frames improved, 8 unchanged, **0 regressed**, worst change −0.01 pp,
+   mean per-comp 98.91% → 98.95%. Every 100% frame stays at 100% and the
+   weakest (`D_075`) improves. On that set the guard is free, not a tradeoff.
+   With the hard frames (worst −0.25 pp, mean +21.28 pp) that makes
+   `budget=0.03` / floor 1.0 defensible as a default. The one thing not yet
+   done is a full 1,382-frame campaign re-run, which is the only way to see
+   the tail - recommended before flipping the default.
 3. **The circular-mean estimator fix** - a real defect, small effect, worth
    doing on its own merits and cleanly separable from the guard.
 4. **`143_D_060` is a poor test frame** (production unwraps only 4.7% of it).

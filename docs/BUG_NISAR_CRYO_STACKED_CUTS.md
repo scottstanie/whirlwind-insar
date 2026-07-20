@@ -351,8 +351,30 @@ aliased edges it stops the budget from overspending, which is why `074`/`077`
 at budget 0.05 reproduce the fixed-1 rad numbers exactly.
 
 Recommended setting: **`WHIRLWIND_SLOPE_GUARD_BUDGET=0.03`,
-`WHIRLWIND_SLOPE_GUARD_RAD=1.0`** (floor). Still opt-in pending the 13-frame
-parity gate.
+`WHIRLWIND_SLOPE_GUARD_RAD=1.0`** (floor).
+
+### 13-frame parity gate: PASSED
+
+The set that established ww-orig equivalence, same arms:
+
+| result | value |
+| ------ | ----: |
+| frames improved | 5 |
+| frames unchanged | 8 |
+| frames **regressed** | **0** |
+| worst change | −0.01 pp |
+| mean change | +0.04 pp |
+| mean per-comp | 98.91% → 98.95% |
+
+Every frame at 100% stays at 100%. The historically weakest frame, `D_075`,
+improves 88.07% → 88.21%; `A_020` improves +0.19 pp; `D_077` +0.11 pp. Nothing
+moves down by more than a rounding step.
+
+So the guard is not a tradeoff on this set - it is free. Combined with the hard
+frames (worst regression −0.25 pp, mean +21.28 pp), `budget=0.03` with a 1 rad
+floor is defensible as a **default**, not just an opt-in mode. Remaining
+judgement call before flipping it: whether to re-run the full 1,382-frame
+campaign first, which is the only way to see the tail.
 
 ### Risk: the guard behaves differently in noise than on a steep margin
 
