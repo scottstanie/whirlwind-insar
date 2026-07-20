@@ -115,6 +115,12 @@ baseline JSON:
 python run_local.py ... \
   --compare-arg=--interpolate --compare-arg=--interp-cutoff --compare-arg=0.2
 
+# Also give narrow masked water bodies a smooth phase path during the solve.
+# The water remains masked in the returned phase and connected components.
+python run_local.py ... \
+  --compare-arg=--interpolate --compare-arg=--interp-across-mask \
+  --compare-arg=--interp-cutoff --compare-arg=0.1
+
 # Coarse solve or Goldstein-informed solve.
 python run_local.py ... --compare-arg=--downsample --compare-arg=4
 python run_local.py ... --compare-arg=--goldstein-alpha --compare-arg=0.7

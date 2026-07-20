@@ -90,6 +90,12 @@ class TestUnwrap:
         with pytest.raises(ValueError):
             ww.unwrap(igram, corr, nlooks=1.0, goldstein_alpha=0)
 
+    def test_interp_across_mask_requires_interpolation(self):
+        igram = np.ones((8, 8), dtype=np.complex64)
+        corr = np.ones((8, 8), dtype=np.float32)
+        with pytest.raises(ValueError, match="requires interpolate=True"):
+            ww.unwrap(igram, corr, nlooks=1.0, interp_across_mask=True)
+
     def test_dtype_preserved(self):
         m, n = 16, 16
         igram = np.ones((m, n), dtype=np.complex64)
@@ -361,6 +367,58 @@ class TestBridge:
 
         assert abs(rel_cycles(off)) >= 1, "expected an unbridged integer gauge error"
         assert rel_cycles(on) == 0, "bridging must re-level the disconnected region"
+
+    def test_interpolation_across_mask_levels_river_without_bridge(self):
+        # Exercise the preprocessing path independently of bridge_components:
+        # a narrow masked river gets a smooth temporary phase, allowing the MCF
+        # integration to carry the same integer gauge to both banks.
+        m = n = 128
+        tau = 2 * np.pi
+        ii, jj = np.mgrid[0:m, 0:n]
+        truth = (ii + jj).astype(np.float32) / n * (tau * 3)
+        igram = np.exp(1j * truth).astype(np.complex64)
+        corr = np.full((m, n), 0.95, np.float32)
+        mask = np.ones((m, n), dtype=np.bool_)
+        mask[:, 62:65] = False
+        igram[~mask] = 0
+        corr[~mask] = 0
+
+        regular, _ = ww.unwrap(
+            igram,
+            corr,
+            nlooks=1.0,
+            mask=mask,
+            bridge=False,
+            interpolate=True,
+            interp_cutoff=0.5,
+            interp_max_radius=10,
+        )
+        across, cc = ww.unwrap(
+            igram,
+            corr,
+            nlooks=1.0,
+            mask=mask,
+            bridge=False,
+            interpolate=True,
+            interp_across_mask=True,
+            interp_cutoff=0.5,
+            interp_max_radius=10,
+        )
+
+        left = mask.copy()
+        left[:, 62:] = False
+        right = mask.copy()
+        right[:, :65] = False
+
+        def rel_cycles(u):
+            al = np.median(np.round((u[left] - truth[left]) / tau))
+            ar = np.median(np.round((u[right] - truth[right]) / tau))
+            return ar - al
+
+        assert abs(rel_cycles(regular)) >= 1
+        assert rel_cycles(across) == 0
+        assert np.all(across[~mask] == 0), "water must remain masked in phase output"
+        assert np.all(cc[~mask] == 0), "water must remain background in conncomps"
 
     def test_bridge_components_public_direct(self):
         # The public bridge_components operates on an unwrapped phase + mask

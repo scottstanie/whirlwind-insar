@@ -3,8 +3,9 @@
 //! weight is below `weight_cutoff`, search outward in concentric circles
 //! (nearest-first) for up to `num_neighbors` high-weight pixels and replace the
 //! phase with a Gaussian-distance-weighted average of their unit phasors; the
-//! amplitude is preserved. Pixels with `weight >= cutoff` (and masked `ifg == 0`)
-//! pass through unchanged.
+//! amplitude is preserved. Pixels with `weight >= cutoff` pass through. Masked
+//! `ifg == 0` pixels normally remain zero, or can be locally filled when the
+//! caller explicitly requests it.
 
 use ndarray::parallel::prelude::*;
 use ndarray::{Array2, ArrayView2, Axis};
@@ -79,6 +80,19 @@ fn circle_idxs(max_radius: usize, min_radius: usize) -> Vec<(i32, i32)> {
 /// Interpolate `ifg` (complex64, `(m, n)`) using per-pixel `weights` in `[0, 1]`.
 /// Returns a complex64 `(m, n)` array with the same amplitude everywhere and
 /// interpolated phase at pixels with `weight < weight_cutoff`. See module docs.
+///
+/// `fill_invalid` controls what happens at pixels whose complex value is exactly
+/// zero - the nodata convention shared with dolphin (`ifg != 0`). Normally they
+/// are skipped and stay zero. Set it to fill them from surrounding valid phase
+/// instead, which is what lets a small water body be smoothed over so the land
+/// on either side integrates as one region rather than needing a bridge. Filled
+/// pixels get UNIT amplitude: they had none to preserve, and only their phase is
+/// meaningful to the unwrapper, but they must not come back as `0+0j` or every
+/// downstream `!= 0` nodata test would still call them invalid.
+///
+/// The fill is self-limiting. A pixel is only filled if the spiral search finds
+/// at least one high-weight neighbour within `max_radius`, so a narrow river or
+/// a small lake fills while the middle of an ocean finds nothing and stays zero.
 #[allow(clippy::too_many_arguments)]
 pub fn interpolate(
     ifg: ArrayView2<Complex32>,
@@ -88,6 +102,7 @@ pub fn interpolate(
     max_radius: usize,
     min_radius: usize,
     alpha: f64,
+    fill_invalid: bool,
 ) -> Array2<Complex32> {
     let (nrow, ncol) = ifg.dim();
     assert_eq!(
@@ -109,10 +124,11 @@ pub fn interpolate(
             let mut cphase = vec![Complex64::new(0.0, 0.0); nn];
             for c0 in 0..ncol {
                 let v = ifg[(r0, c0)];
-                if v.re == 0.0 && v.im == 0.0 {
+                let is_invalid = v.re == 0.0 && v.im == 0.0;
+                if is_invalid && !fill_invalid {
                     continue; // masked / invalid pixel stays 0
                 }
-                if w[(r0, c0)] >= weight_cutoff {
+                if !is_invalid && w[(r0, c0)] >= weight_cutoff {
                     row[c0] = v; // high-weight pixel passes through unchanged
                     continue;
                 }
@@ -134,9 +150,17 @@ pub fn interpolate(
                         }
                     }
                 }
-                let amp = v.norm(); // f32, == np.abs(complex64)
+                // Filled nodata pixels have no amplitude to preserve; give them
+                // a unit phasor so they read as valid to every downstream
+                // `!= 0` nodata test. Otherwise keep the pixel's own amplitude.
+                let amp = if is_invalid { 1.0 } else { v.norm() };
                 if counter == 0 {
-                    row[c0] = Complex32::new(amp, 0.0); // no neighbors: amplitude only
+                    // No high-weight neighbour in range. A nodata pixel stays
+                    // nodata (this is what keeps the fill local to small gaps);
+                    // a valid pixel keeps amplitude with zero phase, as before.
+                    if !is_invalid {
+                        row[c0] = Complex32::new(amp, 0.0);
+                    }
                     continue;
                 }
                 // Gaussian bandwidth set by the farthest collected neighbor.
@@ -169,7 +193,7 @@ mod tests {
         // (0,0) is low-weight too, so the only collected neighbor of (0,2) is the
         // high-weight (0,1); the neighbor check is on WEIGHT, not ifg!=0 (numba).
         let weights = array![[0.1f32, 0.9, 0.1]];
-        let out = interpolate(ifg.view(), weights.view(), 0.5, 20, 10, 0, 0.75);
+        let out = interpolate(ifg.view(), weights.view(), 0.5, 20, 10, 0, 0.75, false);
         // masked (ifg==0) stays 0
         assert_eq!(out[(0, 0)], Complex32::new(0.0, 0.0));
         // high-weight passes through
@@ -183,9 +207,31 @@ mod tests {
     fn no_neighbors_keeps_amplitude() {
         let ifg = array![[Complex32::from_polar(5.0, 2.5)]];
         let weights = array![[0.1f32]];
-        let out = interpolate(ifg.view(), weights.view(), 0.5, 20, 10, 0, 0.75);
+        let out = interpolate(ifg.view(), weights.view(), 0.5, 20, 10, 0, 0.75, false);
         assert!((out[(0, 0)].norm() - 5.0).abs() < 1e-4);
         assert!(out[(0, 0)].im.abs() < 1e-5); // phase 0
+    }
+
+    #[test]
+    fn fill_invalid_is_local_and_reports_support_with_nonzero_output() {
+        let ifg = array![[
+            Complex32::from_polar(2.0, 1.0),
+            Complex32::new(0.0, 0.0),
+            Complex32::new(0.0, 0.0),
+            Complex32::new(0.0, 0.0),
+            Complex32::new(0.0, 0.0),
+        ]];
+        let weights = array![[0.9_f32, 0.0, 0.0, 0.0, 0.0]];
+        let out = interpolate(ifg.view(), weights.view(), 0.5, 20, 3, 0, 0.75, true);
+
+        // Search radii are 1..max_radius, so the two nearby nodata pixels fill
+        // with unit amplitude and the source phase; farther pixels stay zero.
+        for j in 1..=2 {
+            assert!((out[(0, j)].norm() - 1.0).abs() < 1e-5);
+            assert!((out[(0, j)].arg() - 1.0).abs() < 1e-5);
+        }
+        assert_eq!(out[(0, 3)], Complex32::new(0.0, 0.0));
+        assert_eq!(out[(0, 4)], Complex32::new(0.0, 0.0));
     }
 
     #[test]

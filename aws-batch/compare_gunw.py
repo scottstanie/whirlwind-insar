@@ -676,6 +676,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             f"  {label}: running ww.unwrap on shape={ig.shape}, "
             f"valid={mask.mean():.3f}, nlooks={args.nlooks}, "
             f"downsample={args.downsample}, interpolate={args.interpolate}, "
+            f"interp_across_mask={args.interp_across_mask}, "
             f"goldstein_alpha={args.goldstein_alpha}",
             flush=True,
         )
@@ -685,7 +686,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         # [0,1], NaN->0, zero outside mask) so the cost LUT stays well-behaved.
         # The stats below still use the raw ``coh``.
         ig_solver = np.where(mask, ig, 0.0).astype(np.float32)
-        ig_complex = np.exp(1j * ig_solver).astype(np.complex64)
+        ig_complex = np.where(mask, np.exp(1j * ig_solver), 0.0j).astype(np.complex64)
         coh_solver = np.where(mask, np.clip(np.nan_to_num(coh), 0.0, 1.0), 0.0).astype(
             np.float32
         )
@@ -709,6 +710,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             bridge=args.bridge,
             downsample=args.downsample,
             interpolate=args.interpolate,
+            interp_across_mask=args.interp_across_mask,
             interp_cutoff=args.interp_cutoff,
             conncomp_min_coherence=mc,
             goldstein_alpha=args.goldstein_alpha,
@@ -742,6 +744,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "bridge": args.bridge,
                 "downsample": args.downsample,
                 "interpolate": args.interpolate,
+                "interp_across_mask": args.interp_across_mask,
                 "interp_cutoff": args.interp_cutoff,
                 "goldstein_alpha": args.goldstein_alpha,
                 "goldstein_psize": args.goldstein_psize,
@@ -904,6 +907,12 @@ def parse_args() -> argparse.Namespace:
         help="Interpolate valid low-coherence pixels before the solve.",
     )
     p.add_argument(
+        "--interp-across-mask",
+        action="store_true",
+        help="Also interpolate across masked pixels (requires --interpolate); "
+        "useful for narrow water bodies.",
+    )
+    p.add_argument(
         "--interp-cutoff",
         type=float,
         default=0.1,
@@ -955,6 +964,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.interp_across_mask and not args.interpolate:
+        raise SystemExit("--interp-across-mask requires --interpolate")
     tokens = list(args.inputs)
     if args.inputs_file:
         for line in args.inputs_file.read_text().splitlines():

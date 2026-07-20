@@ -234,6 +234,12 @@ struct Cli {
     /// the original wrapped phase, so every per-pixel value is preserved.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     interpolate: bool,
+    /// Also interpolate across pixels excluded by the valid mask. This lets
+    /// narrow masked water bodies carry a smooth phase into the solve while
+    /// remaining masked in the output. Requires `--interpolate`; masked pixels
+    /// are targets only and never serve as interpolation neighbors.
+    #[arg(long, action = clap::ArgAction::SetTrue, requires = "interpolate")]
+    interp_across_mask: bool,
     /// Coherence below which a valid pixel is interpolated (only with
     /// `--interpolate`).
     #[arg(long, default_value_t = 0.1)]
@@ -409,6 +415,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         downsample,
         no_bridge,
         interpolate,
+        interp_across_mask,
         interp_cutoff,
         interp_num_neighbors,
         interp_max_radius,
@@ -612,11 +619,20 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
     // back onto the ORIGINAL wrapped phase below, so every per-pixel value is
     // preserved. Order matches Python: interpolate, then Goldstein.
     let mut ig_solve = igram_orig.clone();
+    let mut solve_mask = mk.clone();
     let mut used_prepass = false;
     if interpolate {
         // Spiral PS interpolator: weights are clamped coherence (NaN -> 0),
         // matching `np.clip(np.nan_to_num(corr), 0, 1)`.
-        let weights = co.mapv(|c| if c.is_nan() { 0.0 } else { c.clamp(0.0, 1.0) });
+        let mut weights = co.mapv(|c| if c.is_nan() { 0.0 } else { c.clamp(0.0, 1.0) });
+        if let Some(m) = &mk {
+            for ((i, j), &valid) in m.indexed_iter() {
+                if !valid {
+                    // Masked pixels may be targets, but never neighbors.
+                    weights[(i, j)] = 0.0;
+                }
+            }
+        }
         ig_solve = whirlwind_core::interpolate::interpolate(
             ig_solve.view(),
             weights.view(),
@@ -625,7 +641,16 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
             interp_max_radius,
             interp_min_radius,
             interp_alpha,
+            interp_across_mask,
         );
+        if interp_across_mask && let Some(m) = &mut solve_mask {
+            // The fill leaves zero wherever no high-weight neighbor exists in
+            // range. Admit only actually filled masked pixels to the solve, so
+            // narrow gaps connect without turning a wide ocean into valid data.
+            for ((i, j), valid) in m.indexed_iter_mut() {
+                *valid = *valid || ig_solve[(i, j)] != Complex32::new(0.0, 0.0);
+            }
+        }
         used_prepass = true;
     }
     if goldstein_alpha > 0.0 {
@@ -633,9 +658,13 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
             whirlwind_core::goldstein::goldstein(ig_solve.view(), goldstein_alpha, goldstein_psize);
         used_prepass = true;
     }
-    if used_prepass && let Some(m) = &mk {
-        // A pre-pass produced a fresh array; zero masked pixels so the solver
-        // sees the same nodata convention as the original phase.
+    if used_prepass
+        && !interp_across_mask
+        && let Some(m) = &mk
+    {
+        // A normal pre-pass preserves the original nodata convention. In the
+        // explicit across-mask mode, keep the interpolated masked phase so it
+        // can connect the valid banks during integration.
         for ((i, j), &valid) in m.indexed_iter() {
             if !valid {
                 ig_solve[(i, j)] = Complex32::new(0.0, 0.0);
@@ -651,7 +680,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         ig_solve.view(),
         co.view(),
         nlooks,
-        mk.as_ref().map(|m| m.view()),
+        solve_mask.as_ref().map(|m| m.view()),
         0,
         0,
         downsample,

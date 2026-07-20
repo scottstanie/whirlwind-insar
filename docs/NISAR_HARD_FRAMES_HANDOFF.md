@@ -241,19 +241,20 @@ Data: 15 hard frames at
    deliberate SNAPHU match (see above). A complex-domain circular mean is
    wrap-safe and coherence-weighted; whether its ~11% difference on steep
    edges helps or hurts is untested. Evaluate as a modelling change, not a fix.
-4. **Interpolating ACROSS masked water.** The interpolator can already smooth
-   over small water bodies so that river-separated regions integrate together
-   without bridging - but two things currently prevent it, both ours rather
-   than inherent. (a) `interpolate.rs` skips pixels whose complex value is
-   exactly 0 ("masked / invalid pixel stays 0"), and `compare_gunw.py` zeroes
-   masked pixels *before* calling `unwrap`, so water is invisible to the
-   interpolator. Dolphin uses the same `ifg != 0` convention but is fed a raw
-   interferogram where water still carries noisy non-zero values, so it does
-   interpolate there. (b) `unwrap()` re-zeroes masked pixels *after*
-   interpolation. Integration already crosses masked regions (masked pixels are
-   NaN'd only afterwards), so filling water with interpolated phase should let
-   the two banks level correctly with no bridge. `max_radius` self-limits this
-   to small bodies - a wide ocean finds no neighbours and stays amplitude-only.
+4. **Interpolating ACROSS masked water - implemented, opt-in.**
+   `interpolate=True, interp_across_mask=True` temporarily gives exact-zero
+   masked nodata unit amplitude, forces masked coherence weights to zero (targets
+   only, never neighbors), and keeps the interpolated masked phase through the
+   solve. Returned phase and connected components remain masked there. This lets
+   narrow river-separated banks share a smooth integration path without relying
+   on the bridge post-pass; `interp_max_radius` bounds the neighbor search. The
+   benchmark wrapper exposes the same mode as `--interpolate
+   --interp-across-mask`. It remains off by default pending a campaign-scale A/B.
+   On the worst river frame (`008_055_D_073`), an isolated no-bridge run moved
+   per-component agreement from the historical 8.13% to **99.9993%** (99.856%
+   global), proving the interpolated phase itself levels the banks. The full
+   neighbor search took 100 s on the local machine, so the faster bridge remains
+   the appropriate default; this mode is an independent preprocessing A/B.
 4. **`143_D_060` is a poor test frame** (production unwraps only 4.7% of it).
    Judge it on imagery, not score.
 5. **Paper angle.** This is a clean ablation showing the cost surface, not the
