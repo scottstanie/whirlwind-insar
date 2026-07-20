@@ -228,6 +228,7 @@ def unwrap(
     bridge: bool = True,
     downsample: int = 1,
     interpolate: bool = False,
+    interp_across_mask: bool = False,
     interp_cutoff: float = 0.1,
     interp_num_neighbors: int = 30,
     interp_max_radius: int = 101,
@@ -311,6 +312,14 @@ def unwrap(
         original wrapped phase, so every per-pixel value the caller passed in is
         preserved. Useful for scenes with isolated low-coherence speckle that
         seeds spurious residues.
+    interp_across_mask : bool, default False
+        Also interpolate pixels excluded by ``mask``. This lets the solver see
+        a smooth phase path across narrow masked water bodies while the returned
+        unwrapped phase and connected components remain masked there. Exact-zero
+        nodata pixels are temporarily given unit amplitude so they can receive an
+        interpolated phase; masked pixels never serve as interpolation neighbors.
+        Requires ``interpolate=True``. ``interp_max_radius`` limits how far each
+        masked pixel searches for valid high-coherence support.
     interp_cutoff : float, default 0.1
         Coherence below which a valid pixel is interpolated (only used when
         ``interpolate`` is True). ``corr`` is used as the weight map.
@@ -409,6 +418,8 @@ def unwrap(
         raise ValueError(
             f"phase_grad_window entries must be >= 1, got {phase_grad_window!r}"
         )
+    if interp_across_mask and not interpolate:
+        raise ValueError("interp_across_mask=True requires interpolate=True")
 
     # NaN inputs are treated as nodata: zero them (so the default mask drops
     # them) and warn, rather than letting a NaN propagate through the solve.
@@ -440,11 +451,16 @@ def unwrap(
     # back onto the ORIGINAL wrapped phase below, so every per-pixel value the
     # caller passed in is preserved.
     ig_solve = igram
+    solve_mask = mask
     if interpolate:
         # Spiral PS interpolator: fill each valid pixel whose coherence is below
         # interp_cutoff from a Gaussian distance-weighted average of nearby
         # high-coherence phasors. `corr` is the weight map.
         weights = np.clip(np.nan_to_num(corr), 0.0, 1.0).astype(np.float32)
+        # Masked pixels may be interpolation targets, but never trustworthy
+        # neighbors. This is explicit rather than relying on callers to zero
+        # their coherence outside the mask.
+        weights[~mask] = 0.0
         ig_solve = np.ascontiguousarray(
             _interpolate(
                 ig_solve,
@@ -454,16 +470,24 @@ def unwrap(
                 interp_max_radius,
                 interp_min_radius,
                 interp_alpha,
+                interp_across_mask,
             ),
             dtype=np.complex64,
         )
+        if interp_across_mask:
+            # The native fill leaves a zero wherever no high-weight neighbor
+            # exists within interp_max_radius. Admit only actually filled water
+            # into the solver mask, so a narrow river connects while the middle
+            # of a wide ocean remains nodata.
+            solve_mask = np.ascontiguousarray(mask | (ig_solve != 0), dtype=bool)
     if goldstein_alpha > 0:
         ig_solve = goldstein(ig_solve, alpha=goldstein_alpha, psize=goldstein_psize)
     if ig_solve is not igram:
-        # Pre-pass produced a fresh array; zero masked pixels so the solver sees
-        # the same nodata convention as the original phase.
+        # A normal pre-pass preserves the original nodata convention. In the
+        # explicit across-mask mode, keep the interpolated masked phase so it
+        # can connect the valid banks during integration.
         ig_solve = np.array(ig_solve, dtype=np.complex64, copy=True)
-        if mask is not None:
+        if mask is not None and not interp_across_mask:
             ig_solve[~mask] = 0
 
     if conncomp_algorithm not in ("snaphu", "linear"):
@@ -479,7 +503,7 @@ def unwrap(
         ig_solve,
         corr,
         nlooks,
-        mask=mask,
+        mask=solve_mask,
         tile_size=0,
         tile_overlap=0,
         multilook=downsample,
@@ -541,6 +565,9 @@ def unwrap(
         )
     else:
         cc = cc_linear
+    if interp_across_mask:
+        cc = np.asarray(cc).copy()
+        cc[~mask] = 0
     return unw, cc
 
 

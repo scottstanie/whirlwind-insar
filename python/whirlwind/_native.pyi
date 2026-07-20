@@ -179,11 +179,14 @@ def interpolate(
     max_radius: int = ...,
     min_radius: int = ...,
     alpha: float = ...,
+    fill_invalid: bool = ...,
 ) -> NDArray[np.complex64]:
     """Spiral PS phase interpolator - Rust port of dolphin ``interpolation.interpolate``.
 
     Replaces low-weight pixels' phase with a Gaussian-distance-weighted average of
-    the nearest ``num_neighbors`` high-weight pixels; amplitude preserved.
+    the nearest ``num_neighbors`` high-weight pixels; amplitude preserved. With
+    ``fill_invalid=True``, supported exact-zero nodata pixels receive
+    unit-amplitude interpolated phasors while unsupported pixels remain zero.
     """
 
 def simulate_ifg(

@@ -173,12 +173,14 @@ fn bridge_components<'py>(
 /// For each valid pixel (``ifg != 0``) with ``weights < weight_cutoff``, replaces
 /// the phase with a Gaussian-distance-weighted average of the nearest
 /// ``num_neighbors`` high-weight pixels' unit phasors (searched in concentric
-/// circles out to ``max_radius``); the amplitude is preserved. High-weight and
-/// masked pixels pass through. Returns a complex64 ``(m, n)`` array.
+/// circles out to ``max_radius``); the amplitude is preserved. High-weight
+/// pixels pass through. Masked pixels stay zero unless ``fill_invalid=True``;
+/// then only masked pixels with a supported neighbor receive a unit-amplitude
+/// interpolated phasor. Returns a complex64 ``(m, n)`` array.
 #[pyfunction]
 #[pyo3(signature = (
     ifg, weights, weight_cutoff = 0.5, num_neighbors = 30,
-    max_radius = 101, min_radius = 0, alpha = 0.75,
+    max_radius = 101, min_radius = 0, alpha = 0.75, fill_invalid = false,
 ))]
 fn interpolate<'py>(
     py: Python<'py>,
@@ -189,6 +191,7 @@ fn interpolate<'py>(
     max_radius: usize,
     min_radius: usize,
     alpha: f64,
+    fill_invalid: bool,
 ) -> Bound<'py, PyArray2<Complex32>> {
     let ig = ifg.as_array();
     let w = weights.as_array();
@@ -201,6 +204,7 @@ fn interpolate<'py>(
             max_radius,
             min_radius,
             alpha,
+            fill_invalid,
         )
     });
     out.into_pyarray(py)

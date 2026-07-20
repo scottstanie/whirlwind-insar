@@ -46,6 +46,7 @@ def unwrap(
     bridge: bool = ...,
     downsample: int = ...,
     interpolate: bool = ...,
+    interp_across_mask: bool = ...,
     interp_cutoff: float = ...,
     interp_num_neighbors: int = ...,
     interp_max_radius: int = ...,
