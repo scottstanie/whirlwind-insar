@@ -322,7 +322,37 @@ so the guard frees at most a few percent of edges, floored around 1 rad. On
 `074`/`077` (2-3% aliased) that selects ~1 rad and keeps both fixes; on
 `143_D_060` (50% aliased) it pushes the threshold toward π, which disables the
 guard exactly where it does harm. One scene-independent knob instead of a
-per-scene radian value. Untested - this is the recommended next experiment.
+per-scene radian value.
+
+### The budget rule, measured
+
+`WHIRLWIND_SLOPE_GUARD_BUDGET` with a 1 rad floor, on the six frames that moved
+under any arm:
+
+| frame | baseline | budget 0.05 | budget 0.03 | best FIXED threshold |
+| ----- | -------: | ----------: | ----------: | -------------------: |
+| 074_A_137 (cryo) | 50.57% | 99.14% | **99.38%** | 99.73% (2.0) |
+| 077_A_036 | 54.83% | 99.26% | **99.26%** | 99.26% (1.0) |
+| 035_D_123 | 59.59% | 94.21% | **94.43%** | 62.98% (1.0) |
+| 143_D_060 | 62.26% | 69.09% | **62.32%** | 25.73% (1.0) ← wrecked |
+| 106_A_036 | 99.83% | 99.64% | 99.65% | 99.44% (2.0) |
+| 127_D_069 | 99.96% | 99.72% | 99.72% | 99.72% (both) |
+
+At budget 0.03: **worst regression −0.25 pp, mean +21.28 pp.** One
+scene-independent knob fixes all three broken frames, leaves the decorrelated
+frame alone instead of destroying it, and regresses the healthy frames less
+than either fixed threshold. `035_D_123` is fixed *only* by the budget rule -
+no fixed threshold got it above 63% - because what it needed was a threshold
+selective enough to free 3% rather than the 12.7% that 1 rad frees there.
+
+The results are stable across 0.03 and 0.05, so this is not knife-edge tuning.
+The radian floor is load-bearing in the other direction: on frames with few
+aliased edges it stops the budget from overspending, which is why `074`/`077`
+at budget 0.05 reproduce the fixed-1 rad numbers exactly.
+
+Recommended setting: **`WHIRLWIND_SLOPE_GUARD_BUDGET=0.03`,
+`WHIRLWIND_SLOPE_GUARD_RAD=1.0`** (floor). Still opt-in pending the 13-frame
+parity gate.
 
 ### Risk: the guard behaves differently in noise than on a steep margin
 
