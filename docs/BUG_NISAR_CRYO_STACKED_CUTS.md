@@ -198,6 +198,147 @@ Capacity is genuinely not the issue: with the PHASS surface even the
 capacity-1 network reaches 99%, and with the Carballo surface the
 uncapacitated solver still splits the glacier.
 
+## The fix: an aliased-gradient validity guard on Carballo (2026-07-20)
+
+The PHASS result above is not the fix to ship - swapping the whole cost surface
+also swaps in squared coherence and the clamp, and it regresses other frames.
+The useful question is *which part of the Carballo cost is wrong here*, and the
+answer is its **domain of validity**, not its shape.
+
+The Carballo arc cost is a log-likelihood ratio `-log(p1/p0)`: the evidence that
+this edge carries a 2π cycle jump, given the locally expected slope. That
+conditioning only means something while the wrapped observation still
+discriminates between hypotheses. Once the true fringe rate passes Nyquist - a
+glacier shear margin - one wrapped difference is consistent with many true
+slopes, the likelihood ratio collapses toward 1, and the honest cost is 0.
+Whirlwind instead reports the model's confident answer, which makes cutting
+*along* the real discontinuity expensive, so the solver lays a cheaper cut
+straight through the smooth interior. That is the -3 cycle block.
+
+`cost::SlopeGuard` encodes exactly that: where the RAW per-edge wrapped `|Δφ|`
+reaches a threshold, the cost is 0. It keys off the raw difference, not the
+smoothed slope, because a box average over a shear margin is diluted by its
+gentle neighbours - precisely where the model stops discriminating. It is gated
+on `gamma > 0` so mask-boundary edges (masked pixels enter as `0+0j`) never
+trigger. Off by default; `WHIRLWIND_SLOPE_GUARD_RAD` / `_MODE` enable it.
+
+Cryo frame, same default solver and pipeline in every arm - only the guard
+changes:
+
+| arm | match | per-comp |
+| --- | ----: | -------: |
+| baseline (guard off) | 52.21% | 50.57% |
+| `zerocost` 0.8 rad | 98.76% | 98.96% |
+| `zerocost` 1.0 rad (PHASS's threshold) | 98.96% | 99.14% |
+| `zerocost` 1.4 rad | 99.41% | 99.57% |
+| **`zerocost` 2.0 rad** | **99.58%** | **99.73%** |
+| `zeroslope` 1.0 rad | 52.17% | 50.55% |
+| *(full PHASS cost surface, for reference)* | *96.76%* | *98.97%* |
+
+Three things to read off this:
+
+1. **The guard beats adopting the PHASS surface wholesale** (99.73% vs 98.97%,
+   and 99.58% vs 96.76% on raw match). The statistically-grounded cost is kept;
+   only its validity domain is declared.
+2. **Higher thresholds are better, safer, and faster** (2.0 rad: best score,
+   fewest edges touched, 26 s vs 30 s baseline). Freeing moderate gradients at
+   0.8 rad discards recoverable signal.
+3. **`zeroslope` does nothing** (50.55% vs 50.57% baseline). This kills the
+   competing hypothesis that the *slope estimator* is at fault. Falling back to
+   the zero-slope cost keeps the coherence weighting, and a coherent flat-slope
+   cut is expensive - so aliased edges stay hard to cut and the block survives.
+   The defect is the model answering confidently out of domain, not answering
+   with a bad slope.
+
+A separate measurement rules out the estimator independently: whirlwind
+box-averages raw wrapped angles (an arithmetic mean of a circular quantity,
+`cost/mod.rs`), which is wrong in principle near the ±π branch cut. On this
+frame it understates steep slopes by only 11%, and just 2.5% of edges exceed
+1 rad, so it cannot explain a 48-point gap. Worth fixing on its own merits
+(a complex-domain circular mean is wrap-safe and coherence-weighted), but it
+is not this bug.
+
+Visual check (`slope-guard/cryo_009_074_A_137/zerocost-2.0/carballo/full.png`):
+the -3 cycle block is gone, the ambiguity difference is blank apart from a thin
+streak along the shear feature itself, and whirlwind returns a single connected
+component covering the frame. No rip artifact.
+
+### Validation on the 15 hard campaign frames
+
+Same harness, `--arms baseline zerocost-1.0 zerocost-2.0`, per-component
+agreement. `prod` = fraction of the frame the production unwrap actually
+labels; `alias` = fraction of valid edges above 1 rad.
+
+| frame | prod | alias | baseline | 1.0 rad | 2.0 rad |
+| ----- | ---: | ----: | -------: | ------: | ------: |
+| 074_A_137 (cryo) | 0.95 | 2.5% | 50.57% | **99.14%** | **99.73%** |
+| 077_A_036 | 0.97 | 2.2% | 54.83% | **99.26%** | 54.16% |
+| 035_D_123 | 0.96 | 12.7% | 59.59% | 62.98% | 60.74% |
+| 143_D_060 | **0.05** | 49.8% | 62.26% | **25.73%** | 69.05% |
+| 015_D_054 | 0.84 | 5.2% | 99.51% | 99.97% | 99.71% |
+| 159_D_056 | 0.93 | 2.6% | 99.46% | 99.95% | 99.62% |
+| 148_A_019 | 0.62 | 21.8% | 99.96% | 99.98% | 99.98% |
+| 106_A_036 | 0.91 | 6.3% | 99.83% | 99.35% | 99.44% |
+| 127_D_069 | 0.97 | 4.7% | 99.96% | 99.72% | 99.72% |
+| 048_D_075 | 0.61 | 16.3% | 99.97% | 99.96% | 99.98% |
+| 033_A_019 / 045_D_052 / 049_A_035 / 055_D_073 / 055_D_071 | ≥0.97 | ≤1.4% | ≥99.92% | unchanged (±0.01) | unchanged |
+
+**A second broken frame is explained by the same mechanism.** `077_A_036` was
+recorded above as "a real within-region solve issue" that only downsampling
+helped (54.83% → 85.33% at 4x). The guard at 1 rad takes it to **99.26%** with
+no downsampling. Two of the campaign's worst frames are one bug.
+
+**But the threshold does not generalize.** 1 rad fixes `077_A_036`; 2 rad does
+nothing for it (54.16%). 2 rad is best on the cryo frame; 1 rad wrecks
+`143_D_060` (62% → 26%). No single radian value is right for all three.
+
+### What actually discriminates: the aliased FRACTION, not coherence
+
+The obvious refinement - fire only on coherent edges, so a steep gradient means
+discontinuity rather than noise - is **wrong**, and the data says so plainly.
+Aliased edges are low-coherence in *every* frame, including the ones the guard
+fixes:
+
+| frame | mean edge coherence | mean coherence of aliased edges | aliased AND γ>0.4 |
+| ----- | ------------------: | ------------------------------: | ----------------: |
+| 074_A_137 (fixed) | 0.381 | 0.241 | 0.6% |
+| 077_A_036 (fixed) | 0.416 | 0.209 | 0.2% |
+| 143_D_060 (broken) | 0.198 | 0.181 | 0.2% |
+
+A coherence gate at 0.4 would fire on 0.6% of the cryo frame instead of 2.5% -
+throwing away most of the fix - while barely changing `143_D_060`. Coherence
+does not separate the good cases from the bad one.
+
+The quantity that does is **how much of the cost field the guard erases**.
+Freeing 2-3% of edges (`074`, `077`) fixes those frames; freeing 50%
+(`143_D_060` at 1 rad) destroys the solve. That damage is real, not a metric
+artifact of the frame's 5% production coverage: the unwrapped field goes
+visibly blotchy and the ambiguity error widens to ±6 cycles
+(`slope-guard-frames/zerocost-1.0/...143_D_060.../carballo/full.png`).
+
+This points at an **aliased-edge budget** rather than a fixed radian threshold:
+pick the threshold per frame as a high quantile of the raw `|Δφ|` distribution,
+so the guard frees at most a few percent of edges, floored around 1 rad. On
+`074`/`077` (2-3% aliased) that selects ~1 rad and keeps both fixes; on
+`143_D_060` (50% aliased) it pushes the threshold toward π, which disables the
+guard exactly where it does harm. One scene-independent knob instead of a
+per-scene radian value. Untested - this is the recommended next experiment.
+
+### Risk: the guard behaves differently in noise than on a steep margin
+
+Freeing an edge is only justified when a large gradient means "real
+discontinuity". Under pure decorrelation `Δφ` is uniform, so `P(|Δφ| ≥ 1) =
+(π−1)/π ≈ 68%` - a noisy frame would have most of its edges freed. Measured
+aliased-edge fraction across the hard set confirms the spread: the cryo frame
+is only 2.5% at 1 rad (a genuinely steep *coherent* margin, the intended
+target), while `143_D_060` (mean coherence 0.243) is **49.8%**, and
+`148_A_019` 21.8%, `048_D_075` 16.3%.
+
+If those frames regress, the principled refinement is a coherence gate - fire
+the guard only where the edge is coherent enough that a steep gradient implies a
+discontinuity rather than noise. In decorrelated areas the Carballo cost is
+already low, so the guard has little to add there anyway.
+
 ### Open questions before shipping anything
 
 - Regression: does the PHASS surface hurt the frames the Carballo cost wins?
@@ -224,4 +365,39 @@ PYTHONPATH=python python aws-batch/compare_gunw.py "$H5" \
   --out-dir cryo-downsample-4 --downsample 4 --force
 PYTHONPATH=python python aws-batch/compare_gunw.py "$H5" \
   --out-dir cryo-interp --interpolate --interp-cutoff 0.1 --force
+```
+
+### Slope guard
+
+The guard is off unless `WHIRLWIND_SLOPE_GUARD_RAD` is set, so it composes with
+any existing entry point:
+
+```bash
+WHIRLWIND_SLOPE_GUARD_RAD=2.0 PYTHONPATH=python \
+  python aws-batch/compare_gunw.py "$H5" --out-dir cryo-guard --force
+```
+
+The A/B tooling reuses `compare_gunw.py`'s cached `full_arrays.npz`, so the
+inputs and the agreement metric are byte-for-byte the benchmark's. Each arm is
+a separate process because `cost::slope_guard()` caches in a `OnceLock`.
+
+```bash
+# threshold sweep on one frame (baseline, 0.8/1.0/1.4/2.0 rad, zeroslope)
+scripts/run_slope_guard_sweep.sh <compare-dir>/<product>/full_arrays.npz <out-dir>
+
+# many frames x arms -> sweep.md + sweep.json with a regression summary
+PYTHONPATH=python python scripts/slope_guard_frame_sweep.py \
+  --compare-dir <compare-dir> --out-dir <out-dir> \
+  --arms baseline zerocost-1.0 zerocost-2.0
+```
+
+The 13-frame parity set has no cached arrays yet; generate them once with
+`compare_gunw.py`, then sweep the cheap way:
+
+```bash
+PYTHONPATH=python python aws-batch/compare_gunw.py \
+  /Volumes/.../nisar_gunw/*.h5 --out-dir <parity-compare-dir> --nlooks 16
+PYTHONPATH=python python scripts/slope_guard_frame_sweep.py \
+  --compare-dir <parity-compare-dir> --out-dir <parity-guard-dir> \
+  --arms baseline zerocost-2.0
 ```
