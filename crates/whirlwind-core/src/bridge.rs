@@ -9,8 +9,9 @@
 //!
 //!  1. Label the integration regions (4-connected components of the valid mask).
 //!  2. For every pair of regions, find the closest boundary-pixel pair.
-//!  3. Build a minimum spanning tree of those distances, rooted at the largest
-//!     region, so each region is referenced through its nearest neighbor.
+//!  3. Visit regions from largest to smallest and attach each one to its nearest
+//!     already-visited (therefore no smaller) region. This keeps a tiny island
+//!     from becoming the phase reference for a much larger landmass.
 //!  4. Walking the tree outward from the root, compare the median unwrapped phase
 //!     in a local box around the two bridge endpoints, round the difference to an
 //!     integer number of cycles, and shift the child region (and, transitively,
@@ -23,8 +24,13 @@ use crate::tile::label_components;
 use ndarray::{Array2, ArrayView2};
 use std::collections::HashMap;
 
-/// Default endpoint-median box half-width (matches `whirlwind._bridge`).
-pub const DEFAULT_RADIUS: usize = 500;
+/// Default endpoint-median box half-width.
+///
+/// A 500-pixel window (the old isce3-derived default) spans several fringes on
+/// ionosphere-heavy NISAR scenes and mistakes the real ramp for an integer gauge
+/// offset. A 32-pixel half-width is still a robust local median (~4K pixels for
+/// two full boxes) without averaging across a macroscopic phase gradient.
+pub const DEFAULT_RADIUS: usize = 32;
 /// Default minimum region size, in pixels, to participate in bridging.
 pub const DEFAULT_MIN_PX: usize = 500;
 /// Default cap on boundary pixels sampled per region for the nearest-pair search.
@@ -82,7 +88,7 @@ pub fn bridge_components(
         return unw.to_owned(); // nothing sizeable to bridge
     }
 
-    // Largest region = MST root; first maximum on a size tie (`max_by_key`
+    // Largest region = tree root; first maximum on a size tie (`max_by_key`
     // would take the last, flipping which region stays put).
     let mut ref_lab = big[0];
     for &lab in &big[1..] {
@@ -124,39 +130,41 @@ pub fn bridge_components(
         }
     }
 
-    // Prim's MST rooted at the reference; record edges in growth order so a
-    // parent is always already corrected when its child is processed.
-    let mut in_tree = vec![false; k];
-    in_tree[ref_idx] = true;
-    let mut edges: Vec<(usize, usize)> = Vec::new(); // (parent_idx, child_idx)
-    for _ in 0..(k - 1) {
-        let mut best: Option<(f64, usize, usize)> = None;
-        for u in 0..k {
-            if !in_tree[u] {
+    // Size-monotone nearest-neighbor tree. Process the largest region first,
+    // then attach each smaller region to its nearest already-processed region.
+    // Besides giving deterministic parent-before-child order, the size monotonicity
+    // is important: a tiny water/river island must never carry its uncertain
+    // phase level into a million-pixel land region, as an ordinary geometric MST
+    // can do when the island happens to make the shortest stepping stone.
+    let mut order: Vec<usize> = (0..k).collect();
+    order.sort_by(|&a, &b| {
+        sizes[big[b] as usize]
+            .cmp(&sizes[big[a] as usize])
+            .then_with(|| a.cmp(&b))
+    });
+    debug_assert_eq!(order[0], ref_idx);
+
+    let mut edges: Vec<(usize, usize)> = Vec::with_capacity(k - 1);
+    for pos in 1..k {
+        let v = order[pos];
+        let mut best: Option<(f64, usize)> = None;
+        for &u in &order[..pos] {
+            if !dist[u][v].is_finite() {
                 continue;
             }
-            for v in 0..k {
-                if in_tree[v] || !dist[u][v].is_finite() {
-                    continue;
-                }
-                if best.is_none() || dist[u][v] < best.unwrap().0 {
-                    best = Some((dist[u][v], u, v));
-                }
+            if best.is_none() || dist[u][v] < best.unwrap().0 {
+                best = Some((dist[u][v], u));
             }
         }
-        match best {
-            Some((_, u, v)) => {
-                in_tree[v] = true;
-                edges.push((u, v));
-            }
-            None => break, // graph not fully connected (shouldn't happen for a clique)
+        if let Some((_, u)) = best {
+            edges.push((u, v));
         }
     }
 
     let mut out = unw.to_owned();
-    // Cap the endpoint-median box to a scene-relative size so the window is
-    // ~500 px on a NISAR-sized frame but shrinks on small frames; a box that
-    // grows to a large fraction of the frame reintroduces within-region ramp.
+    // Cap an explicitly requested endpoint window to a scene-relative size; a
+    // box that grows to a large fraction of the frame reintroduces the
+    // within-region ramp. The 32-pixel default is below this cap on full scenes.
     let r = radius.min((m.min(n) / 8).max(16));
     for &(u_idx, v_idx) in &edges {
         // Recover (parent endpoint, child endpoint) from the a<b storage order.
@@ -365,5 +373,62 @@ mod tests {
         assert_eq!(slab_shift(0, 8), 0, "region A");
         assert_eq!(slab_shift(10, 14), -1, "region B");
         assert_eq!(slab_shift(16, 20), -2, "region C");
+    }
+
+    #[test]
+    fn local_default_does_not_turn_a_ramp_into_a_gauge_jump() {
+        // The old 500-pixel endpoint window (scene-capped to 128 here) averages
+        // far enough into each side that this ordinary ramp exceeds half a
+        // cycle between the two medians. The local default must still recover
+        // the child's injected +1-cycle gauge offset.
+        let (m, n) = (1024usize, 1024usize);
+        let mut unw = Array2::<f32>::zeros((m, n));
+        let mut mask = Array2::<bool>::from_elem((m, n), true);
+        for i in 0..m {
+            for j in 0..n {
+                if (550..553).contains(&j) {
+                    mask[(i, j)] = false;
+                    continue;
+                }
+                let truth = 0.03 * j as f32;
+                unw[(i, j)] = truth + if j >= 553 { TAU } else { 0.0 };
+            }
+        }
+
+        let out = bridge_components(unw.view(), Some(mask.view()), DEFAULT_RADIUS, 1, 2000);
+        assert!((out[(512, 800)] - 0.03 * 800.0).abs() < 1e-3);
+
+        let too_wide = bridge_components(unw.view(), Some(mask.view()), 500, 1, 2000);
+        assert!((too_wide[(512, 800)] - 0.03 * 800.0).abs() > 6.0);
+    }
+
+    #[test]
+    fn small_region_cannot_anchor_a_larger_region() {
+        // A tiny stepping-stone region is closer to each slab than the slabs are
+        // to one another. A geometric MST would route the right slab through it;
+        // the island's one-cycle internal ramp would then shift the whole slab.
+        // The size-monotone tree attaches the two large slabs first.
+        let (m, n) = (20usize, 15usize);
+        let mut unw = Array2::<f32>::zeros((m, n));
+        let mut mask = Array2::<bool>::from_elem((m, n), false);
+        for i in 0..m {
+            for j in 0..6 {
+                mask[(i, j)] = true; // 120-pixel reference slab
+            }
+            for j in 10..15 {
+                mask[(i, j)] = true; // 100-pixel child slab
+            }
+        }
+        mask[(10, 7)] = true;
+        mask[(10, 8)] = true;
+        unw[(10, 7)] = 0.0;
+        unw[(10, 8)] = TAU;
+
+        let out = bridge_components(unw.view(), Some(mask.view()), 0, 1, 2000);
+        for i in 0..m {
+            for j in 10..15 {
+                assert_eq!(out[(i, j)], 0.0, "large child shifted at ({i},{j})");
+            }
+        }
     }
 }
