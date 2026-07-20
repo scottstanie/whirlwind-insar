@@ -43,6 +43,15 @@ pub struct Network {
     /// Prototype path - see `solver_reuse` history and `unwrap_reuse`.
     pub reuse_mode: bool,
 
+    /// Uncapacitated linear mode (true Costantini MCF): every arc is
+    /// multi-unit and every unit pays the full linear arc cost again
+    /// (constant marginal - unlike `reuse_mode`'s free-after-first rule).
+    /// Forward arcs never saturate; the undo (transpose) direction is
+    /// residual exactly while `flow_count > 0`. Because costs stay linear,
+    /// the whole reduced-cost/potential machinery of the parity solvers
+    /// applies unchanged - see `unwrap_linear_multi`.
+    pub multi_mode: bool,
+
     /// SNAPHU-style convex cost mode: cost is parabolic in flow per arc,
     /// `c_e(k) = weights[e] · (k · 100 − offsets[e])²`. Dial uses the
     /// *marginal* cost (cost of pushing one more unit at current flow)
@@ -268,6 +277,7 @@ impl Network {
             // reuse/convex constructors allocate it after flipping their flag.
             flow_count: Vec::new(),
             reuse_mode: false,
+            multi_mode: false,
             convex_mode: false,
             offsets: Vec::new(),
             weights: Vec::new(),
@@ -358,6 +368,7 @@ impl Network {
             is_saturated: sat,
             flow_count: Vec::new(),
             reuse_mode: false,
+            multi_mode: false,
             convex_mode: false,
             offsets: Vec::new(),
             weights: Vec::new(),
@@ -370,6 +381,27 @@ impl Network {
             node_to_ground_idx: Vec::new(),
         };
         net.mark_gutter_multi_unit(g);
+        net
+    }
+
+    /// Build an UNCAPACITATED linear network (true Costantini MCF) taking
+    /// ownership of already-packed `u16` forward costs.
+    ///
+    /// Identical to [`Network::new_linear_packed`] except `multi_mode` is set:
+    /// arcs are multi-unit, and every unit of flow pays the full linear arc
+    /// cost again (constant marginal cost). This removes the capacity-1
+    /// restriction that forces parallel corrections onto separate arcs - on
+    /// steep or corridor-constrained scenes the unit-capacity optimum must
+    /// spread cuts across neighboring arcs, while the uncapacitated optimum
+    /// lets them share the cheapest crossing. See `unwrap_linear_multi`.
+    pub fn new_multi_linear_packed(
+        g: &RectangularGridGraph,
+        residues: ArrayView2<i32>,
+        cost_fwd: Vec<u16>,
+    ) -> Self {
+        let mut net = Self::new_linear_packed(g, residues, cost_fwd);
+        net.multi_mode = true;
+        net.flow_count = vec![0_i32; net.num_forward()];
         net
     }
 
@@ -474,6 +506,7 @@ impl Network {
             // reuse/convex constructors allocate it after flipping their flag.
             flow_count: Vec::new(),
             reuse_mode: false,
+            multi_mode: false,
             convex_mode: false,
             offsets: Vec::new(),
             weights: Vec::new(),
@@ -855,7 +888,7 @@ impl Network {
     pub fn arc_flow<G: ResidualGraph>(&self, _g: &G, arc: usize) -> i32 {
         let nf = self.num_forward();
         let fwd = if arc < nf { arc } else { arc - nf };
-        if self.reuse_mode || self.convex_mode {
+        if self.reuse_mode || self.convex_mode || self.multi_mode {
             return self.flow_count[fwd];
         }
         let rev = fwd + nf;
@@ -913,6 +946,27 @@ impl Network {
             self.is_saturated.set(t, false);
             // Deliberately do NOT set is_saturated[arc] = true. Multi-unit
             // capacity is what makes both reuse and convex modes work.
+        } else if self.multi_mode {
+            let nf = self.num_forward();
+            if arc < nf {
+                // Uncapacitated forward push: the arc stays available at its
+                // full linear cost for every further unit; the transpose
+                // becomes residual (undo at -cost) while flow remains.
+                self.flow_count[arc] += 1;
+                self.is_saturated.set(arc + nf, false);
+            } else {
+                // Undo push: residual only while the forward arc carries
+                // flow, so its negative cost can never be pocketed twice.
+                let fwd = arc - nf;
+                debug_assert!(
+                    self.flow_count[fwd] > 0,
+                    "multi_mode undo push on arc {fwd} with no forward flow"
+                );
+                self.flow_count[fwd] -= 1;
+                if self.flow_count[fwd] == 0 {
+                    self.is_saturated.set(arc, true);
+                }
+            }
         } else {
             // Gutter-ring arcs are multi-unit (zero-cost, integration-
             // invisible gauge arcs - see the `multi_unit` field doc): never
@@ -1008,6 +1062,99 @@ mod layout_tests {
         assert_eq!(a.num_forward(), b.num_forward());
         assert_eq!(a.num_nodes(), b.num_nodes());
         assert!(!b.has_ground());
+    }
+}
+
+#[cfg(test)]
+mod multi_mode_tests {
+    use super::*;
+    use crate::grid::RectangularGridGraph;
+    use ndarray::Array2;
+
+    fn total_cost(g: &RectangularGridGraph, net: &Network) -> i64 {
+        (0..net.num_forward())
+            .map(|a| (net.arc_flow(g, a) as i64).abs() * net.arc_cost(g, a) as i64)
+            .sum()
+    }
+
+    fn remaining_excess(net: &Network) -> i64 {
+        net.excess.iter().map(|&e| (e as i64).abs()).sum()
+    }
+
+    /// The defining difference between capacity-1 and uncapacitated linear
+    /// MCF: two units must travel from (2,1) to (2,6), and the only cheap
+    /// corridor is residue row 2 (cost 1/arc vs 900 elsewhere). Capacity-1
+    /// saturates the corridor after the first unit and detours the second
+    /// through cost-900 arcs; multi_mode stacks both units on the corridor
+    /// at constant marginal cost. This is the mechanism behind stacked
+    /// parallel cuts on steep scenes (multiple corrections that should share
+    /// one cheap crossing get sprayed across expensive neighbors instead).
+    #[test]
+    fn multi_mode_shares_the_cheap_corridor() {
+        let g = RectangularGridGraph::new(5, 8);
+        let mut residues = Array2::<i32>::zeros((5, 8));
+        residues[(2, 1)] = 2;
+        residues[(2, 6)] = -2;
+
+        let mut costs = vec![900_i32; g.num_forward];
+        for j in 0..7 {
+            costs[g.right_arc(2, j).unwrap()] = 1;
+            costs[g.left_arc(2, j + 1).unwrap()] = 1;
+        }
+
+        let mut cap1 = Network::new(&g, residues.view(), &costs);
+        crate::primal_dual::run_full_dijkstra(&g, &mut cap1, 8);
+        assert_eq!(remaining_excess(&cap1), 0, "capacity-1 solve must drain");
+
+        let packed: Vec<u16> = costs.iter().map(|&c| c as u16).collect();
+        let mut multi = Network::new_multi_linear_packed(&g, residues.view(), packed);
+        crate::primal_dual::run_full_dijkstra(&g, &mut multi, 8);
+        assert_eq!(remaining_excess(&multi), 0, "multi_mode solve must drain");
+
+        // Uncapacitated optimum: both units share the corridor, 2 * 5 * 1.
+        assert_eq!(total_cost(&g, &multi), 10, "both units share the corridor");
+        for j in 1..6 {
+            assert_eq!(
+                multi.arc_flow(&g, g.right_arc(2, j).unwrap()),
+                2,
+                "corridor arc right(2,{j}) must carry both units"
+            );
+        }
+        // Capacity-1 must pay for a detour through cost-900 arcs.
+        assert!(
+            total_cost(&g, &cap1) > total_cost(&g, &multi),
+            "capacity-1 cost {} must exceed uncapacitated cost {}",
+            total_cost(&g, &cap1),
+            total_cost(&g, &multi)
+        );
+    }
+
+    /// Bookkeeping invariant: undoing all flow on an arc must re-close the
+    /// undo direction, so its negative cost can never be used from a zero-flow
+    /// state (which would corrupt the objective).
+    #[test]
+    fn undo_direction_closes_at_zero_flow() {
+        let g = RectangularGridGraph::new(3, 3);
+        let residues = Array2::<i32>::zeros((3, 3));
+        let costs: Vec<u16> = vec![5; g.num_forward];
+        let mut net = Network::new_multi_linear_packed(&g, residues.view(), costs);
+        let nf = net.num_forward();
+        let a = g.right_arc(1, 0).unwrap();
+        let rev = a + nf;
+
+        assert!(net.is_arc_saturated(rev), "undo closed before any flow");
+        net.push_unit(&g, a);
+        net.push_unit(&g, a);
+        assert_eq!(net.arc_flow(&g, a), 2);
+        assert!(!net.is_arc_saturated(a), "forward stays uncapacitated");
+        assert!(!net.is_arc_saturated(rev), "undo open while flow remains");
+        net.push_unit(&g, rev);
+        assert_eq!(net.arc_flow(&g, a), 1);
+        assert!(!net.is_arc_saturated(rev), "undo still open at flow 1");
+        net.push_unit(&g, rev);
+        assert_eq!(net.arc_flow(&g, a), 0);
+        assert!(net.is_arc_saturated(rev), "undo re-closed at flow 0");
+        assert!(!net.is_arc_saturated(a), "forward never saturates");
     }
 }
 
