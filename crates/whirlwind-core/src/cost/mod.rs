@@ -107,22 +107,22 @@ pub enum SlopeGuardMode {
     ZeroSlope,
 }
 
-/// Validity guard for the Carballo cost on aliased phase gradients.
+/// Robustness guard for the Carballo cost on potentially aliased gradients.
 ///
-/// The arc cost is a log-likelihood ratio `-log(p1/p0)`: the evidence that this
-/// edge carries a 2π cycle jump, given the locally expected slope. That
-/// conditioning is only meaningful while the wrapped observation still
-/// discriminates between hypotheses. Once the true fringe rate passes Nyquist -
-/// a glacier shear margin, a rupture edge - one wrapped difference is
-/// consistent with many true slopes, the likelihood ratio collapses toward 1,
-/// and the honest cost is 0. Reporting the model's confident answer there is
-/// what makes the solver refuse to cut along a real discontinuity and lay a
-/// cheaper cut through the smooth interior instead (see
-/// `docs/BUG_NISAR_CRYO_STACKED_CUTS.md`). This guard marks the model's domain
-/// of validity rather than replacing it; isce3 PHASS hard-codes the same rule
-/// as `|Δφ| >= 1 rad → cost 0`.
+/// The Carballo arc cost conditions on one locally expected slope in the
+/// principal wrapped interval. At a glacier shear margin or rupture edge, the
+/// same wrapped difference can be compatible with several unwrapped-gradient
+/// hypotheses that this single-branch model does not represent. The resulting
+/// likelihood ratio can be overconfident, making the solver refuse to cut
+/// along the discontinuity and lay a cheaper cut through the smooth interior
+/// instead (see `docs/BUG_NISAR_CRYO_STACKED_CUTS.md`).
 ///
-/// Disabled by default (threshold 0), so the ww-orig parity path is untouched.
+/// This guard is an empirically validated robustification, not a result derived
+/// from that likelihood: it treats at most the steepest 3% of valid edges,
+/// subject to a 1 radian floor, as uninformative by assigning zero directional
+/// cost. It approximates a missing heavy-tailed or mixture component for real
+/// discontinuities and aliased gradients while preserving fixed linear costs.
+/// isce3 PHASS uses the related fixed rule `|Δφ| >= 1 rad → cost 0`.
 #[derive(Debug, Clone, Copy)]
 pub struct SlopeGuard {
     /// Raw per-edge wrapped `|Δφ|` (radians) at or above which the cost model
@@ -130,9 +130,9 @@ pub struct SlopeGuard {
     /// the threshold; with a budget it is the *floor*. `<= 0` and no budget
     /// disables the guard.
     pub threshold_rad: f32,
-    /// EXPERIMENTAL. Maximum fraction of valid edges the guard may free. When
-    /// `> 0` the threshold is chosen per frame as the matching quantile of the
-    /// raw `|Δφ|` distribution (floored at `threshold_rad`), instead of being a
+    /// Maximum fraction of valid edges the guard may free. When `> 0` the
+    /// threshold is chosen per frame as the matching quantile of the raw
+    /// `|Δφ|` distribution (floored at `threshold_rad`), instead of being a
     /// fixed radian value.
     ///
     /// Motivation: a fixed threshold does not generalize across scenes. 1 rad
@@ -149,6 +149,20 @@ pub struct SlopeGuard {
     pub mode: SlopeGuardMode,
 }
 
+/// Production settings validated on the NISAR hard-frame and parity suites.
+pub const DEFAULT_SLOPE_GUARD_RAD: f32 = 1.0;
+pub const DEFAULT_SLOPE_GUARD_BUDGET: f32 = 0.03;
+
+impl Default for SlopeGuard {
+    fn default() -> Self {
+        Self {
+            threshold_rad: DEFAULT_SLOPE_GUARD_RAD,
+            budget: DEFAULT_SLOPE_GUARD_BUDGET,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+    }
+}
+
 /// A [`SlopeGuard`] with its per-frame threshold resolved (see
 /// [`SlopeGuard::resolve`]). This is what the cost loops consult.
 #[derive(Debug, Clone, Copy)]
@@ -162,6 +176,15 @@ pub struct ResolvedSlopeGuard {
 const GUARD_HIST_BINS: usize = 1024;
 
 impl SlopeGuard {
+    #[inline]
+    fn off() -> Self {
+        Self {
+            threshold_rad: 0.0,
+            budget: 0.0,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+    }
+
     #[inline]
     pub fn enabled(&self) -> bool {
         self.threshold_rad > 0.0 || self.budget > 0.0
@@ -253,27 +276,63 @@ impl ResolvedSlopeGuard {
     }
 }
 
-/// Read the [`SlopeGuard`] configuration once from the environment:
-/// `WHIRLWIND_SLOPE_GUARD_RAD` (radians; threshold, or floor when a budget is
-/// set), `WHIRLWIND_SLOPE_GUARD_BUDGET` (max fraction of valid edges to free),
-/// and `WHIRLWIND_SLOPE_GUARD_MODE` (`zerocost`, the default, or `zeroslope`).
-/// With none of them set the guard is disabled and the cost field is untouched.
+fn env_requests_guard_off(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "off" | "0" | "false" | "no"
+        )
+    })
+}
+
+fn slope_guard_from_values(
+    switch: Option<&str>,
+    threshold_rad: Option<&str>,
+    budget: Option<&str>,
+    mode: Option<&str>,
+) -> SlopeGuard {
+    if env_requests_guard_off(switch) {
+        return SlopeGuard::off();
+    }
+
+    let defaults = SlopeGuard::default();
+    SlopeGuard {
+        threshold_rad: threshold_rad
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(defaults.threshold_rad),
+        budget: budget
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(defaults.budget),
+        mode: match mode {
+            Some("zeroslope") => SlopeGuardMode::ZeroSlope,
+            _ => defaults.mode,
+        },
+    }
+}
+
+/// Read the [`SlopeGuard`] configuration once from the environment.
+///
+/// The production default frees at most the steepest 3% of valid edges, with a
+/// 1 radian floor. `WHIRLWIND_SLOPE_GUARD=off` restores the unguarded cost
+/// field. `WHIRLWIND_SLOPE_GUARD_RAD` overrides the threshold (or floor when a
+/// budget is set), `WHIRLWIND_SLOPE_GUARD_BUDGET` overrides the maximum
+/// fraction, and `WHIRLWIND_SLOPE_GUARD_MODE` selects `zerocost` (default) or
+/// the diagnostic `zeroslope` arm. Set the budget explicitly to 0 for a fixed
+/// radian threshold.
 pub fn slope_guard() -> SlopeGuard {
     use std::sync::OnceLock;
     static G: OnceLock<SlopeGuard> = OnceLock::new();
-    *G.get_or_init(|| SlopeGuard {
-        threshold_rad: std::env::var("WHIRLWIND_SLOPE_GUARD_RAD")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(0.0),
-        budget: std::env::var("WHIRLWIND_SLOPE_GUARD_BUDGET")
-            .ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(0.0),
-        mode: match std::env::var("WHIRLWIND_SLOPE_GUARD_MODE").as_deref() {
-            Ok("zeroslope") => SlopeGuardMode::ZeroSlope,
-            _ => SlopeGuardMode::ZeroCost,
-        },
+    *G.get_or_init(|| {
+        let switch = std::env::var("WHIRLWIND_SLOPE_GUARD").ok();
+        let threshold_rad = std::env::var("WHIRLWIND_SLOPE_GUARD_RAD").ok();
+        let budget = std::env::var("WHIRLWIND_SLOPE_GUARD_BUDGET").ok();
+        let mode = std::env::var("WHIRLWIND_SLOPE_GUARD_MODE").ok();
+        slope_guard_from_values(
+            switch.as_deref(),
+            threshold_rad.as_deref(),
+            budget.as_deref(),
+            mode.as_deref(),
+        )
     })
 }
 
@@ -712,11 +771,10 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
     // Biased (non-mask-aware) smoothing - matches Python's uniform_filter.
     let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram, window);
 
-    // Aliased-gradient validity guard (off by default; see `SlopeGuard`). It
-    // keys off the RAW per-edge wrapped difference, not the smoothed slope:
-    // a box average over a shear margin is diluted by its gentle neighbours,
-    // which is exactly where the model stops discriminating. Nothing below is
-    // computed when the guard is disabled, so the parity path is untouched.
+    // Aliased-gradient robustness guard (see `SlopeGuard`). It keys off the RAW
+    // per-edge wrapped difference, not the smoothed slope: a box average over a
+    // shear margin is diluted by its gentle neighbours. The opt-out path does
+    // not allocate or compute the raw gradients.
     let guard_cfg = slope_guard();
     let raw_grads = guard_cfg.enabled().then(|| phase_gradients_raw(igram));
     let (raw_dy_v, raw_dx_v) = match &raw_grads {
@@ -1409,17 +1467,40 @@ mod slope_guard_tests {
     use super::*;
     use ndarray::arr2;
 
-    /// The guard must be OFF unless explicitly configured: every parity claim
-    /// (ww-orig equivalence, the byte-identical NISAR frame set) rests on the
-    /// default cost field being untouched. Deliberately does not set the env
-    /// var - `slope_guard()` caches in a `OnceLock`, so a test that enabled it
-    /// would silently poison the rest of the suite.
     #[test]
-    fn default_is_disabled() {
-        assert!(
-            !slope_guard().enabled(),
-            "the slope guard must be opt-in; enabling it by default breaks ww-orig parity"
-        );
+    fn default_is_validated_budgeted_guard() {
+        let guard = SlopeGuard::default();
+        assert!(guard.enabled());
+        assert_eq!(guard.threshold_rad, DEFAULT_SLOPE_GUARD_RAD);
+        assert_eq!(guard.budget, DEFAULT_SLOPE_GUARD_BUDGET);
+        assert_eq!(guard.mode, SlopeGuardMode::ZeroCost);
+    }
+
+    #[test]
+    fn explicit_opt_out_values_are_recognized() {
+        for value in ["off", "OFF", "0", "false", "False", "no", " no "] {
+            assert!(env_requests_guard_off(Some(value)), "{value:?}");
+        }
+        for value in ["on", "1", "true", "yes", ""] {
+            assert!(!env_requests_guard_off(Some(value)), "{value:?}");
+        }
+        assert!(!env_requests_guard_off(None));
+    }
+
+    #[test]
+    fn environment_values_resolve_default_opt_out_and_fixed_arms() {
+        let default = slope_guard_from_values(None, None, None, None);
+        assert_eq!(default.threshold_rad, DEFAULT_SLOPE_GUARD_RAD);
+        assert_eq!(default.budget, DEFAULT_SLOPE_GUARD_BUDGET);
+        assert_eq!(default.mode, SlopeGuardMode::ZeroCost);
+
+        let off = slope_guard_from_values(Some("off"), Some("2.0"), Some("0.5"), None);
+        assert!(!off.enabled(), "the explicit switch takes precedence");
+
+        let fixed = slope_guard_from_values(None, Some("2.0"), Some("0"), Some("zeroslope"));
+        assert_eq!(fixed.threshold_rad, 2.0);
+        assert_eq!(fixed.budget, 0.0);
+        assert_eq!(fixed.mode, SlopeGuardMode::ZeroSlope);
     }
 
     /// A fixed-threshold guard, resolved (no budget => threshold passes through).

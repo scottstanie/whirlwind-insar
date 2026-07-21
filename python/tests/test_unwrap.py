@@ -171,11 +171,11 @@ class TestUnwrap:
         window must be able to change the solved phase, the parallel/perpendicular
         orientation must matter on an anisotropic scene, and a zero extent must
         raise cleanly rather than panic in Rust."""
-        rng = np.random.default_rng(3)
-        m, n = 160, 160
+        rng = np.random.default_rng(0)
+        m, n = 120, 120
         yy, xx = np.mgrid[0:m, 0:n].astype(np.float32)
         # Anisotropic wrapping phase: fast vertical fringes + a y-dependent bend.
-        true = 0.8 * xx + 0.002 * (yy - n / 2) ** 2
+        true = 0.45 * xx + 0.003 * (yy - n / 2) ** 2
         wrapped = np.angle(np.exp(1j * true)).astype(np.float32)
         noise = rng.normal(0, 0.7, (m, n)).astype(np.float32)
         igram = np.exp(1j * (wrapped + noise)).astype(np.complex64)

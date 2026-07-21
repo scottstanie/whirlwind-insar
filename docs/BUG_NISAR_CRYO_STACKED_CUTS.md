@@ -198,29 +198,31 @@ Capacity is genuinely not the issue: with the PHASS surface even the
 capacity-1 network reaches 99%, and with the Carballo surface the
 uncapacitated solver still splits the glacier.
 
-## The fix: an aliased-gradient validity guard on Carballo (2026-07-20)
+## The fix: robustify Carballo on potentially aliased gradients (2026-07-20)
 
 The PHASS result above is not the fix to ship - swapping the whole cost surface
 also swaps in squared coherence and the clamp, and it regresses other frames.
 The useful question is *which part of the Carballo cost is wrong here*, and the
-answer is its **domain of validity**, not its shape.
+answer is its treatment of potentially aliased discontinuities, not the shape
+of the in-domain cost.
 
-The Carballo arc cost is a log-likelihood ratio `-log(p1/p0)`: the evidence that
-this edge carries a 2π cycle jump, given the locally expected slope. That
-conditioning only means something while the wrapped observation still
-discriminates between hypotheses. Once the true fringe rate passes Nyquist - a
-glacier shear margin - one wrapped difference is consistent with many true
-slopes, the likelihood ratio collapses toward 1, and the honest cost is 0.
-Whirlwind instead reports the model's confident answer, which makes cutting
-*along* the real discontinuity expensive, so the solver lays a cheaper cut
-straight through the smooth interior. That is the -3 cycle block.
+The Carballo arc cost is a log-likelihood ratio `-log(p1/p0)`: evidence that an
+edge carries a 2π cycle jump, conditioned on one locally expected slope in the
+principal wrapped interval. At a glacier shear margin, one wrapped difference
+can be compatible with several unwrapped-gradient and integer hypotheses. The
+current single-branch model does not marginalize over those alternatives or
+include a broad discontinuity class, so its likelihood ratio can be
+overconfident. That makes cutting *along* the real discontinuity expensive, so
+the solver lays a cheaper cut through the smooth interior. That is the -3 cycle
+block.
 
-`cost::SlopeGuard` encodes exactly that: where the RAW per-edge wrapped `|Δφ|`
-reaches a threshold, the cost is 0. It keys off the raw difference, not the
-smoothed slope, because a box average over a shear margin is diluted by its
-gentle neighbours - precisely where the model stops discriminating. It is gated
-on `gamma > 0` so mask-boundary edges (masked pixels enter as `0+0j`) never
-trigger. Off by default; `WHIRLWIND_SLOPE_GUARD_RAD` / `_MODE` enable it.
+`cost::SlopeGuard` is an empirically validated robustification: it treats a
+budgeted tail of the RAW per-edge wrapped `|Δφ|` distribution as uninformative
+by setting its directional cost to 0. This approximates a missing heavy-tailed
+or discontinuity component while preserving fixed linear costs. It keys off
+the raw difference because a box average over a shear margin is diluted by its
+gentle neighbours. Only edges with two valid endpoints and nonzero edge
+coherence participate, so mask boundaries never trigger the guard.
 
 Cryo frame, same default solver and pipeline in every arm - only the guard
 changes:
@@ -238,8 +240,8 @@ changes:
 Three things to read off this:
 
 1. **The guard beats adopting the PHASS surface wholesale** (99.73% vs 98.97%,
-   and 99.58% vs 96.76% on raw match). The statistically-grounded cost is kept;
-   only its validity domain is declared.
+   and 99.58% vs 96.76% on raw match). The Carballo in-domain cost is kept and
+   only the potentially aliased tail is robustified.
 2. **Higher thresholds are better, safer, and faster** (2.0 rad: best score,
    fewest edges touched, 26 s vs 30 s baseline). Freeing moderate gradients at
    0.8 rad discards recoverable signal.
@@ -247,8 +249,8 @@ Three things to read off this:
    competing hypothesis that the *slope estimator* is at fault. Falling back to
    the zero-slope cost keeps the coherence weighting, and a coherent flat-slope
    cut is expensive - so aliased edges stay hard to cut and the block survives.
-   The defect is the model answering confidently out of domain, not answering
-   with a bad slope.
+   The defect is the model answering confidently without representing the
+   discontinuity/alias alternatives, not answering with a bad slope.
 
 A separate measurement rules out the estimator independently: whirlwind
 box-averages raw wrapped angles (an arithmetic mean of a circular quantity,
@@ -350,8 +352,7 @@ The radian floor is load-bearing in the other direction: on frames with few
 aliased edges it stops the budget from overspending, which is why `074`/`077`
 at budget 0.05 reproduce the fixed-1 rad numbers exactly.
 
-Recommended setting: **`WHIRLWIND_SLOPE_GUARD_BUDGET=0.03`,
-`WHIRLWIND_SLOPE_GUARD_RAD=1.0`** (floor).
+Production default: **budget 0.03, 1.0 radian floor, `zerocost` mode**.
 
 ### 13-frame parity gate: PASSED
 
@@ -372,9 +373,8 @@ moves down by more than a rounding step.
 
 So the guard is not a tradeoff on this set - it is free. Combined with the hard
 frames (worst regression −0.25 pp, mean +21.28 pp), `budget=0.03` with a 1 rad
-floor is defensible as a **default**, not just an opt-in mode. Remaining
-judgement call before flipping it: whether to re-run the full 1,382-frame
-campaign first, which is the only way to see the tail.
+floor is now the **default**. The expanded NISAR campaign remains the important
+tail validation; investigate every regression with the explicit unguarded arm.
 
 ### Risk: the guard behaves differently in noise than on a steep margin
 
@@ -391,7 +391,7 @@ the guard only where the edge is coherent enough that a steep gradient implies a
 discontinuity rather than noise. In decorrelated areas the Carballo cost is
 already low, so the guard has little to add there anyway.
 
-### Open questions before shipping anything
+### Remaining research questions
 
 - Regression: does the PHASS surface hurt the frames the Carballo cost wins?
   (Paired no-bridge spot-checks on other hard frames in
@@ -421,12 +421,17 @@ PYTHONPATH=python python aws-batch/compare_gunw.py "$H5" \
 
 ### Slope guard
 
-The guard is off unless `WHIRLWIND_SLOPE_GUARD_RAD` is set, so it composes with
-any existing entry point:
+The budget-0.03, floor-1.0 guard is active in every normal entry point. Use an
+explicit switch for the unguarded baseline; set the budget to zero when testing
+a fixed threshold:
 
 ```bash
-WHIRLWIND_SLOPE_GUARD_RAD=2.0 PYTHONPATH=python \
-  python aws-batch/compare_gunw.py "$H5" --out-dir cryo-guard --force
+WHIRLWIND_SLOPE_GUARD=off PYTHONPATH=python \
+  python aws-batch/compare_gunw.py "$H5" --out-dir cryo-unguarded --force
+
+WHIRLWIND_SLOPE_GUARD_BUDGET=0 WHIRLWIND_SLOPE_GUARD_RAD=2.0 \
+  PYTHONPATH=python python aws-batch/compare_gunw.py "$H5" \
+  --out-dir cryo-fixed-2rad --force
 ```
 
 The A/B tooling reuses `compare_gunw.py`'s cached `full_arrays.npz`, so the
@@ -434,13 +439,13 @@ inputs and the agreement metric are byte-for-byte the benchmark's. Each arm is
 a separate process because `cost::slope_guard()` caches in a `OnceLock`.
 
 ```bash
-# threshold sweep on one frame (baseline, 0.8/1.0/1.4/2.0 rad, zeroslope)
+# guard-off baseline, production default, fixed thresholds, and zeroslope
 scripts/run_slope_guard_sweep.sh <compare-dir>/<product>/full_arrays.npz <out-dir>
 
 # many frames x arms -> sweep.md + sweep.json with a regression summary
 PYTHONPATH=python python scripts/slope_guard_frame_sweep.py \
   --compare-dir <compare-dir> --out-dir <out-dir> \
-  --arms baseline zerocost-1.0 zerocost-2.0
+  --arms baseline default zerocost-1.0 zerocost-2.0
 ```
 
 The 13-frame parity set has no cached arrays yet; generate them once with

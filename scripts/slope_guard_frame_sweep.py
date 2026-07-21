@@ -12,7 +12,7 @@ so the inputs and the agreement metric are exactly the benchmark's.
 
   PYTHONPATH=python python scripts/slope_guard_frame_sweep.py \
     --compare-dir /Volumes/.../nisar_gunw_hardest/compare \
-    --out-dir /Volumes/.../slope-guard-frames --arms baseline zerocost-1.0
+    --out-dir /Volumes/.../slope-guard-frames --arms baseline default
 """
 
 from __future__ import annotations
@@ -28,18 +28,27 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 BUDGET_FLOOR_RAD = "1.0"
+GUARD_ENV_VARS = (
+    "WHIRLWIND_SLOPE_GUARD",
+    "WHIRLWIND_SLOPE_GUARD_BUDGET",
+    "WHIRLWIND_SLOPE_GUARD_RAD",
+    "WHIRLWIND_SLOPE_GUARD_MODE",
+)
 
 
 def arm_env(arm: str) -> dict[str, str]:
     """Arm name -> guard env vars.
 
-    `baseline` | `zerocost-<rad>` | `zeroslope-<rad>` | `budget-<frac>[-<floor>]`
+    `baseline` | `default` | `zerocost-<rad>` | `zeroslope-<rad>` |
+    `budget-<frac>[-<floor>]`
 
     The budget arm picks the threshold per frame as the `1 - frac` quantile of
     the raw |dphi| distribution, floored at `<floor>` radians (default 1.0), so
     the guard frees at most `frac` of the valid edges.
     """
     if arm == "baseline":
+        return {"WHIRLWIND_SLOPE_GUARD": "off"}
+    if arm == "default":
         return {}
     if arm.startswith("budget-"):
         parts = arm.split("-")
@@ -53,10 +62,14 @@ def arm_env(arm: str) -> dict[str, str]:
     mode, _, rad = arm.partition("-")
     if mode not in {"zerocost", "zeroslope"} or not rad:
         raise SystemExit(
-            f"bad arm {arm!r}: use baseline, zerocost-<rad>, zeroslope-<rad>, "
-            "budget-<frac>[-<floor>]"
+            f"bad arm {arm!r}: use baseline, default, zerocost-<rad>, "
+            "zeroslope-<rad>, budget-<frac>[-<floor>]"
         )
-    return {"WHIRLWIND_SLOPE_GUARD_RAD": rad, "WHIRLWIND_SLOPE_GUARD_MODE": mode}
+    return {
+        "WHIRLWIND_SLOPE_GUARD_BUDGET": "0",
+        "WHIRLWIND_SLOPE_GUARD_RAD": rad,
+        "WHIRLWIND_SLOPE_GUARD_MODE": mode,
+    }
 
 
 def short_name(product_dir: Path) -> str:
@@ -69,7 +82,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--compare-dir", type=Path, required=True)
     ap.add_argument("--out-dir", type=Path, required=True)
-    ap.add_argument("--arms", nargs="+", default=["baseline", "zerocost-1.0"])
+    ap.add_argument("--arms", nargs="+", default=["baseline", "default"])
     ap.add_argument("--nlooks", type=float, default=16.0)
     ap.add_argument("--frames", nargs="*", help="substring filter on product dir names")
     args = ap.parse_args()
@@ -87,7 +100,10 @@ def main() -> None:
         results[name] = {}
         for arm in args.arms:
             out = args.out_dir / arm / npz.parent.name
-            env = {**os.environ, "PYTHONPATH": "python", **arm_env(arm)}
+            env = {**os.environ, "PYTHONPATH": "python"}
+            for key in GUARD_ENV_VARS:
+                env.pop(key, None)
+            env.update(arm_env(arm))
             cmd = [
                 sys.executable,
                 str(REPO / "scripts" / "phass_cost_ablation.py"),

@@ -93,28 +93,30 @@ reached 87.9%; PHASS's "zero cost where the wrapped gradient ≥ 1 rad" rule
 supplied the rest; its high-coherence clamp was inert (alters 1.2% of arcs,
 changes no output).
 
-### Root cause and the actual fix: bound the Carballo cost's validity domain
+### Root cause and the actual fix: robustify an incomplete edge model
 
 Swapping in PHASS's whole surface is not the right fix - it also swaps in
 squared coherence and regresses other frames. The useful question was *which
-part* of the Carballo cost is wrong, and the answer is its **domain**, not its
-shape.
+part* of the Carballo cost is wrong, and the answer is its treatment of
+potentially aliased discontinuities, not the shape of the in-domain cost.
 
-The Carballo arc cost is a log-likelihood ratio `−log(p1/p0)`: the evidence that
-an edge carries a 2π cycle jump, given the locally expected slope. That
-conditioning only means something while the wrapped observation still
-discriminates between hypotheses. Once the true fringe rate passes Nyquist - a
-glacier shear margin, a rupture edge - one wrapped difference is consistent with
-many true slopes, the likelihood ratio collapses toward 1, and the honest cost
-is 0. Whirlwind instead reported the model's confident answer, which made
-cutting *along* the real discontinuity expensive, so the solver laid a cheaper
-cut straight through the smooth interior. That is the block.
+The Carballo arc cost is a log-likelihood ratio `−log(p1/p0)`: evidence that an
+edge carries a 2π cycle jump, conditioned on one locally expected slope in the
+principal wrapped interval. At a glacier shear margin or rupture edge, one
+wrapped difference can be compatible with several unwrapped-gradient and
+integer hypotheses. The current single-branch model does not marginalize over
+those alternatives or include a broad discontinuity class, so its likelihood
+ratio can be overconfident. That made cutting *along* the real discontinuity
+expensive, and the solver laid a cheaper cut through the smooth interior.
 
-`cost::SlopeGuard` declares that domain: where the **raw** per-edge wrapped
-`|Δφ|` reaches a threshold, the cost is 0. Raw rather than smoothed, because a
-box average over a shear margin is diluted by its gentle neighbours - exactly
-where the model stops discriminating. Gated on `γ > 0` so mask-boundary edges
-(masked pixels enter as `0+0j`) never trigger.
+`cost::SlopeGuard` is an empirically validated robustification: it treats a
+budgeted tail of the **raw** per-edge wrapped `|Δφ|` distribution as
+uninformative by setting its directional cost to 0. This approximates a missing
+heavy-tailed or discontinuity component while preserving fixed linear costs.
+Raw rather than smoothed differences are used because a box average over a
+shear margin is diluted by its gentle neighbours. Only edges with two valid
+endpoints and nonzero edge coherence participate, so mask boundaries never
+trigger the guard.
 
 Cryo frame, same solver and pipeline in every arm:
 
@@ -125,7 +127,7 @@ Cryo frame, same solver and pipeline in every arm:
 | 2.0 rad | 99.73% |
 | *(grafting PHASS's entire cost surface)* | *98.97%* |
 
-Bounding the domain **beats replacing the cost model**. `077_A_036` turned out
+This targeted robustification **beats replacing the cost model**. `077_A_036` turned out
 to be the same bug: previously recorded as "a real within-region solve issue"
 that only 4x downsampling helped (54.83% → 85.33%), it reaches 99.26% with no
 downsampling.
@@ -190,16 +192,23 @@ few aliased edges it stops the budget overspending.
 
 ## 3. Status and how to use it
 
-Everything is **opt-in and off by default**. With the guard disabled the raw
-gradients are never even allocated, so the parity path is untouched by
-construction; the 13-frame parity set is unchanged at mean **0.9891**
-per-component (`A_016`/`A_025` 1.0000, `D_075` 0.8807, matching the historical
-record), and the guard-off arm reproduces the cryo frame's known 50.5736%.
+The validated setting is now the default: budget **0.03**, floor **1.0 radian**,
+mode `zerocost`. A normal local or batch run uses it without environment
+variables. The unguarded path remains available for exact A/B attribution and
+does not allocate the raw-gradient arrays; it reproduces the cryo frame's known
+50.5736% result.
 
 ```bash
-# recommended setting
-WHIRLWIND_SLOPE_GUARD_BUDGET=0.03 WHIRLWIND_SLOPE_GUARD_RAD=1.0 \
-  PYTHONPATH=python python aws-batch/compare_gunw.py "$H5" --out-dir out --force
+# production default
+PYTHONPATH=python python aws-batch/compare_gunw.py "$H5" --out-dir out --force
+
+# unguarded A/B baseline
+WHIRLWIND_SLOPE_GUARD=off PYTHONPATH=python \
+  python aws-batch/compare_gunw.py "$H5" --out-dir out-unguarded --force
+
+# fixed-threshold diagnostic (the explicit zero disables the default budget)
+WHIRLWIND_SLOPE_GUARD_BUDGET=0 WHIRLWIND_SLOPE_GUARD_RAD=2.0 \
+  PYTHONPATH=python python aws-batch/compare_gunw.py "$H5" --out-dir out-fixed --force
 
 # uncapacitated linear solver (diagnostic)
 WHIRLWIND_UNWRAP_SOLVER=multi ...
@@ -207,8 +216,9 @@ WHIRLWIND_UNWRAP_SOLVER=multi ...
 
 | env var | meaning |
 | ------- | ------- |
-| `WHIRLWIND_SLOPE_GUARD_RAD` | threshold in radians, or the floor when a budget is set |
-| `WHIRLWIND_SLOPE_GUARD_BUDGET` | max fraction of valid edges the guard may free |
+| `WHIRLWIND_SLOPE_GUARD` | enabled by default; `off` restores the unguarded cost field |
+| `WHIRLWIND_SLOPE_GUARD_RAD` | threshold in radians, or the floor when a budget is set; default `1.0` |
+| `WHIRLWIND_SLOPE_GUARD_BUDGET` | max fraction of valid edges the guard may free; default `0.03` |
 | `WHIRLWIND_SLOPE_GUARD_MODE` | `zerocost` (default) or `zeroslope` (diagnostic arm) |
 | `WHIRLWIND_UNWRAP_SOLVER=multi` | uncapacitated linear MCF |
 
@@ -227,21 +237,22 @@ Data: 15 hard frames at
 `/Volumes/WD_BLACK_SN7100_4TB/Documents/Learning/nisar_gunw_hardest/`,
 13-frame parity set at `.../nisar_gunw/`.
 
-## 4. Open items
+## 4. Follow-up work
 
-1. **Make the guard the default?** The 13-frame parity gate **passed**:
+1. **Finish the expanded NISAR campaign and inspect the tail.** The default
+   decision is made. The 13-frame parity gate **passed**:
    5 frames improved, 8 unchanged, **0 regressed**, worst change −0.01 pp,
    mean per-comp 98.91% → 98.95%. Every 100% frame stays at 100% and the
    weakest (`D_075`) improves. On that set the guard is free, not a tradeoff.
    With the hard frames (worst −0.25 pp, mean +21.28 pp) that makes
-   `budget=0.03` / floor 1.0 defensible as a default. The one thing not yet
-   done is a full 1,382-frame campaign re-run, which is the only way to see
-   the tail - recommended before flipping the default.
-3. **Should the slope estimator keep SNAPHU's arithmetic mean?** Currently a
+   `budget=0.03` / floor 1.0 the production default. The expanded campaign is
+   still valuable validation; investigate every low-tail or regressed frame
+   with `WHIRLWIND_SLOPE_GUARD=off`.
+2. **Should the slope estimator keep SNAPHU's arithmetic mean?** Currently a
    deliberate SNAPHU match (see above). A complex-domain circular mean is
    wrap-safe and coherence-weighted; whether its ~11% difference on steep
    edges helps or hurts is untested. Evaluate as a modelling change, not a fix.
-4. **Interpolating ACROSS masked water.** The interpolator can already smooth
+3. **Interpolating ACROSS masked water.** The interpolator can already smooth
    over small water bodies so that river-separated regions integrate together
    without bridging - but two things currently prevent it, both ours rather
    than inherent. (a) `interpolate.rs` skips pixels whose complex value is

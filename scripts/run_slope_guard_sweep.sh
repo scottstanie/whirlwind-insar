@@ -9,6 +9,10 @@
 #   scripts/run_slope_guard_sweep.sh <full_arrays.npz> <out-dir>
 set -euo pipefail
 
+# Make every arm independent of the caller's environment.
+unset WHIRLWIND_SLOPE_GUARD WHIRLWIND_SLOPE_GUARD_BUDGET \
+  WHIRLWIND_SLOPE_GUARD_RAD WHIRLWIND_SLOPE_GUARD_MODE
+
 NPZ="${1:?usage: run_slope_guard_sweep.sh <full_arrays.npz> <out-dir>}"
 OUT="${2:?usage: run_slope_guard_sweep.sh <full_arrays.npz> <out-dir>}"
 cd "$(dirname "$0")/.."
@@ -22,10 +26,13 @@ run() { # <label> <extra env assignments...>
     grep -E '^carballo:'
 }
 
-run baseline
+run baseline WHIRLWIND_SLOPE_GUARD=off
+run default
 for th in 0.8 1.0 1.4 2.0; do
-  run "zerocost-${th}" WHIRLWIND_SLOPE_GUARD_RAD="$th" WHIRLWIND_SLOPE_GUARD_MODE=zerocost
+  run "zerocost-${th}" WHIRLWIND_SLOPE_GUARD_BUDGET=0 \
+    WHIRLWIND_SLOPE_GUARD_RAD="$th" WHIRLWIND_SLOPE_GUARD_MODE=zerocost
 done
 # Diagnostic arm: predicted to be WORSE than baseline (a coherent flat-slope
 # cut is expensive, so this makes aliased edges harder to cut, not easier).
-run zeroslope-1.0 WHIRLWIND_SLOPE_GUARD_RAD=1.0 WHIRLWIND_SLOPE_GUARD_MODE=zeroslope
+run zeroslope-1.0 WHIRLWIND_SLOPE_GUARD_BUDGET=0 \
+  WHIRLWIND_SLOPE_GUARD_RAD=1.0 WHIRLWIND_SLOPE_GUARD_MODE=zeroslope
