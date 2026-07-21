@@ -163,22 +163,35 @@ def mask_to_bool(
 ) -> np.ndarray:
     """Convert the GUNW ``mask`` code into a boolean valid-pixel mask.
 
-    The GUNW ``mask`` is a 3-digit code ``[water][subswath_ref][subswath_sec]``
-    with ``_FillValue`` 255 (water digit: 1 = water).
+    The water/subswath code lives in the **low byte (bits 0-7)**: a 3-digit
+    decimal code ``[water][subswath_ref][subswath_sec]`` (water digit: 1 = water;
+    a 0 in a subswath digit means an invalid sample in that RSLC), with
+    ``_FillValue`` 255.
+
+    Newer NISAR GUNW products widened ``mask`` from uint8 to uint32 and pack
+    extra flags into the high bits: bits 8-15 / 16-23 are per-RSLC anomaly
+    flags, **bit 24 is the ionosphere-phase-fill flag** (pixels masked out and
+    filled with interpolated data during ionosphere filtering), bits 25-31 are
+    reserved. So the decimal code must be read from ``mask & 0xFF`` -- reading
+    the whole 32-bit integer makes the ionosphere bit (2**24 = 16777216)
+    masquerade as a water digit and silently drops roughly half the frame.
+    Masking to the low byte is backward-compatible with the old uint8 masks.
     """
     if mask_arr is None or policy == "ignore":
         return np.ones(shape, dtype=bool)
     if mask_arr.shape != shape:
         raise ValueError(f"Mask shape {mask_arr.shape} != data shape {shape}")
+    code = mask_arr.astype(np.int64) & 0xFF  # water/subswath decimal code
+    valid_sample = code != 255  # 255 = _FillValue
+    water = (code // 100) % 10
+    ref_sub = (code // 10) % 10
+    sec_sub = code % 10
     if policy == "water_only":
         # Exclude only water; keep subswath-flagged pixels valid.
-        return (mask_arr != 255) & ((mask_arr // 100) % 10 == 0)
+        return valid_sample & (water == 0)
     if policy == "nisar_land":
         # Keep non-water pixels that are valid samples in both RSLC subswaths.
-        water = (mask_arr // 100) % 10
-        ref_sub = (mask_arr // 10) % 10
-        sec_sub = mask_arr % 10
-        return (mask_arr != 255) & (water == 0) & (ref_sub > 0) & (sec_sub > 0)
+        return valid_sample & (water == 0) & (ref_sub > 0) & (sec_sub > 0)
     raise ValueError(f"Unknown mask policy {policy!r}")
 
 

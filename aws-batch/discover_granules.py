@@ -106,6 +106,37 @@ def fetch_inventory(
     return df
 
 
+def filter_by_ref_date(
+    inv: pd.DataFrame, min_ref: str | None, max_ref: str | None
+) -> pd.DataFrame:
+    """Keep only products whose reference acquisition date is in range.
+
+    NISAR GUNW quality improved over the mission: products with a reference
+    acquisition before 2026-06-17 are known to be lower quality (focusing /
+    calibration issues), so a campaign usually wants ``--min-ref-date
+    2026-06-17``.
+    """
+    if min_ref is None and max_ref is None:
+        return inv
+    ref = pd.to_datetime(inv["ref_time"], utc=True)
+    keep = pd.Series(True, index=inv.index)
+    if min_ref is not None:
+        keep &= ref >= pd.Timestamp(min_ref, tz="UTC")
+    if max_ref is not None:
+        keep &= ref <= pd.Timestamp(max_ref, tz="UTC")
+    out = inv[keep]
+    assert len(out) > 0, (
+        f"No products with reference date in [{min_ref}, {max_ref}]; the "
+        f"inventory spans {ref.min().date()}..{ref.max().date()}."
+    )
+    print(
+        f"Date filter: kept {len(out)} of {len(inv)} products "
+        f"(ref date in [{min_ref or '-inf'}, {max_ref or '+inf'}])",
+        flush=True,
+    )
+    return out
+
+
 def join_land_frames(
     inv: pd.DataFrame, land_csv: Path, min_land: float
 ) -> pd.DataFrame:
@@ -186,6 +217,19 @@ def main() -> None:
         "--refresh", action="store_true", help="Re-query ASF even if the cache exists."
     )
     p.add_argument(
+        "--min-ref-date",
+        default=None,
+        help="Drop products whose reference acquisition date is before this "
+        "(YYYY-MM-DD, UTC). NISAR GUNW products before 2026-06-17 are known to "
+        "be lower quality, so campaigns usually pass --min-ref-date 2026-06-17.",
+    )
+    p.add_argument(
+        "--max-ref-date",
+        default=None,
+        help="Drop products whose reference acquisition date is after this "
+        "(YYYY-MM-DD, UTC).",
+    )
+    p.add_argument(
         "--max-results",
         type=int,
         default=None,
@@ -216,6 +260,7 @@ def main() -> None:
     args = p.parse_args()
 
     inv = fetch_inventory(args.inventory_csv, args.refresh, args.max_results)
+    inv = filter_by_ref_date(inv, args.min_ref_date, args.max_ref_date)
     joined = join_land_frames(inv, args.land_frames, args.min_land)
     unique = pick_one_per_frame(joined, args.prefer)
     sampled = sample_per_track(unique, args.per_track, args.seed)
