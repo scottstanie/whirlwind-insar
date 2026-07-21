@@ -97,7 +97,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 TWOPI = 2.0 * np.pi
-SHORT_NAME = "NISAR_L2_GUNW_BETA_V1"
+SHORT_NAME = "NISAR_L2_GUNW_PROVISIONAL_V1"
+SHORT_NAME_BETA = "NISAR_L2_GUNW_BETA_V1"
 
 # ---------------------------------------------------------------------------
 # Comparison core.

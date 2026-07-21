@@ -79,7 +79,8 @@ import numpy as np
 import pandas as pd
 
 TWOPI = 2.0 * np.pi
-SHORT_NAME = "NISAR_L2_GUNW_BETA_V1"
+SHORT_NAME_BETA = "NISAR_L2_GUNW_BETA_V1"
+SHORT_NAME = "NISAR_L2_GUNW_PROVISIONAL_V1"
 
 
 def parse_args() -> argparse.Namespace:
