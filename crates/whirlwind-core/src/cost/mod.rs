@@ -96,6 +96,246 @@ pub fn smooth_phase_gradients(
     smooth_phase_gradients_with_mask(igram, None, window)
 }
 
+/// How a triggered [`SlopeGuard`] rewrites the arc cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlopeGuardMode {
+    /// Cost 0 in both directions - the edge is free to cut.
+    ZeroCost,
+    /// Re-evaluate the cost at zero expected slope, keeping the coherence
+    /// weighting. Diagnostic arm: a coherent flat-terrain cut is *expensive*,
+    /// so this makes aliased edges harder to cut rather than easier.
+    ZeroSlope,
+}
+
+/// Robustness guard for the Carballo cost on potentially aliased gradients.
+///
+/// The Carballo arc cost conditions on one locally expected slope in the
+/// principal wrapped interval. At a glacier shear margin or rupture edge, the
+/// same wrapped difference can be compatible with several unwrapped-gradient
+/// hypotheses that this single-branch model does not represent. The resulting
+/// likelihood ratio can be overconfident, making the solver refuse to cut
+/// along the discontinuity and lay a cheaper cut through the smooth interior
+/// instead (see `docs/BUG_NISAR_CRYO_STACKED_CUTS.md`).
+///
+/// This guard is an empirically validated robustification, not a result derived
+/// from that likelihood: it treats at most the steepest 3% of valid edges,
+/// subject to a 1 radian floor, as uninformative by assigning zero directional
+/// cost. It approximates a missing heavy-tailed or mixture component for real
+/// discontinuities and aliased gradients while preserving fixed linear costs.
+/// isce3 PHASS uses the related fixed rule `|Δφ| >= 1 rad → cost 0`.
+#[derive(Debug, Clone, Copy)]
+pub struct SlopeGuard {
+    /// Raw per-edge wrapped `|Δφ|` (radians) at or above which the cost model
+    /// is considered out of its validity domain. With `budget == 0` this is
+    /// the threshold; with a budget it is the *floor*. `<= 0` and no budget
+    /// disables the guard.
+    pub threshold_rad: f32,
+    /// Maximum fraction of valid edges the guard may free. When `> 0` the
+    /// threshold is chosen per frame as the matching quantile of the raw
+    /// `|Δφ|` distribution (floored at `threshold_rad`), instead of being a
+    /// fixed radian value.
+    ///
+    /// Motivation: a fixed threshold does not generalize across scenes. 1 rad
+    /// fixes the cryo frame and `077_A_036` (2-3% of their edges aliased) but
+    /// frees ~50% of the decorrelated `143_D_060` and visibly destabilizes it;
+    /// 2 rad is safe there but stops fixing `077_A_036`. What separates the
+    /// cases is *how much of the cost field the guard erases*, not coherence -
+    /// aliased edges are low-coherence in every frame, fixed or broken (see
+    /// `docs/BUG_NISAR_CRYO_STACKED_CUTS.md`). Budgeting that fraction turns a
+    /// per-scene radian value into one scene-independent knob: it selects
+    /// ~1 rad where few edges alias, and pushes toward π where most do, which
+    /// disables the guard exactly where it does harm.
+    pub budget: f32,
+    pub mode: SlopeGuardMode,
+}
+
+/// Production settings validated on the NISAR hard-frame and parity suites.
+pub const DEFAULT_SLOPE_GUARD_RAD: f32 = 1.0;
+pub const DEFAULT_SLOPE_GUARD_BUDGET: f32 = 0.03;
+
+impl Default for SlopeGuard {
+    fn default() -> Self {
+        Self {
+            threshold_rad: DEFAULT_SLOPE_GUARD_RAD,
+            budget: DEFAULT_SLOPE_GUARD_BUDGET,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+    }
+}
+
+/// A [`SlopeGuard`] with its per-frame threshold resolved (see
+/// [`SlopeGuard::resolve`]). This is what the cost loops consult.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedSlopeGuard {
+    threshold_rad: f32,
+    mode: SlopeGuardMode,
+}
+
+/// Bin count for the budget quantile. 1024 bins over `[0, π]` puts the
+/// threshold within ~0.003 rad, far finer than the effect being measured.
+const GUARD_HIST_BINS: usize = 1024;
+
+impl SlopeGuard {
+    #[inline]
+    fn off() -> Self {
+        Self {
+            threshold_rad: 0.0,
+            budget: 0.0,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+    }
+
+    #[inline]
+    pub fn enabled(&self) -> bool {
+        self.threshold_rad > 0.0 || self.budget > 0.0
+    }
+
+    /// Resolve the per-frame threshold. Without a budget this just carries the
+    /// configured radian value through; with one it picks the smallest cut
+    /// that frees no more than `budget` of the valid edges, never going below
+    /// `threshold_rad`.
+    ///
+    /// `edges` pairs each raw gradient array with its per-edge coherence and an
+    /// optional explicit-validity map. Mask-boundary edges have meaningless
+    /// gradients and are excluded from both the distribution and firing even
+    /// if a caller left their coherence nonzero.
+    fn resolve(
+        &self,
+        edges: &[(ArrayView2<f32>, ArrayView2<f32>, Option<ArrayView2<bool>>)],
+    ) -> ResolvedSlopeGuard {
+        let mut threshold_rad = self.threshold_rad;
+        if self.budget > 0.0 {
+            let mut hist = vec![0_u64; GUARD_HIST_BINS];
+            let mut total = 0_u64;
+            for (raw, cor, valid) in edges {
+                ndarray::Zip::indexed(raw).and(cor).for_each(|idx, &d, &g| {
+                    if g > 1e-9 && valid.as_ref().is_none_or(|v| v[idx]) {
+                        total += 1;
+                        let frac = d.abs() / std::f32::consts::PI;
+                        let b = (frac * GUARD_HIST_BINS as f32) as usize;
+                        hist[b.min(GUARD_HIST_BINS - 1)] += 1;
+                    }
+                });
+            }
+            // Walk down from the steepest bin until spending one more would
+            // exceed the budget; that bin's upper edge is the threshold.
+            let allowed = (self.budget as f64 * total as f64) as u64;
+            let mut acc = 0_u64;
+            let mut chosen = std::f32::consts::PI;
+            for b in (0..GUARD_HIST_BINS).rev() {
+                if acc + hist[b] > allowed {
+                    chosen = (b + 1) as f32 / GUARD_HIST_BINS as f32 * std::f32::consts::PI;
+                    break;
+                }
+                acc += hist[b];
+            }
+            threshold_rad = threshold_rad.max(chosen);
+        }
+        ResolvedSlopeGuard {
+            threshold_rad,
+            mode: self.mode,
+        }
+    }
+}
+
+impl ResolvedSlopeGuard {
+    /// A guard that never fires, for the disabled path.
+    #[inline]
+    fn off() -> Self {
+        Self {
+            threshold_rad: 0.0,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+    }
+
+    #[inline]
+    fn enabled(&self) -> bool {
+        self.threshold_rad > 0.0
+    }
+
+    /// Whether the guard fires for the edge at `(i, j)`.
+    ///
+    /// `valid` excludes mask-boundary edges, whose raw gradient is meaningless;
+    /// `gamma > 0` independently excludes zero-information edges. PHASS gates
+    /// its rule the same way (`corr > small` on both endpoints).
+    #[inline]
+    fn fires(
+        &self,
+        raw: Option<&ArrayView2<f32>>,
+        i: usize,
+        j: usize,
+        gamma: f32,
+        valid: bool,
+    ) -> bool {
+        match raw {
+            Some(r) => {
+                self.enabled() && valid && gamma > 1e-9 && r[(i, j)].abs() >= self.threshold_rad
+            }
+            None => false,
+        }
+    }
+}
+
+fn env_requests_guard_off(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "off" | "0" | "false" | "no"
+        )
+    })
+}
+
+fn slope_guard_from_values(
+    switch: Option<&str>,
+    threshold_rad: Option<&str>,
+    budget: Option<&str>,
+    mode: Option<&str>,
+) -> SlopeGuard {
+    if env_requests_guard_off(switch) {
+        return SlopeGuard::off();
+    }
+
+    let defaults = SlopeGuard::default();
+    SlopeGuard {
+        threshold_rad: threshold_rad
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(defaults.threshold_rad),
+        budget: budget
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(defaults.budget),
+        mode: match mode {
+            Some("zeroslope") => SlopeGuardMode::ZeroSlope,
+            _ => defaults.mode,
+        },
+    }
+}
+
+/// Read the [`SlopeGuard`] configuration once from the environment.
+///
+/// The production default frees at most the steepest 3% of valid edges, with a
+/// 1 radian floor. `WHIRLWIND_SLOPE_GUARD=off` restores the unguarded cost
+/// field. `WHIRLWIND_SLOPE_GUARD_RAD` overrides the threshold (or floor when a
+/// budget is set), `WHIRLWIND_SLOPE_GUARD_BUDGET` overrides the maximum
+/// fraction, and `WHIRLWIND_SLOPE_GUARD_MODE` selects `zerocost` (default) or
+/// the diagnostic `zeroslope` arm. Set the budget explicitly to 0 for a fixed
+/// radian threshold.
+pub fn slope_guard() -> SlopeGuard {
+    use std::sync::OnceLock;
+    static G: OnceLock<SlopeGuard> = OnceLock::new();
+    *G.get_or_init(|| {
+        let switch = std::env::var("WHIRLWIND_SLOPE_GUARD").ok();
+        let threshold_rad = std::env::var("WHIRLWIND_SLOPE_GUARD_RAD").ok();
+        let budget = std::env::var("WHIRLWIND_SLOPE_GUARD_BUDGET").ok();
+        let mode = std::env::var("WHIRLWIND_SLOPE_GUARD_MODE").ok();
+        slope_guard_from_values(
+            switch.as_deref(),
+            threshold_rad.as_deref(),
+            budget.as_deref(),
+            mode.as_deref(),
+        )
+    })
+}
+
 /// Raw per-arc wrapped phase gradients (no smoothing).
 ///
 /// Returns `(phase_dy, phase_dx)` with shapes `(m-1, n)` and `(m, n-1)`
@@ -531,6 +771,17 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
     // Biased (non-mask-aware) smoothing - matches Python's uniform_filter.
     let (phase_dy_s, phase_dx_s) = smooth_phase_gradients(igram, window);
 
+    // Aliased-gradient robustness guard (see `SlopeGuard`). It keys off the RAW
+    // per-edge wrapped difference, not the smoothed slope: a box average over a
+    // shear margin is diluted by its gentle neighbours. The opt-out path does
+    // not allocate or compute the raw gradients.
+    let guard_cfg = slope_guard();
+    let raw_grads = guard_cfg.enabled().then(|| phase_gradients_raw(igram));
+    let (raw_dy_v, raw_dx_v) = match &raw_grads {
+        Some((dy, dx)) => (Some(dy.view()), Some(dx.view())),
+        None => (None, None),
+    };
+
     let mut cor_dy = Array2::<f32>::zeros((m_phase - 1, n_phase));
     cor_dy
         .axis_iter_mut(Axis(0))
@@ -579,6 +830,45 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
         out
     });
 
+    // The guard's raw gradient is meaningful only when BOTH endpoint pixels
+    // are valid. Keep this separate from the parity cost mask above: ww-orig
+    // treats only both-invalid arcs as sea, while the guard must also exclude
+    // one-sided mask-boundary arcs. Do not rely on callers zeroing coherence
+    // outside the explicit mask.
+    let guard_valid_dy = raw_dy_v.and_then(|_| {
+        mask.map(|m_| {
+            Array2::<bool>::from_shape_fn((m_phase - 1, n_phase), |(i, j)| {
+                m_[(i, j)] && m_[(i + 1, j)]
+            })
+        })
+    });
+    let guard_valid_dx = raw_dx_v.and_then(|_| {
+        mask.map(|m_| {
+            Array2::<bool>::from_shape_fn((m_phase, n_phase - 1), |(i, j)| {
+                m_[(i, j)] && m_[(i, j + 1)]
+            })
+        })
+    });
+
+    // Resolve the guard's per-frame threshold now that the per-edge coherence
+    // arrays exist (a budget picks the threshold from the |Δφ| distribution
+    // over edges that could actually fire).
+    let guard = match (raw_dy_v, raw_dx_v) {
+        (Some(rdy), Some(rdx)) => guard_cfg.resolve(&[
+            (
+                rdy,
+                cor_dy.view(),
+                guard_valid_dy.as_ref().map(|v| v.view()),
+            ),
+            (
+                rdx,
+                cor_dx.view(),
+                guard_valid_dx.as_ref().map(|v| v.view()),
+            ),
+        ]),
+        _ => ResolvedSlopeGuard::off(),
+    };
+
     // Use the embedded ww-orig spline tables for p0/p1.
     let sp_lut = spline_lut::get_or_load();
 
@@ -596,6 +886,8 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
     let cor_dx_v = cor_dx.view();
     let mask_dy_bi_ref = mask_dy_bi.as_ref().map(|a| a.view());
     let mask_dx_bi_ref = mask_dx_bi.as_ref().map(|a| a.view());
+    let guard_valid_dy_ref = guard_valid_dy.as_ref().map(|a| a.view());
+    let guard_valid_dx_ref = guard_valid_dx.as_ref().map(|a| a.view());
 
     let stride_h = g.n - 1;
     let right_body = &mut right_slab[stride_h..];
@@ -617,6 +909,20 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
                     .unwrap_or(false);
                 let (c_rt, c_lt) = if both_invalid {
                     (sea, sea)
+                } else if guard.fires(
+                    raw_dy_v.as_ref(),
+                    i,
+                    j,
+                    gamma,
+                    guard_valid_dy_ref.as_ref().is_none_or(|v| v[(i, j)]),
+                ) {
+                    match guard.mode {
+                        SlopeGuardMode::ZeroCost => (sea, sea),
+                        SlopeGuardMode::ZeroSlope => {
+                            let c = pack(sp_lut.cost(0.0, gamma, nlooks));
+                            (c, c)
+                        }
+                    }
                 } else {
                     (
                         pack(sp_lut.cost(-alpha, gamma, nlooks)),
@@ -643,6 +949,20 @@ fn compute_carballo_costs_parity_impl<T: Copy + Default + Send + Sync>(
                     .unwrap_or(false);
                 let (c_dn, c_up) = if both_invalid {
                     (sea, sea)
+                } else if guard.fires(
+                    raw_dx_v.as_ref(),
+                    i,
+                    j,
+                    gamma,
+                    guard_valid_dx_ref.as_ref().is_none_or(|v| v[(i, j)]),
+                ) {
+                    match guard.mode {
+                        SlopeGuardMode::ZeroCost => (sea, sea),
+                        SlopeGuardMode::ZeroSlope => {
+                            let c = pack(sp_lut.cost(0.0, gamma, nlooks));
+                            (c, c)
+                        }
+                    }
                 } else {
                     (
                         pack(sp_lut.cost(alpha, gamma, nlooks)),
@@ -1140,6 +1460,179 @@ fn build_inv_var_dx(variance: ArrayView2<f32>) -> Array2<f32> {
             }
         });
     out
+}
+
+#[cfg(test)]
+mod slope_guard_tests {
+    use super::*;
+    use ndarray::arr2;
+
+    #[test]
+    fn default_is_validated_budgeted_guard() {
+        let guard = SlopeGuard::default();
+        assert!(guard.enabled());
+        assert_eq!(guard.threshold_rad, DEFAULT_SLOPE_GUARD_RAD);
+        assert_eq!(guard.budget, DEFAULT_SLOPE_GUARD_BUDGET);
+        assert_eq!(guard.mode, SlopeGuardMode::ZeroCost);
+    }
+
+    #[test]
+    fn explicit_opt_out_values_are_recognized() {
+        for value in ["off", "OFF", "0", "false", "False", "no", " no "] {
+            assert!(env_requests_guard_off(Some(value)), "{value:?}");
+        }
+        for value in ["on", "1", "true", "yes", ""] {
+            assert!(!env_requests_guard_off(Some(value)), "{value:?}");
+        }
+        assert!(!env_requests_guard_off(None));
+    }
+
+    #[test]
+    fn environment_values_resolve_default_opt_out_and_fixed_arms() {
+        let default = slope_guard_from_values(None, None, None, None);
+        assert_eq!(default.threshold_rad, DEFAULT_SLOPE_GUARD_RAD);
+        assert_eq!(default.budget, DEFAULT_SLOPE_GUARD_BUDGET);
+        assert_eq!(default.mode, SlopeGuardMode::ZeroCost);
+
+        let off = slope_guard_from_values(Some("off"), Some("2.0"), Some("0.5"), None);
+        assert!(!off.enabled(), "the explicit switch takes precedence");
+
+        let fixed = slope_guard_from_values(None, Some("2.0"), Some("0"), Some("zeroslope"));
+        assert_eq!(fixed.threshold_rad, 2.0);
+        assert_eq!(fixed.budget, 0.0);
+        assert_eq!(fixed.mode, SlopeGuardMode::ZeroSlope);
+    }
+
+    /// A fixed-threshold guard, resolved (no budget => threshold passes through).
+    fn fixed(threshold_rad: f32) -> ResolvedSlopeGuard {
+        SlopeGuard {
+            threshold_rad,
+            budget: 0.0,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+        .resolve(&[])
+    }
+
+    #[test]
+    fn fires_only_on_aliased_edges_with_valid_coherence() {
+        let raw = arr2(&[[0.5_f32, 1.5], [-2.0, 0.99]]);
+        let v = raw.view();
+        let g = fixed(1.0);
+
+        assert!(
+            !g.fires(Some(&v), 0, 0, 0.8, true),
+            "0.5 rad is below threshold"
+        );
+        assert!(g.fires(Some(&v), 0, 1, 0.8, true), "1.5 rad is aliased");
+        assert!(
+            g.fires(Some(&v), 1, 0, 0.8, true),
+            "guard keys off |dphi|, not sign"
+        );
+        assert!(
+            !g.fires(Some(&v), 1, 1, 0.8, true),
+            "0.99 rad is just below a 1.0 threshold"
+        );
+        // A mask-boundary edge has gamma == 0; its raw gradient is meaningless
+        // (masked pixels enter as 0+0j), so the guard must not fire there.
+        assert!(
+            !g.fires(Some(&v), 0, 1, 0.8, false),
+            "guard must not fire across an explicit mask boundary"
+        );
+        assert!(
+            !g.fires(Some(&v), 0, 1, 0.0, true),
+            "guard must not fire on a zero-coherence (mask boundary) edge"
+        );
+        // Disabled guard never fires, and no raw gradients means no guard.
+        assert!(!fixed(0.0).fires(Some(&v), 0, 1, 0.8, true));
+        assert!(!g.fires(None, 0, 1, 0.8, true));
+    }
+
+    /// The budget picks the threshold from the data so that only the requested
+    /// fraction of valid edges is freed. This is what lets one scene-independent
+    /// knob cover both a steep frame (few aliased edges -> a low threshold, the
+    /// guard applies) and a decorrelated one (most edges aliased -> threshold
+    /// pushed toward π, the guard backs off). Zero-coherence edges are excluded
+    /// from the distribution, exactly as they are excluded from firing.
+    #[test]
+    fn budget_picks_a_threshold_that_frees_about_the_requested_fraction() {
+        // 100 edges: 90 gentle (0.1 rad), 10 steep (3.0 rad).
+        let mut raw = ndarray::Array2::<f32>::from_elem((10, 10), 0.1);
+        for j in 0..10 {
+            raw[(0, j)] = 3.0;
+        }
+        let cor = ndarray::Array2::<f32>::from_elem((10, 10), 0.8);
+
+        // A 10% budget must let exactly the steep decile through.
+        let g = SlopeGuard {
+            threshold_rad: 0.0,
+            budget: 0.10,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+        .resolve(&[(raw.view(), cor.view(), None)]);
+        let fired = (0..10)
+            .flat_map(|i| (0..10).map(move |j| (i, j)))
+            .filter(|&(i, j)| g.fires(Some(&raw.view()), i, j, 0.8, true))
+            .count();
+        assert_eq!(fired, 10, "a 10% budget must free the steep decile");
+
+        // A budget far below the aliased fraction backs the guard off entirely
+        // rather than freeing the whole steep population - the `143_D_060` case.
+        let tight = SlopeGuard {
+            threshold_rad: 0.0,
+            budget: 0.01,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+        .resolve(&[(raw.view(), cor.view(), None)]);
+        let fired_tight = (0..10)
+            .flat_map(|i| (0..10).map(move |j| (i, j)))
+            .filter(|&(i, j)| tight.fires(Some(&raw.view()), i, j, 0.8, true))
+            .count();
+        assert_eq!(
+            fired_tight, 0,
+            "a budget below the aliased fraction must back off, not overspend"
+        );
+
+        // The configured radian value is a FLOOR under a budget: a generous
+        // budget must not drag the threshold below it and free gentle edges.
+        let floored = SlopeGuard {
+            threshold_rad: 2.0,
+            budget: 0.90,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+        .resolve(&[(raw.view(), cor.view(), None)]);
+        let fired_floored = (0..10)
+            .flat_map(|i| (0..10).map(move |j| (i, j)))
+            .filter(|&(i, j)| floored.fires(Some(&raw.view()), i, j, 0.8, true))
+            .count();
+        assert_eq!(fired_floored, 10, "the radian floor must bound the budget");
+    }
+
+    #[test]
+    fn budget_excludes_explicit_mask_boundaries_with_nonzero_coherence() {
+        let raw = arr2(&[[0.1_f32, 3.0]]);
+        let cor = arr2(&[[0.8_f32, 0.8]]);
+        let valid = arr2(&[[true, false]]);
+        let g = SlopeGuard {
+            threshold_rad: 0.0,
+            budget: 0.50,
+            mode: SlopeGuardMode::ZeroCost,
+        }
+        .resolve(&[(raw.view(), cor.view(), Some(valid.view()))]);
+
+        assert!(!g.fires(Some(&raw.view()), 0, 1, 0.8, false));
+    }
+
+    /// The `ZeroSlope` arm must stay *expensive* on a coherent edge - that is
+    /// the whole reason it is only a diagnostic. If this ever inverts, the
+    /// interpretation in `docs/BUG_NISAR_CRYO_STACKED_CUTS.md` is wrong.
+    #[test]
+    fn zero_slope_cost_is_not_free_on_coherent_edges() {
+        let lut = spline_lut::get_or_load();
+        assert!(
+            lut.cost(0.0, 0.8, 16.0) > 0,
+            "a coherent flat-slope cut must cost something"
+        );
+    }
 }
 
 #[cfg(test)]

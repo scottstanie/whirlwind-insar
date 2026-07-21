@@ -15,9 +15,9 @@ The algorithm:
   1. Label the integration regions (connected components of the valid mask).
   2. For every pair of regions, find the closest boundary-pixel pair (the
      natural place to bridge - where the true phase gap is smallest).
-  3. Build a minimum spanning tree of those distances, rooted at the largest
-     region, so each region is referenced through its nearest neighbor rather
-     than directly to one global anchor.
+  3. Visit regions from largest to smallest and attach each one to its nearest
+     already-visited (therefore no smaller) region. This prevents a tiny island
+     from becoming the phase reference for a much larger landmass.
   4. Walking the tree outward from the root, compare the median unwrapped phase
      in a local box around the two bridge endpoints, round the difference to an
      integer number of cycles, and shift the child region (and, transitively,
@@ -77,7 +77,7 @@ def bridge_components_reference(
     unw: "NDArray[np.float32]",
     mask: "NDArray[np.bool_] | None" = None,
     *,
-    radius: int = 500,
+    radius: int = 32,
     min_px: int = 500,
     max_boundary: int = 2000,
 ) -> "NDArray[np.float32]":
@@ -94,7 +94,7 @@ def bridge_components_reference(
     mask : ndarray of bool, optional
         Valid-pixel mask defining the integration regions. Defaults to the
         finite, nonzero pixels of ``unw``.
-    radius : int, default 500
+    radius : int, default 32
         Half-width of the box around each bridge endpoint over which the
         region's local phase level is taken (clamped to a scene-relative size).
     min_px : int, default 500
@@ -145,25 +145,15 @@ def bridge_components_reference(
             dist[a, b] = dist[b, a] = float(np.sqrt(d2[fi, fj]))
             endpts[(a, b)] = (bi[fi], bj[fj])  # (coord in big[a], coord in big[b])
 
-    # Prim's MST rooted at the reference; record edges in growth order so a
-    # parent is always already corrected when its child is processed.
-    in_tree = [False] * K
-    in_tree[big.index(ref)] = True
+    # Size-monotone nearest-neighbor tree. A parent is always at least as large
+    # as its child, so a tiny stepping-stone region cannot set a huge region's
+    # phase level (which an ordinary geometric MST can accidentally allow).
+    order = sorted(range(K), key=lambda idx: (-sizes[big[idx]], idx))
+    assert order[0] == big.index(ref)
     edges: list[tuple[int, int]] = []  # (parent_idx, child_idx)
-    for _ in range(K - 1):
-        best = None
-        for u in range(K):
-            if not in_tree[u]:
-                continue
-            for v in range(K):
-                if in_tree[v] or not np.isfinite(dist[u, v]):
-                    continue
-                if best is None or dist[u, v] < best[0]:
-                    best = (dist[u, v], u, v)
-        if best is None:
-            break  # graph not fully connected (shouldn't happen for a clique)
-        _, u, v = best
-        in_tree[v] = True
+    for pos in range(1, K):
+        v = order[pos]
+        u = min(order[:pos], key=lambda candidate: dist[candidate, v])
         edges.append((u, v))
 
     out = unw.copy()

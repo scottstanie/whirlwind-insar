@@ -286,8 +286,9 @@ def unwrap(
         low-coherence river). The MCF seeds each piece at an arbitrary 2π level,
         so the relative offset between pieces is under-determined. This pass
         estimates each region's level from the unwrapped phase at the region
-        boundaries and snaps it to an integer number of cycles, propagated along
-        a minimum spanning tree rooted at the largest region.
+        boundaries and snaps it to an integer number of cycles. Regions are
+        processed from largest to smallest and anchored to the nearest region
+        already processed, so a tiny island cannot set a large landmass's level.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
         interferogram is coherently averaged into ``downsample x downsample``
