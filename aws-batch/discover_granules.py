@@ -18,8 +18,8 @@ Two steps, either of which can be run alone:
 
 The output manifest is a plain list of download URLs, one per line, which
 ``run_local.py`` (and ``compare_gunw.py --inputs-file``) reads directly. A
-sidecar CSV keeps the metadata (track, frame, bounding box, size) that the
-aggregator uses for the coverage map.
+sidecar CSV keeps the metadata (track, frame, bounding box, size) for the
+aggregated campaign table.
 
 Example::
 

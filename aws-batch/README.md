@@ -41,6 +41,15 @@ For each GUNW product, `compare_gunw.py`:
 2. Reads the production `coherenceMagnitude` and the GUNW `mask` (water / subswath
    validity), and builds a valid-pixel mask.
 
+   `--mask-policy subswath` (the default) matches what the NISAR workflow itself
+   masks before unwrapping: samples invalid in either RSLC, and **not** water.
+   Its runconfig sets `mask_type: subswath_mask`, which isce3 reduces to
+   `invalid = ~reference_valid | ~secondary_valid`; the browse imagery confirms
+   it, with the subswath edges blanked and the water unwrapped. Masking water
+   instead severs the valid domain along every river, splitting a frame into
+   hundreds of integration regions that then have to be re-leveled against each
+   other. `water_only` and `nisar_land` are available for comparison.
+
 3. Runs `whirlwind.unwrap(igram, corr, nlooks, mask)` — the exact public API an
    external user would call. This returns an unwrapped phase and SNAPHU-style
    connected-component labels.
@@ -78,15 +87,20 @@ valid pixels vs production's ~70%, so those regions show red. The 2π solution s
 agrees with production at 99.8%.
 
 `--conncomp-min-coherence` sets the coherence below which conncomp labels a pixel
-0. The default `auto` is `0.32/sqrt(nlooks)` (0.08 at 16 looks); raise it to drop
+0. The default `auto` is `0.32/sqrt(nlooks)` (0.045 at 50 looks); raise it to drop
 more low-coherence pixels, at the cost of more components. On A_140:
 
 | `--conncomp-min-coherence` | labeled fraction |
 | -------------------------- | ---------------- |
-| auto (0.08 at 16 looks)    | 0.99             |
+| 0.08                       | 0.99             |
 | 0.10                       | 0.82             |
 | 0.12                       | 0.67             |
 | 0.15                       | 0.35             |
+
+Raising this floor is the most promising open knob for closing the remaining
+label gap against production. It is **not** changed from `auto` by default —
+see [`CONNCOMP_FLOOR_EXPERIMENT.md`](CONNCOMP_FLOOR_EXPERIMENT.md) for why, and
+for the experiment to run at campaign scale before touching the default.
 
 ---
 
@@ -103,7 +117,7 @@ export EARTHDATA_TOKEN=...                       # an EDL bearer token, or
 
 uv run aws-batch/compare_gunw.py \
   https://nisar.asf.earthdatacloud.nasa.gov/.../<ID>.h5 \
-  --out-dir out --nlooks 16
+  --out-dir out --nlooks 50
 ```
 
 Run all three samples at once:

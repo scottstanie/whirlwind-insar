@@ -306,7 +306,12 @@ def main() -> None:
         default=None,
         help="Threads each unwrap may use. Default: cores // workers (min 1).",
     )
-    p.add_argument("--nlooks", type=float, default=16.0)
+    p.add_argument(
+        "--nlooks",
+        default="50",
+        help="Passed through to compare_gunw.py. 50 is the measured equivalent "
+        "looks of the GUNW unwrap grid; 'auto' derives it per-product.",
+    )
     p.add_argument(
         "--compare-arg",
         action="append",
