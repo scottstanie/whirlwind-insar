@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["pandas", "matplotlib"]
+# dependencies = ["pandas", "matplotlib", "numpy"]
 # ///
 """Roll a whole campaign of per-granule GUNW comparisons into one table + plots.
 
@@ -10,8 +10,8 @@ Reads everything ``run_local.py`` produced under ``--root``:
 * ``results/<granule>/<granule>/<crop>.json`` -- the comparison stats written by
   ``compare_gunw.py`` (agreement, components, coherence, ...).
 * ``runs.jsonl`` -- the runner's wall time and true peak RSS per job.
-* the manifest's ``.meta.csv`` sidecar, if given -- track/frame/bounding box, so
-  results can be mapped and grouped by track.
+* the manifest's ``.meta.csv`` sidecar, if given -- track/frame/bounding box for
+  spatial analysis and grouping.
 
 Writes ``campaign.csv`` (one row per granule x crop), ``campaign.md`` (headline
 numbers and the worst frames to look at first), and a figure panel.
@@ -32,11 +32,21 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+from matplotlib.ticker import PercentFormatter, ScalarFormatter  # noqa: E402
 
 # The headline accuracy metric: agreement with the production unwrap on the 2*pi
 # integer, after re-levelling within each production connected component.
 SCORE = "ambiguity_match_frac_percomp"
+
+# Keep the quality tiers identical anywhere agreement is encoded. Marker shape
+# makes the categories readable in monochrome as well as in colour.
+QUALITY_TIERS = (
+    ("agreement >=99%", 0.99, 1.01, "#2a9d8f", "o", 15, 0.50),
+    ("agreement 90-99%", 0.90, 0.99, "#e9a23b", "D", 22, 0.72),
+    ("agreement <90%", -0.01, 0.90, "#d1495b", "X", 32, 0.90),
+)
 
 
 def norm_key(name: str) -> str:
@@ -126,89 +136,213 @@ def merge_all(root: Path, meta_csv: Path | None) -> pd.DataFrame:
     return df
 
 
+def scatter_quality_tiers(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    x: pd.Series,
+    y: pd.Series,
+    *,
+    legend: bool = False,
+) -> None:
+    """Scatter x/y using the campaign's three agreement tiers."""
+    finite = x.notna() & y.notna() & df[SCORE].notna()
+    for label, low, high, color, marker, size, alpha in QUALITY_TIERS:
+        use = finite & df[SCORE].ge(low) & df[SCORE].lt(high)
+        if use.any():
+            ax.scatter(
+                x[use],
+                y[use],
+                s=size,
+                alpha=alpha,
+                c=color,
+                marker=marker,
+                linewidths=0.25,
+                label=label,
+                rasterized=True,
+            )
+    if legend:
+        ax.legend(loc="best", frameon=False, fontsize=8)
+
+
 def make_plots(df: pd.DataFrame, out_png: Path) -> None:
     has_mem = "peak_rss_mb" in df and df["peak_rss_mb"].notna().any()
-    has_geo = "min_lon" in df and df["min_lon"].notna().any()
+    has_recall = all(
+        c in df and df[c].notna().any()
+        for c in ("prod_unwrapped_recall", "ww_unwrapped_recall")
+    )
+    has_coherence = "coh_mean_valid" in df and df["coh_mean_valid"].notna().any()
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
     ax = axes.ravel()
+    score = df[SCORE].dropna().clip(0, 1)
 
-    # 1. Distribution of agreement with the production unwrap.
-    ax[0].hist(df[SCORE].dropna(), bins=40, range=(0, 1), color="steelblue")
-    ax[0].set_xlabel("per-component ambiguity agreement")
-    ax[0].set_ylabel("frames")
-    ax[0].set_title(f"Agreement with NISAR GUNW (n={df[SCORE].notna().sum()})")
+    fig.suptitle(
+        f"whirlwind vs NISAR GUNW — {len(df):,} comparisons",
+        fontsize=18,
+        fontweight="bold",
+        y=0.995,
+    )
+    if len(score):
+        fig.text(
+            0.5,
+            0.963,
+            f"median agreement {score.median():.3%}   |   "
+            f"{(score >= 0.99).mean():.1%} of comparisons at >=99%   |   "
+            f"{(score >= 0.90).mean():.1%} at >=90%",
+            ha="center",
+            va="top",
+            color="#444444",
+        )
 
-    # 2. Same, as an ECDF -- easier to read "how many frames are above 0.99".
-    s = df[SCORE].dropna().sort_values()
-    ax[1].plot(s.values, (pd.Series(range(1, len(s) + 1)) / len(s)).values, lw=2)
-    for thr in (0.9, 0.99):
-        frac = float((s >= thr).mean())
-        ax[1].axvline(thr, ls="--", c="gray", lw=1)
-        ax[1].text(thr, 0.05, f" >={thr}: {frac:.0%}", fontsize=9, rotation=90)
-    ax[1].set_xlabel("agreement")
-    ax[1].set_ylabel("cumulative fraction of frames")
-    ax[1].set_title("ECDF of agreement")
+    # 1. ECDF of the *error* on a log x-axis. Start at 1% mismatch: that keeps
+    # the headline 99%-agreement threshold while avoiding excessive visual
+    # space for differences that are already operationally tiny.
+    mismatch_pct = (100 * (1 - score)).sort_values()
+    if len(mismatch_pct):
+        plotted = mismatch_pct.clip(lower=1.0)
+        cumulative = np.arange(1, len(plotted) + 1) / len(plotted)
+        ax[0].step(plotted, cumulative, where="post", lw=2, c="#4477aa")
+        for mismatch, threshold in ((1.0, 0.99), (10.0, 0.90)):
+            frac = float((score >= threshold).mean())
+            ax[0].axvline(mismatch, ls="--", c="#666666", lw=1)
+            ax[0].scatter([mismatch], [frac], c="#222222", s=20, zorder=5)
+            ax[0].annotate(
+                f"{frac:.1%}",
+                (mismatch, frac),
+                xytext=(5, -12),
+                textcoords="offset points",
+                fontsize=9,
+            )
+        ax[0].set_xscale("log")
+        ax[0].set_xlim(1, 100)
+        ax[0].set_ylim(0, 1.01)
+    ax[0].yaxis.set_major_formatter(PercentFormatter(1.0))
+    ax[0].set_xlabel("mismatched pixels (%) — lower is better")
+    ax[0].set_ylabel("comparisons at or below mismatch")
+    ax[0].set_title("Agreement success curve")
 
-    # 3. Runtime vs problem size.
-    ax[2].scatter(df["megapixels"], df["runtime_s"], s=14, alpha=0.6)
-    ax[2].set_xlabel("megapixels")
-    ax[2].set_ylabel("unwrap runtime (s)")
-    ax[2].set_title("Runtime vs size (in-process; excludes download)")
+    # 2. Agreement against a useful scene-difficulty proxy.
+    if has_coherence:
+        scatter_quality_tiers(ax[1], df, df["coh_mean_valid"], df[SCORE], legend=True)
+        for threshold in (0.90, 0.99):
+            ax[1].axhline(threshold, ls="--", c="#777777", lw=0.8)
+        ax[1].set_xlim(0, 1)
+        ax[1].set_ylim(0, 1.01)
+        ax[1].yaxis.set_major_formatter(PercentFormatter(1.0))
+        ax[1].set_xlabel("mean coherence on valid pixels")
+        ax[1].set_ylabel("per-component agreement")
+        ax[1].set_title("Agreement vs scene coherence")
+    else:
+        ax[1].set_visible(False)
 
-    # 4. Peak memory vs problem size.
+    # 3. Connected-component coverage/recall. Points above the identity line
+    # are pixels whirlwind labels that production does not.
+    if has_recall:
+        prod_recall = df["prod_unwrapped_recall"]
+        ww_recall = df["ww_unwrapped_recall"]
+        scatter_quality_tiers(ax[2], df, prod_recall, ww_recall)
+        ax[2].plot([0, 1], [0, 1], "--", c="#444444", lw=1, label="equal coverage")
+        ax[2].fill_between(
+            [0, 1], [0, 1], [1, 1], color="#2a9d8f", alpha=0.08, linewidth=0
+        )
+        delta_pp = 100 * (ww_recall - prod_recall).dropna().median()
+        ax[2].set_xlim(0, 1)
+        ax[2].set_ylim(0, 1)
+        ax[2].xaxis.set_major_formatter(PercentFormatter(1.0))
+        ax[2].yaxis.set_major_formatter(PercentFormatter(1.0))
+        ax[2].set_xlabel("production labeled-pixel coverage")
+        ax[2].set_ylabel("whirlwind labeled-pixel coverage")
+        ax[2].set_title(
+            f"Connected-component coverage (median delta {delta_pp:+.1f} pp)"
+        )
+        ax[2].legend(loc="lower right", frameon=False, fontsize=8)
+    else:
+        ax[2].set_visible(False)
+
+    # 4. Runtime vs problem size. The median-throughput line is descriptive,
+    # not a fit: parallel campaign timings include contention.
+    runtime = df[["megapixels", "runtime_s"]].dropna()
+    ax[3].scatter(
+        runtime["megapixels"], runtime["runtime_s"], s=14, alpha=0.5, c="#4477aa"
+    )
+    seconds_per_mpx = (runtime["runtime_s"] / runtime["megapixels"]).median()
+    if len(runtime) and np.isfinite(seconds_per_mpx):
+        grid = np.array([runtime["megapixels"].min(), runtime["megapixels"].max()])
+        ax[3].plot(
+            grid,
+            seconds_per_mpx * grid,
+            "--",
+            c="#333333",
+            lw=1,
+            label=f"median {seconds_per_mpx:.2f} s/Mpx",
+        )
+        ax[3].legend(frameon=False, fontsize=8)
+    ax[3].set_xlabel("megapixels")
+    ax[3].set_ylabel("unwrap runtime (s)")
+    ax[3].set_title("Runtime scaling (in-process; excludes download)")
+
+    # 5. Peak memory vs problem size.
     if has_mem:
-        ax[3].scatter(
+        ax[4].scatter(
             df["megapixels"], df["peak_rss_mb"] / 1e3, s=14, alpha=0.6, c="darkorange"
         )
         med = df["gb_per_mpx"].median()
         xs = df["megapixels"].dropna()
         if len(xs):
             grid = [xs.min(), xs.max()]
-            ax[3].plot(
+            ax[4].plot(
                 grid,
                 [med * g for g in grid],
                 "k--",
                 lw=1,
                 label=f"{med:.2f} GB/Mpx (median)",
             )
-            ax[3].legend()
-        ax[3].set_xlabel("megapixels")
-        ax[3].set_ylabel("peak RSS (GB, whole process tree)")
-        ax[3].set_title("Peak memory vs size")
-    else:
-        ax[3].set_visible(False)
+            ax[4].legend(frameon=False, fontsize=8)
+        ax[4].set_xlabel("megapixels")
+        ax[4].set_ylabel("peak RSS (GB, whole process tree)")
+        ax[4].set_title("Peak-memory scaling")
 
-    # 5. Connected components: whirlwind vs production.
-    if "ww_num_cc" in df and "prod_num_cc" in df:
-        ax[4].scatter(df["prod_num_cc"], df["ww_num_cc"], s=14, alpha=0.6, c="seagreen")
-        lim = [1, max(df["prod_num_cc"].max(), df["ww_num_cc"].max(), 2)]
-        ax[4].plot(lim, lim, "k--", lw=1)
-        ax[4].set_xscale("log")
-        ax[4].set_yscale("log")
-        ax[4].set_xlabel("production components")
-        ax[4].set_ylabel("whirlwind components")
-        ax[4].set_title("Connected component count")
-    else:
-        ax[4].set_visible(False)
-
-    # 6. Where the frames are, coloured by agreement -- shows both the spatial
-    # spread of the campaign and whether failures cluster geographically.
-    if has_geo:
-        lon = (df["min_lon"] + df["max_lon"]) / 2
-        lat = (df["min_lat"] + df["max_lat"]) / 2
-        sc = ax[5].scatter(lon, lat, c=df[SCORE], cmap="RdYlGn", vmin=0, vmax=1, s=18)
-        fig.colorbar(sc, ax=ax[5], label="agreement")
-        ax[5].set_xlim(-180, 180)
-        ax[5].set_ylim(-90, 90)
-        ax[5].set_xlabel("longitude")
-        ax[5].set_ylabel("latitude")
-        ax[5].set_title("Campaign coverage")
-    else:
+    # 6. Connected components: whirlwind vs production.
+    cc_ax = ax[5] if has_mem else ax[4]
+    if not has_mem:
         ax[5].set_visible(False)
+    if "ww_num_cc" in df and "prod_num_cc" in df:
+        components = df[["prod_num_cc", "ww_num_cc"]].dropna()
+        components = components[
+            (components["prod_num_cc"] > 0) & (components["ww_num_cc"] > 0)
+        ]
+        if len(components):
+            cc_ax.scatter(
+                components["prod_num_cc"],
+                components["ww_num_cc"],
+                s=14,
+                alpha=0.5,
+                c="#2a9d8f",
+                rasterized=True,
+            )
+            upper = max(components.max().max(), 2)
+            cc_ax.plot([1, upper], [1, upper], "k--", lw=1)
+            cc_ax.set_xscale("log", base=2)
+            cc_ax.set_yscale("log", base=2)
+            cc_ax.xaxis.set_major_formatter(ScalarFormatter())
+            cc_ax.yaxis.set_major_formatter(ScalarFormatter())
+            cc_ax.set_xlim(0.8, upper * 1.25)
+            cc_ax.set_ylim(0.8, upper * 1.25)
+            cc_ax.set_xlabel("production components")
+            cc_ax.set_ylabel("whirlwind components")
+            cc_ax.set_title("Connected-component count")
+        else:
+            cc_ax.set_visible(False)
+    else:
+        cc_ax.set_visible(False)
 
-    fig.tight_layout()
-    fig.savefig(out_png, dpi=130)
+    for axis in ax:
+        if axis.get_visible():
+            axis.spines[["top", "right"]].set_visible(False)
+
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -242,6 +376,15 @@ def write_report(df: pd.DataFrame, out_md: Path, png: Path) -> str:
         lines.append(
             f"- components: whirlwind median {df['ww_num_cc'].median():.0f} vs "
             f"production {df['prod_num_cc'].median():.0f}"
+        )
+    recalls = ("prod_unwrapped_recall", "ww_unwrapped_recall")
+    if all(c in df and df[c].notna().any() for c in recalls):
+        prod_recall = df["prod_unwrapped_recall"]
+        ww_recall = df["ww_unwrapped_recall"]
+        lines.append(
+            f"- labeled-pixel coverage: whirlwind median {ww_recall.median():.1%} "
+            f"vs production {prod_recall.median():.1%} (median delta "
+            f"{100 * (ww_recall - prod_recall).median():+.1f} pp)"
         )
 
     cols = [
@@ -286,7 +429,7 @@ def main() -> None:
         "--meta",
         type=Path,
         default=None,
-        help="manifest .meta.csv from discover_granules.py (adds track/frame + map).",
+        help="manifest .meta.csv from discover_granules.py (adds track/frame + bounds).",
     )
     p.add_argument("--crop", default=None, help="Only this crop label, e.g. 'full'.")
     args = p.parse_args()

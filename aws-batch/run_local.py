@@ -306,7 +306,12 @@ def main() -> None:
         default=None,
         help="Threads each unwrap may use. Default: cores // workers (min 1).",
     )
-    p.add_argument("--nlooks", type=float, default=16.0)
+    p.add_argument(
+        "--nlooks",
+        default="calibrated",
+        help="Passed through to compare_gunw.py. 'calibrated' caps the product's "
+        "nominal metadata estimate at 50; 'auto' uses the uncapped estimate.",
+    )
     p.add_argument(
         "--compare-arg",
         action="append",

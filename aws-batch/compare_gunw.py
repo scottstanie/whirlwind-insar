@@ -177,6 +177,36 @@ def mask_to_bool(
     the whole 32-bit integer makes the ionosphere bit (2**24 = 16777216)
     masquerade as a water digit and silently drops roughly half the frame.
     Masking to the low byte is backward-compatible with the old uint8 masks.
+
+    The policies
+    ------------
+    The two exclusions are independent, so the four policies are every
+    combination of them:
+
+    ====================== ====================== ===========
+    policy                 drops invalid subswath drops water
+    ====================== ====================== ===========
+    ``subswath``           yes                    no
+    ``water_only``         no                     yes
+    ``water_and_subswath`` yes                    yes
+    ``ignore``             no                     no
+    ====================== ====================== ===========
+
+    Why ``subswath`` is the default
+    --------------------------------
+    ``subswath`` keeps every pixel with an observation in both RSLCs, including
+    water, and drops pixels where either RSLC has no sample. The delivered NISAR
+    runconfig makes the same validity classification with
+    ``phase_unwrap.preprocess_wrapped_phase.mask.mask_type: subswath_mask``,
+    which isce3 turns into ``invalid = ~reference_valid | ~secondary_valid``.
+    Production uses that classification to preprocess the phase rather than as
+    SNAPHU's hard solver mask; this harness intentionally hard-masks the absent
+    samples instead of reproducing that implementation detail.
+
+    Water is retained because it is an observed sample, not because its phase is
+    assumed reliable. The coherence-dependent costs determine how much it is
+    trusted. In tested river scenes, excluding water severed the domain into
+    hundreds of regions and made the post-solve component re-leveling worse.
     """
     if mask_arr is None or policy == "ignore":
         return np.ones(shape, dtype=bool)
@@ -187,13 +217,65 @@ def mask_to_bool(
     water = (code // 100) % 10
     ref_sub = (code // 10) % 10
     sec_sub = code % 10
+    if policy == "subswath":
+        # Paired-RSLC validity mask: absent samples dropped, water kept.
+        return valid_sample & (ref_sub > 0) & (sec_sub > 0)
     if policy == "water_only":
         # Exclude only water; keep subswath-flagged pixels valid.
         return valid_sample & (water == 0)
-    if policy == "nisar_land":
-        # Keep non-water pixels that are valid samples in both RSLC subswaths.
+    if policy == "water_and_subswath":
+        # Both exclusions at once: non-water pixels that are also valid samples
+        # in both RSLC subswaths.
         return valid_sample & (water == 0) & (ref_sub > 0) & (sec_sub > 0)
     raise ValueError(f"Unknown mask policy {policy!r}")
+
+
+def gunw_water_mask(mask_arr: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray:
+    """Return the water flag from a GUNW mask, excluding its fill value."""
+    if mask_arr is None:
+        return np.zeros(shape, dtype=bool)
+    if mask_arr.shape != shape:
+        raise ValueError(f"Mask shape {mask_arr.shape} != data shape {shape}")
+    code = mask_arr.astype(np.int64) & 0xFF
+    return (code != 255) & (((code // 100) % 10) != 0)
+
+
+def nominal_enl_from_product(h5: h5py.File) -> float:
+    """Nominal independent-look count for the product's unwrap-grid coherence.
+
+    isce3 re-runs ``crossmul`` from the RSLCs at the product's recorded unwrap
+    range and azimuth looks. The coherence sample count is the product of those
+    values, not either axis alone and not those looks composed with the RIFG
+    looks.
+
+    The samples are correlated, so divide by oversampling in each direction:
+    range resolution ``c / 2B`` over the slant-range sample spacing, and PRF
+    over the processed azimuth bandwidth. A 13 x 16 product is about 143
+    nominal independent looks.
+
+    This is a metadata-based upper-bound estimate, not the value production
+    necessarily passes to SNAPHU and not a measurement of the supplied geocoded
+    coherence distribution. The default ``calibrated`` mode caps this estimate
+    at 50, a conservative Whirlwind calibration value, so products with fewer
+    nominal looks are not forced upward. Use ``scripts/estimate_gunw_enl.py`` to
+    inspect a product rather than treating either number as universal.
+
+    Note that ``MAX_COST_MODEL_NLOOKS`` (80) caps only the **cost LUT**; the
+    connected-component reliability conversion uses the raw value, so a large
+    ``nlooks`` still moves component counts even though the costs saturate.
+    """
+    mp = "/science/LSAR/GUNW/metadata/processingInformation/parameters"
+    u = h5[f"{mp}/unwrappedInterferogram/frequencyA"]
+    ref = h5[f"{mp}/reference/frequencyA"]
+    samples = int(u["numberOfRangeLooks"][()]) * int(u["numberOfAzimuthLooks"][()])
+    rg_over = (299_792_458.0 / (2.0 * float(u["rangeBandwidth"][()]))) / float(
+        ref["slantRangeSpacing"][()]
+    )
+    az_over = (1.0 / float(ref["zeroDopplerTimeSpacing"][()])) / float(
+        u["azimuthBandwidth"][()]
+    )
+    assert rg_over > 0 and az_over > 0, f"bad oversampling {rg_over}, {az_over}"
+    return samples / (rg_over * az_over)
 
 
 def center_crop_slices(
@@ -543,16 +625,30 @@ def download_s3(uri: str, dest_dir: Path, profile: str | None = None) -> Path:
 
 
 def download_granule(name: str, dest_dir: Path) -> list[Path]:
-    """Resolve a bare granule name to local file(s) via earthaccess/CMR."""
+    """Resolve a bare granule name to local file(s) via earthaccess/CMR.
+
+    CMR refuses to search across all collections, so a bare name has to be
+    looked up one collection at a time: provisional (the current release)
+    first, then beta. A given granule lives in exactly one of them, and
+    searching only one silently returns nothing for products in the other.
+    """
     import earthaccess
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     earthaccess.login()
-    results = earthaccess.search_data(
-        short_name=SHORT_NAME, granule_name=f"{name}*", count=10
-    )
+    results = []
+    for short_name in (SHORT_NAME, SHORT_NAME_BETA):
+        results = earthaccess.search_data(
+            short_name=short_name, granule_name=f"{name}*", count=10
+        )
+        if results:
+            print(f"  resolved {name} in {short_name}", flush=True)
+            break
     if not results:
-        raise RuntimeError(f"No earthaccess results for granule_name={name!r}")
+        raise RuntimeError(
+            f"No earthaccess results for granule_name={name!r} in any of "
+            f"{(SHORT_NAME, SHORT_NAME_BETA)}"
+        )
     paths = [Path(p) for p in earthaccess.download(results, local_path=str(dest_dir))]
     h5s = [p for p in paths if is_main_gunw_h5(p)]
     if not h5s:
@@ -590,6 +686,7 @@ def dump_flat_inputs(
     phase: np.ndarray,
     cor: np.ndarray,
     mask: np.ndarray,
+    nlooks: float,
 ) -> None:
     """Write the solver inputs as flat binary so the pure-Rust ``whirlwind`` CLI
     can be run on the exact same data (the CLI cannot read HDF5).
@@ -607,7 +704,7 @@ def dump_flat_inputs(
     (out_dir / f"{stem}.cli.txt").write_text(
         f"# {nx} cols x {ny} rows, flat binary little-endian float32\n"
         f"whirlwind --phase {stem}.phase --cor {stem}.cor --cols {nx} "
-        f"--nlooks 16 --out {stem}.unw.tif --conncomp {stem}.conncomp.tif\n"
+        f"--nlooks {nlooks:g} --out {stem}.unw.tif --conncomp {stem}.conncomp.tif\n"
     )
 
 
@@ -646,6 +743,21 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         coh_full = read_array(h5[paths["coh_unw"]], np.float32)
         prod_cc_full = h5[paths["cc"]][()].astype(np.int64, copy=False)
         mask_arr_full = h5[paths["mask"]][()] if paths["mask"] in h5 else None
+        nlooks_request = str(args.nlooks).lower()
+        if nlooks_request in {"auto", "calibrated"}:
+            nominal_nlooks = nominal_enl_from_product(h5)
+            if nlooks_request == "auto":
+                nlooks = nominal_nlooks
+                print(f"  nlooks: auto -> {nlooks:.0f} (nominal looks)", flush=True)
+            else:
+                nlooks = min(50.0, nominal_nlooks)
+                print(
+                    f"  nlooks: calibrated -> {nlooks:.0f} "
+                    f"(nominal {nominal_nlooks:.0f}, cap 50)",
+                    flush=True,
+                )
+        else:
+            nlooks = float(args.nlooks)
         if args.use_product_wrapped and paths["wrapped"] in h5:
             wrapped_complex = h5[paths["wrapped"]][()]
             if wrapped_complex.shape == prod_unw_full.shape:
@@ -660,6 +772,8 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         else:
             ig_full = wrap_phase(prod_unw_full).astype(np.float32)
 
+    water_full = gunw_water_mask(mask_arr_full, prod_unw_full.shape)
+    subswath_valid_full = mask_to_bool(mask_arr_full, "subswath", prod_unw_full.shape)
     base_mask_full = mask_to_bool(mask_arr_full, args.mask_policy, prod_unw_full.shape)
     base_mask_full &= (
         np.isfinite(prod_unw_full)
@@ -681,6 +795,8 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         coh = np.ascontiguousarray(coh_full[ys, xs])
         prod_unw = np.ascontiguousarray(prod_unw_full[ys, xs])
         prod_cc = np.ascontiguousarray(prod_cc_full[ys, xs])
+        water = np.ascontiguousarray(water_full[ys, xs])
+        subswath_valid = np.ascontiguousarray(subswath_valid_full[ys, xs])
         mask = np.ascontiguousarray(base_mask_full[ys, xs])
         if mask.sum() == 0:
             print(f"  {label}: no valid pixels, skipping", flush=True)
@@ -688,7 +804,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
 
         print(
             f"  {label}: running ww.unwrap on shape={ig.shape}, "
-            f"valid={mask.mean():.3f}, nlooks={args.nlooks}, "
+            f"valid={mask.mean():.3f}, nlooks={nlooks:.0f}, "
             f"downsample={args.downsample}, interpolate={args.interpolate}, "
             f"goldstein_alpha={args.goldstein_alpha}",
             flush=True,
@@ -704,7 +820,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             np.float32
         )
         if args.dump_flat:
-            dump_flat_inputs(out_product, label, ig_solver, coh_solver, mask)
+            dump_flat_inputs(out_product, label, ig_solver, coh_solver, mask, nlooks)
 
         gc.collect()
         rss0 = get_rss_mb()
@@ -718,7 +834,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         ww_unw, ww_cc = ww.unwrap(
             ig_complex,
             coh_solver,
-            float(args.nlooks),
+            nlooks,
             mask,
             bridge=args.bridge,
             downsample=args.downsample,
@@ -752,7 +868,8 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "product_path": str(path),
                 "crop": label,
                 "pol": pol,
-                "nlooks": args.nlooks,
+                "nlooks": nlooks,
+                "nlooks_request": args.nlooks,
                 "bridge": args.bridge,
                 "downsample": args.downsample,
                 "interpolate": args.interpolate,
@@ -775,6 +892,8 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             ig=ig,
             coh=coh,
             mask=mask,
+            water=water,
+            subswath_valid=subswath_valid,
             prod_unw=prod_unw,
             prod_cc=prod_cc,
             ww_unw=ww_unw,
@@ -794,7 +913,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             amb_diff=amb_diff,
             valid=mask & np.isfinite(ww_unw),
             title=(
-                f"{path.name}\n{label}, pol={pol}, nlooks={args.nlooks}, "
+                f"{path.name}\n{label}, pol={pol}, nlooks={nlooks:.0f}, "
                 f"runtime={runtime_s:.1f}s"
             ),
             stride=max(1, args.plot_downsample),
@@ -810,7 +929,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             flush=True,
         )
         rows.append(stats)
-        del ig, coh, prod_unw, prod_cc, mask, ww_unw, ww_aligned
+        del ig, coh, prod_unw, prod_cc, water, subswath_valid, mask, ww_unw, ww_aligned
         gc.collect()
     return rows
 
@@ -882,9 +1001,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--nlooks",
-        type=float,
-        default=16.0,
-        help="Effective looks for the cost model (NISAR GUNW unwrap looks ~13x16).",
+        default="calibrated",
+        help="Equivalent looks for the cost model. Default 'calibrated' uses the "
+        "smaller of the product's nominal metadata estimate and the conservative "
+        "Whirlwind calibration cap of 50. Pass 'auto' for the uncapped nominal "
+        "estimate, or any number to override. This is not the value production "
+        "necessarily passes to SNAPHU.",
     )
     p.add_argument(
         "--sizes",
@@ -897,7 +1019,7 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help="Coherence floor below which conncomp drops pixels to 0 (a reliability "
         "mask). Default 'auto' is whirlwind's gentle looks-aware floor "
-        "(0.32/sqrt(nlooks), e.g. 0.08 at 16 looks). Pass a number for a fixed "
+        "(0.32/sqrt(nlooks), e.g. 0.045 at 50 looks). Pass a number for a fixed "
         "cutoff, or 'none' to label every unwrapped pixel.",
     )
     p.add_argument(
@@ -946,8 +1068,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pol", default=None, help="Polarization, e.g. HH. Default: first.")
     p.add_argument(
         "--mask-policy",
-        choices=["water_only", "nisar_land", "ignore"],
-        default="water_only",
+        choices=["subswath", "water_only", "water_and_subswath", "ignore"],
+        default="subswath",
+        help="Which GUNW mask digits invalidate a pixel: 'subswath' drops samples "
+        "invalid in either RSLC, 'water_only' drops water, 'water_and_subswath' "
+        "drops both, 'ignore' drops neither. 'subswath' is the default because it "
+        "keeps observed samples while excluding pixels absent from either RSLC; "
+        "the policies that drop water can cut river scenes into many regions.",
     )
     p.add_argument("--coh-threshold", type=float, default=0.0)
     p.add_argument(

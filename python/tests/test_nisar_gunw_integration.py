@@ -86,7 +86,9 @@ def test_gunw_unwrap_agrees_with_production(h5_path: Path) -> None:
     size = "full" if crop_env == "full" else min(int(crop_env), *prod_unw.shape)
     ys, xs, _ = cg.center_crop_slices(prod_unw.shape, size)
 
-    base_mask = cg.mask_to_bool(mask_arr, "water_only", prod_unw.shape)
+    # Require paired RSLC observations and keep water. This is our preferred
+    # solver domain, independent of production's exact preprocessing details.
+    base_mask = cg.mask_to_bool(mask_arr, "subswath", prod_unw.shape)
     base_mask &= np.isfinite(prod_unw) & np.isfinite(coh)
     ig_full = cg.wrap_phase(prod_unw).astype(np.float32)
 

@@ -41,6 +41,28 @@ For each GUNW product, `compare_gunw.py`:
 2. Reads the production `coherenceMagnitude` and the GUNW `mask` (water / subswath
    validity), and builds a valid-pixel mask.
 
+   `--mask-policy subswath` (the default) keeps every pixel observed in both
+   RSLCs, including water, and drops pixels where either RSLC has no sample. The
+   delivered runconfig makes the same validity classification with
+   `mask_type: subswath_mask`, but production uses it to preprocess the phase;
+   this harness deliberately supplies it to whirlwind as a hard solver mask.
+
+   Water is retained because it is an observation, not because its phase is
+   assumed reliable: the coherence-dependent costs decide how much to trust it.
+   In tested river scenes, masking water split one valid domain into hundreds of
+   regions and made the post-solve component re-leveling worse. A single region
+   is not intrinsically better, so both water-masking policies remain available
+   for scenes where the evidence points the other way.
+
+   The two exclusions are independent, so the policies are every combination:
+
+   | `--mask-policy`      | drops invalid subswath | drops water |
+   | -------------------- | ---------------------- | ----------- |
+   | `subswath` (default) | ✅                     |             |
+   | `water_only`         |                        | ✅          |
+   | `water_and_subswath` | ✅                     | ✅          |
+   | `ignore`             |                        |             |
+
 3. Runs `whirlwind.unwrap(igram, corr, nlooks, mask)` — the exact public API an
    external user would call. This returns an unwrapped phase and SNAPHU-style
    connected-component labels.
@@ -78,15 +100,20 @@ valid pixels vs production's ~70%, so those regions show red. The 2π solution s
 agrees with production at 99.8%.
 
 `--conncomp-min-coherence` sets the coherence below which conncomp labels a pixel
-0. The default `auto` is `0.32/sqrt(nlooks)` (0.08 at 16 looks); raise it to drop
+0. The default `auto` is `0.32/sqrt(nlooks)` (0.045 at 50 looks); raise it to drop
 more low-coherence pixels, at the cost of more components. On A_140:
 
 | `--conncomp-min-coherence` | labeled fraction |
 | -------------------------- | ---------------- |
-| auto (0.08 at 16 looks)    | 0.99             |
+| 0.08                       | 0.99             |
 | 0.10                       | 0.82             |
 | 0.12                       | 0.67             |
 | 0.15                       | 0.35             |
+
+Raising this floor is the most promising open knob for closing the remaining
+label gap against production. It is **not** changed from `auto` by default —
+see [`CONNCOMP_FLOOR_EXPERIMENT.md`](CONNCOMP_FLOOR_EXPERIMENT.md) for why, and
+for the experiment to run at campaign scale before touching the default.
 
 ---
 
@@ -103,8 +130,13 @@ export EARTHDATA_TOKEN=...                       # an EDL bearer token, or
 
 uv run aws-batch/compare_gunw.py \
   https://nisar.asf.earthdatacloud.nasa.gov/.../<ID>.h5 \
-  --out-dir out --nlooks 16
+  --out-dir out
 ```
+
+The default `--nlooks calibrated` uses the smaller of the product's nominal
+metadata estimate and 50. The cap is a conservative Whirlwind calibration, not
+a claim about what production passes to SNAPHU. Use `--nlooks auto` to inspect
+the uncapped nominal estimate or pass a number for a controlled experiment.
 
 Run all three samples at once:
 

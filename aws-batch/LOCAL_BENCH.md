@@ -65,7 +65,7 @@ python discover_granules.py \
 ```
 
 This writes `manifest.txt` (URLs, one per line) and `manifest.meta.csv`
-(track/frame/bounding box, used later for the coverage map), and prints the
+(track/frame/bounding box, retained in the campaign table), and prints the
 total download volume.
 
 Knobs worth knowing:
@@ -201,9 +201,9 @@ Writes into the campaign root:
 - `campaign.csv` -- one row per granule: agreement, runtime, peak RSS,
   component counts, coherence, track/frame, geometry.
 - `campaign.md` -- headline numbers and the worst 15 frames to look at first.
-- `campaign_summary.png` -- six panels: agreement histogram and ECDF, runtime
-  vs size, peak memory vs size, whirlwind vs production component counts, and a
-  lon/lat coverage map coloured by agreement.
+- `campaign_summary.png` -- six panels: agreement success curve, agreement vs
+  coherence, whirlwind vs production labeled-pixel coverage, runtime and
+  peak-memory scaling, and component counts.
 
 The headline metric is `ambiguity_match_frac_percomp`: agreement with the
 production unwrap on the 2*pi integer, re-levelled within each production

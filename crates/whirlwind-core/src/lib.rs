@@ -44,6 +44,29 @@ pub use conncomp::{ConnCompParams, SnaphuConnCompParams};
 pub use residual_graph::ResidualGraph;
 pub use triangulated::TriangulatedGraph;
 
+/// Whether `WHIRLWIND_TIMING` is set. Cached after the first read so the
+/// per-stage checks don't hit the environment on every call.
+pub fn timing_enabled() -> bool {
+    static T: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *T.get_or_init(|| std::env::var("WHIRLWIND_TIMING").is_ok())
+}
+
+/// Run `f`, printing its wall time to stderr when `WHIRLWIND_TIMING` is set.
+///
+/// This is how the shipping unwrap path reports where its time goes. Without
+/// it the only breakdown lived in `examples/bench_scale.rs`, so answering "was
+/// that slow in the cost model or the solve?" meant rebuilding against the
+/// example instead of just rerunning the real call.
+pub fn stage<T>(label: &str, f: impl FnOnce() -> T) -> T {
+    if !timing_enabled() {
+        return f();
+    }
+    let t = std::time::Instant::now();
+    let out = f();
+    eprintln!("[ww]   {label:<24} {:>7.2}s", t.elapsed().as_secs_f64());
+    out
+}
+
 /// Scale factor applied to the Carballo log-likelihood ratio when forming the
 /// integer connected-component cost. Mirrors `CONNCOMP_COST_SCALE` in the Python
 /// wrapper.
@@ -247,7 +270,6 @@ pub fn unwrap_coherence_with_components(
     params: ConnCompParams,
     window: cost::PhaseGradWindow,
 ) -> Result<(Array2<f32>, Array2<u32>), UnwrapError> {
-    let dbg = std::env::var("WHIRLWIND_TIMING").is_ok();
     let t = std::time::Instant::now();
     let phase = unwrap_coherence(
         igram,
@@ -259,17 +281,17 @@ pub fn unwrap_coherence_with_components(
         multilook,
         window,
     )?;
-    if dbg {
+    if timing_enabled() {
         eprintln!(
-            "[ww] phase (unwrap_coherence): {:.2}s",
+            "[ww] phase total             {:>7.2}s",
             t.elapsed().as_secs_f64()
         );
     }
     let t = std::time::Instant::now();
     let comps = components_only(igram, corr, nlooks, mask, params, window)?;
-    if dbg {
+    if timing_enabled() {
         eprintln!(
-            "[ww] conncomp (components_only, global no-solve): {:.2}s",
+            "[ww] conncomp (no solve)     {:>7.2}s",
             t.elapsed().as_secs_f64()
         );
     }
@@ -445,8 +467,8 @@ fn unwrap_linear_impl(
     if m < 2 || n < 2 {
         return Err(UnwrapError::TooSmall((m, n)));
     }
-    let wrapped_phase = wrapped_phase_par(igram);
-    let residues = residue::compute(wrapped_phase.view());
+    let wrapped_phase = stage("wrap", || wrapped_phase_par(igram));
+    let residues = stage("residues", || residue::compute(wrapped_phase.view()));
     // KEEP the boundary-frame deposits (wrap counts where fringes exit the
     // image; see `residue::compute`). They terminate boundary-exiting wrap
     // lines and make the residue grid sum exactly zero, and they cancel for
@@ -468,13 +490,17 @@ fn unwrap_linear_impl(
     // directly in the u16 word the network stores, and MOVED into it - the
     // i32 intermediate (~4 arcs/pixel · 4 bytes) was the largest setup-phase
     // transient on full frames.
-    let costs = cost::compute_carballo_costs_parity_packed(igram, corr, nlooks, mask, window);
+    let costs = stage("costs (carballo)", || {
+        cost::compute_carballo_costs_parity_packed(igram, corr, nlooks, mask, window)
+    });
     let graph = grid::RectangularGridGraph::new(m + 1, n + 1);
-    let mut net = if multi {
-        network::Network::new_multi_linear_packed(&graph, residues.view(), costs)
-    } else {
-        network::Network::new_linear_packed(&graph, residues.view(), costs)
-    };
+    let mut net = stage("network build", || {
+        if multi {
+            network::Network::new_multi_linear_packed(&graph, residues.view(), costs)
+        } else {
+            network::Network::new_linear_packed(&graph, residues.view(), costs)
+        }
+    });
     // The network has copied the residues into its excess buffer; free them
     // now so they don't sit alive through the Dijkstra peak.
     drop(residues);
@@ -485,8 +511,12 @@ fn unwrap_linear_impl(
     // 8 PD iterations on masked NISAR scenes.
     //
     // 8 PD iterations, matching ww-orig `primal_dual(maxiter=8)`.
-    primal_dual::run_full_dijkstra(&graph, &mut net, 8);
-    let mut unw = integrate::integrate(wrapped_phase.view(), &graph, &net);
+    stage("solve (primal-dual)", || {
+        primal_dual::run_full_dijkstra(&graph, &mut net, 8)
+    });
+    let mut unw = stage("integrate", || {
+        integrate::integrate(wrapped_phase.view(), &graph, &net)
+    });
     if let Some(mm) = mask {
         unw.zip_mut_with(&mm, |u, &v| {
             if !v {
