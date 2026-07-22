@@ -86,7 +86,9 @@ def test_gunw_unwrap_agrees_with_production(h5_path: Path) -> None:
     size = "full" if crop_env == "full" else min(int(crop_env), *prod_unw.shape)
     ys, xs, _ = cg.center_crop_slices(prod_unw.shape, size)
 
-    base_mask = cg.mask_to_bool(mask_arr, "water_only", prod_unw.shape)
+    # Match what the NISAR workflow masks before unwrapping: samples invalid in
+    # either RSLC, water kept. See mask_to_bool.
+    base_mask = cg.mask_to_bool(mask_arr, "subswath", prod_unw.shape)
     base_mask &= np.isfinite(prod_unw) & np.isfinite(coh)
     ig_full = cg.wrap_phase(prod_unw).astype(np.float32)
 
