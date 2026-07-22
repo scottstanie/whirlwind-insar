@@ -2,8 +2,8 @@
 """Show where whirlwind labels conncomps that production drops, and what a
 higher `conncomp_min_coherence` would do about it.
 
-With the production-matching `subswath` mask policy, water is solved through
-rather than cut out -- which is what keeps the frame one component. The
+With the paired-sample `subswath` mask policy, water is solved through rather
+than cut out -- which is what kept the tested frame one component. The
 downside is that whirlwind then *labels* water as valid conncomp where
 production reports 0. That is a label-side problem with a label-side knob:
 the conncomp coherence floor. This plots the disagreement against coherence so

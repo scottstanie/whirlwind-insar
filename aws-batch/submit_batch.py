@@ -67,7 +67,7 @@ def main() -> None:
         required=True,
         help="S3 prefix for results; each job uploads to <s3-out>/<id>/.",
     )
-    p.add_argument("--nlooks", default="50")
+    p.add_argument("--nlooks", default="calibrated")
     p.add_argument("--dump-flat", action="store_true")
     p.add_argument("--region", default="us-west-2")
     p.add_argument("--profile", default=None)

@@ -37,7 +37,7 @@ def _valid(policy: str) -> np.ndarray:
 
 
 def test_subswath_keeps_water_but_drops_invalid_samples():
-    """The production policy: both subswath digits nonzero, water irrelevant."""
+    """Default policy: both subswath digits nonzero, water irrelevant."""
     # Keeps 11, 12 (valid, land) and 111, 112 (valid, water). Drops every code
     # with a 0 subswath digit, and the fill value.
     expected = [0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0]
@@ -62,6 +62,11 @@ def test_water_and_subswath_is_the_conjunction():
 
 def test_ignore_keeps_everything_including_fill():
     assert _valid("ignore").all()
+
+
+def test_water_flag_is_independent_of_subswath_validity():
+    expected = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0]
+    assert cg.gunw_water_mask(CODES, SHAPE).ravel().tolist() == expected
 
 
 @pytest.mark.parametrize("policy", ["subswath", "water_only", "water_and_subswath"])
@@ -92,6 +97,7 @@ def test_unknown_policy_raises():
 
 def test_none_mask_is_all_valid():
     assert cg.mask_to_bool(None, "subswath", SHAPE).all()
+    assert not cg.gunw_water_mask(None, SHAPE).any()
 
 
 def test_shape_mismatch_raises():

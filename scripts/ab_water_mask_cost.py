@@ -77,7 +77,7 @@ def main() -> None:
     args = p.parse_args()
 
     d = load(args.product)
-    keep = run_case("water KEPT (production)", d, d["subswath"], args.nlooks)
+    keep = run_case("water KEPT (paired samples)", d, d["subswath"], args.nlooks)
     masked = run_case("water MASKED", d, d["subswath"] & ~d["water"], args.nlooks)
 
     print(f"\n{'case':<28} {'runtime':>9} {'regions':>9} {'big':>5}")

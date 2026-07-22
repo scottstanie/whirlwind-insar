@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
-"""Estimate the equivalent number of looks (ENL) of a NISAR GUNW's coherence.
+"""Inspect plausible look counts for a NISAR GUNW coherence raster.
 
-This is the number to pass as `nlooks` to the cost model. It is easy to get
-wrong: the unwrap-grid coherence is estimated over
+The cost model needs an effective number of looks, but neither estimate below
+is universal. The unwrap-grid coherence is formed from
 `numberOfRangeLooks x numberOfAzimuthLooks` RSLC samples -- isce3 re-runs
 `crossmul` from the RSLCs at those looks rather than multilooking the already
-5x6 RIFG -- so the sample count is their **product** (13 x 16 = 208), not
+multilooked RIFG -- so the sample count is their **product** (for example,
+13 x 16 = 208), not
 either axis alone, and not the two multilooks composed.
 
 Two independent estimates are printed:
 
-1. **Theoretical.** samples / (range oversample x azimuth oversample), where
+1. **Nominal metadata estimate.** samples / (range oversample x azimuth
+   oversample), where
    range oversample = (c / 2B) / slantRangeSpacing and azimuth oversample =
    PRF / processedAzimuthBandwidth. Multilooking correlated samples buys fewer
-   than `samples` independent looks.
+   than `samples` independent looks. This remains an upper-bound model, not the
+   value production necessarily passes to SNAPHU.
 
-2. **Empirical, from the coherence histogram over decorrelated water.** For true
-   coherence 0 and L looks the sample coherence has
+2. **Zero-coherence model fit over water.** For true coherence 0 and L looks the
+   sample coherence has
    ``p(g) = 2(L-1) g (1-g^2)^(L-2)``, whose mode is ``1/sqrt(2L-3)``, so
    ``L = (mode^-2 + 3)/2``. The mode is used rather than the mean because
    shoreline and partial-water pixels contaminate the upper tail and would bias
-   a mean estimate downward in L.
+   a mean estimate downward in L. Water is not guaranteed to have zero true
+   coherence, so this is a diagnostic fit rather than a ground-truth ENL.
 
 Takes either a GUNW .h5 (both estimates) or a compare_gunw `_arrays.npz`
-(empirical only, using the production-dropped region as the water proxy).
+(water fit only). New NPZ files store the actual GUNW water and subswath flags;
+older files without them must be regenerated or inspected through the HDF5.
 """
 
 from __future__ import annotations
@@ -59,7 +64,7 @@ def theoretical(path: Path) -> None:
     az_over = prf / az_bw
     enl = samples / (rg_over * az_over)
 
-    print("theoretical")
+    print("nominal metadata estimate")
     print(
         f"  looks (from product metadata)  {rg_looks} rg x {az_looks} az = {samples} samples"
     )
@@ -73,18 +78,18 @@ def theoretical(path: Path) -> None:
 
 
 def empirical(coh: np.ndarray, water: np.ndarray, label: str) -> None:
-    # Take the interior of the largest decorrelated blob: shoreline and
-    # partial-water pixels have real coherence and would skew the fit.
+    # Take the interior of the largest water blob: shoreline and partial-water
+    # pixels are especially unlikely to satisfy the zero-coherence model.
     lab, _ = ndimage.label(water)
     if lab.max() == 0:
-        print(f"empirical ({label}): no decorrelated region found")
+        print(f"water fit ({label}): no water region found")
         return
     biggest = 1 + np.argmax(np.bincount(lab.ravel())[1:])
     core = ndimage.binary_erosion(lab == biggest, iterations=3)
     g = coh[core]
     g = g[np.isfinite(g) & (g > 0)]
     if g.size < 5000:
-        print(f"empirical ({label}): only {g.size} core px, too few")
+        print(f"water fit ({label}): only {g.size} core px, too few")
         return
 
     hist, edges = np.histogram(g, bins=np.linspace(0, 0.6, 121))
@@ -93,10 +98,13 @@ def empirical(coh: np.ndarray, water: np.ndarray, label: str) -> None:
     L_mode = (mode**-2 + 3) / 2
     L_mean = np.pi / (4 * g.mean() ** 2)
 
-    print(f"\nempirical ({label}, {g.size:,} core px)")
+    print(f"\nzero-coherence water fit ({label}, {g.size:,} core px)")
     print(f"  mode  {mode:.3f} -> L = (mode^-2 + 3)/2 = {L_mode:.0f}")
     print(
         f"  mean  {g.mean():.3f} -> L = pi/(4 mean^2)  = {L_mean:.0f}  (contamination-biased, a floor)"
+    )
+    print(
+        "  caveat: this estimate is valid only insofar as the water's true coherence is zero"
     )
 
 
@@ -106,11 +114,17 @@ def main() -> None:
     args = p.parse_args()
 
     if args.path.suffix == ".npz":
-        f = np.load(args.path)
-        coh, mask, prod_cc = f["coh"], f["mask"], f["prod_cc"]
-        empirical(
-            coh, mask & (prod_cc == 0) & (coh < 0.25), "production-dropped region"
-        )
+        with np.load(args.path) as f:
+            required = {"coh", "water", "subswath_valid"}
+            missing = required.difference(f.files)
+            if missing:
+                raise SystemExit(
+                    f"{args.path} lacks {sorted(missing)}; regenerate it with the "
+                    "current compare_gunw.py or pass the source GUNW HDF5"
+                )
+            coh = f["coh"]
+            water = f["water"] & f["subswath_valid"]
+        empirical(coh, water, "GUNW water flag")
         return
 
     import h5py
@@ -120,11 +134,9 @@ def main() -> None:
         pol = next(k for k in f[B] if k in ("HH", "VV", "HV", "VH"))
         coh = f[f"{B}/{pol}/coherenceMagnitude"][()]
         low = f[f"{B}/mask"][()].astype(np.int64) & 0xFF
-    water = (((low // 100) % 10) != 0) & np.isfinite(coh)
-    if water.sum() > 5000:
-        empirical(coh, water, "water-flagged pixels")
-    else:
-        empirical(coh, np.isfinite(coh) & (coh < 0.2), "lowest-coherence region")
+    valid_subswath = (((low // 10) % 10) > 0) & ((low % 10) > 0)
+    water = (((low // 100) % 10) != 0) & valid_subswath & np.isfinite(coh)
+    empirical(coh, water, "GUNW water flag")
 
 
 if __name__ == "__main__":

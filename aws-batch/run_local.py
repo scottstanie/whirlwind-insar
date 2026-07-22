@@ -308,9 +308,9 @@ def main() -> None:
     )
     p.add_argument(
         "--nlooks",
-        default="50",
-        help="Passed through to compare_gunw.py. 50 is the measured equivalent "
-        "looks of the GUNW unwrap grid; 'auto' derives it per-product.",
+        default="calibrated",
+        help="Passed through to compare_gunw.py. 'calibrated' caps the product's "
+        "nominal metadata estimate at 50; 'auto' uses the uncapped estimate.",
     )
     p.add_argument(
         "--compare-arg",

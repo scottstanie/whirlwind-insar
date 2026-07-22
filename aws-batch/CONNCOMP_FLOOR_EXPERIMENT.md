@@ -6,23 +6,24 @@ what would have to hold across a campaign before the default moves.
 
 ## Where the gap comes from
 
-Switching `--mask-policy` to `subswath` made whirlwind match what the NISAR
-workflow actually masks: invalid subswath samples only, water kept
-(`phase_unwrap.preprocess_wrapped_phase.mask.mask_type: subswath_mask`, which
-isce3 turns into `invalid = ~reference_valid | ~secondary_valid`). That was the
-right call for the *phase* — it stopped severing frames along rivers, which had
-been fragmenting the integration domain into hundreds of regions and forcing
-the bridging pass to re-level them.
+Switching `--mask-policy` to `subswath` restricts the solve to paired RSLC
+observations while keeping water. The delivered NISAR workflow makes the same
+validity classification, although it uses it for phase preprocessing rather
+than as SNAPHU's hard mask. On the tested river frames, this stopped severing
+the integration domain into hundreds of regions and removed the resulting
+component re-leveling failures.
 
 It leaves a *label* gap. Solving through water means whirlwind also labels
 water. On 023_169_A_016 (a river frame), 918k pixels — 10.2% of the valid
 domain — get `ww_cc > 0` where production reports `cc = 0`. Spatially it is
 exactly the lake and river network.
 
-Production makes the same mask/label split, just with different label rules:
-SNAPHU unwraps through the water, then `regrow_conncomps`,
-`min_conncomp_frac: 0.01` and `min_region_size: 300` drop the unreliable parts
-afterwards. Our equivalent is the coherence floor.
+Production also solves phase through water and applies separate connected-
+component rules, but those rules are not equivalent to our coherence floor.
+For this single-tile runconfig, `regrow_conncomps` has no effect and
+`min_region_size` is a tile-mode setting; SNAPHU's cost-based labeling and
+`min_conncomp_frac: 0.01` are the relevant comparison. The coherence floor is
+one Whirlwind-side approximation to investigate, not a reproduction of them.
 
 ## Single-frame evidence
 
@@ -45,7 +46,8 @@ Sweeping the floor:
 
 Reproduce with `scripts/plot_conncomp_water_floor.py <crop>_arrays.npz`.
 
-The floor removes disagreement several times faster than it costs good data,
+The floor removes disagreement several times faster than it shrinks the valid
+labeling domain on this frame,
 and it changes **labels only, never phase** — the 0.9996 ambiguity match on that
 frame is unaffected by any value in the table.
 
@@ -79,8 +81,8 @@ frame is unaffected by any value in the table.
 ## The experiment
 
 Run at campaign scale (a few hundred frames, spread across the land table so
-cryo / vegetated / arid / river scenes are all represented), holding
-`--nlooks 50` and `--mask-policy subswath` fixed:
+cryo / vegetated / arid / river scenes are all represented), holding a recorded
+fixed `--nlooks 50` and `--mask-policy subswath` for this controlled sweep:
 
 ```bash
 for FLOOR in auto 0.10 0.15 0.20 0.25; do

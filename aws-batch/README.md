@@ -41,14 +41,18 @@ For each GUNW product, `compare_gunw.py`:
 2. Reads the production `coherenceMagnitude` and the GUNW `mask` (water / subswath
    validity), and builds a valid-pixel mask.
 
-   `--mask-policy subswath` (the default) matches what the NISAR workflow itself
-   masks before unwrapping: samples invalid in either RSLC, and **not** water.
-   Its runconfig sets `mask_type: subswath_mask`, which isce3 reduces to
-   `invalid = ~reference_valid | ~secondary_valid`; the browse imagery confirms
-   it, with the subswath edges blanked and the water unwrapped. Masking water
-   instead severs the valid domain along every river, splitting a frame into
-   hundreds of integration regions that then have to be re-leveled against each
-   other.
+   `--mask-policy subswath` (the default) keeps every pixel observed in both
+   RSLCs, including water, and drops pixels where either RSLC has no sample. The
+   delivered runconfig makes the same validity classification with
+   `mask_type: subswath_mask`, but production uses it to preprocess the phase;
+   this harness deliberately supplies it to whirlwind as a hard solver mask.
+
+   Water is retained because it is an observation, not because its phase is
+   assumed reliable: the coherence-dependent costs decide how much to trust it.
+   In tested river scenes, masking water split one valid domain into hundreds of
+   regions and made the post-solve component re-leveling worse. A single region
+   is not intrinsically better, so both water-masking policies remain available
+   for scenes where the evidence points the other way.
 
    The two exclusions are independent, so the policies are every combination:
 
@@ -126,8 +130,13 @@ export EARTHDATA_TOKEN=...                       # an EDL bearer token, or
 
 uv run aws-batch/compare_gunw.py \
   https://nisar.asf.earthdatacloud.nasa.gov/.../<ID>.h5 \
-  --out-dir out --nlooks 50
+  --out-dir out
 ```
+
+The default `--nlooks calibrated` uses the smaller of the product's nominal
+metadata estimate and 50. The cap is a conservative Whirlwind calibration, not
+a claim about what production passes to SNAPHU. Use `--nlooks auto` to inspect
+the uncapped nominal estimate or pass a number for a controlled experiment.
 
 Run all three samples at once:
 
