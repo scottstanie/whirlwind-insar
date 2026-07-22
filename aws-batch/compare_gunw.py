@@ -178,6 +178,20 @@ def mask_to_bool(
     masquerade as a water digit and silently drops roughly half the frame.
     Masking to the low byte is backward-compatible with the old uint8 masks.
 
+    The policies
+    ------------
+    The two exclusions are independent, so the four policies are every
+    combination of them:
+
+    ====================== ====================== ===========
+    policy                 drops invalid subswath drops water
+    ====================== ====================== ===========
+    ``subswath``           yes                    no
+    ``water_only``         no                     yes
+    ``water_and_subswath`` yes                    yes
+    ``ignore``             no                     no
+    ====================== ====================== ===========
+
     Which policy matches production
     -------------------------------
     ``subswath`` (the default) reproduces what the NISAR InSAR workflow itself
@@ -208,8 +222,9 @@ def mask_to_bool(
     if policy == "water_only":
         # Exclude only water; keep subswath-flagged pixels valid.
         return valid_sample & (water == 0)
-    if policy == "nisar_land":
-        # Keep non-water pixels that are valid samples in both RSLC subswaths.
+    if policy == "water_and_subswath":
+        # Both exclusions at once: non-water pixels that are also valid samples
+        # in both RSLC subswaths.
         return valid_sample & (water == 0) & (ref_sub > 0) & (sec_sub > 0)
     raise ValueError(f"Unknown mask policy {policy!r}")
 
@@ -1024,11 +1039,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pol", default=None, help="Polarization, e.g. HH. Default: first.")
     p.add_argument(
         "--mask-policy",
-        choices=["subswath", "water_only", "nisar_land", "ignore"],
+        choices=["subswath", "water_only", "water_and_subswath", "ignore"],
         default="subswath",
-        help="Which GUNW mask digits invalidate a pixel. 'subswath' matches the "
-        "production unwrap (invalid samples only, water kept); 'water_only' and "
-        "'nisar_land' also drop water, which cuts the frame along rivers.",
+        help="Which GUNW mask digits invalidate a pixel: 'subswath' drops samples "
+        "invalid in either RSLC, 'water_only' drops water, 'water_and_subswath' "
+        "drops both, 'ignore' drops neither. 'subswath' is the default because it "
+        "matches the production unwrap; the policies that drop water cut the "
+        "frame along rivers.",
     )
     p.add_argument("--coh-threshold", type=float, default=0.0)
     p.add_argument(

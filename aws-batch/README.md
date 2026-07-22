@@ -48,7 +48,16 @@ For each GUNW product, `compare_gunw.py`:
    it, with the subswath edges blanked and the water unwrapped. Masking water
    instead severs the valid domain along every river, splitting a frame into
    hundreds of integration regions that then have to be re-leveled against each
-   other. `water_only` and `nisar_land` are available for comparison.
+   other.
+
+   The two exclusions are independent, so the policies are every combination:
+
+   | `--mask-policy`      | drops invalid subswath | drops water |
+   | -------------------- | ---------------------- | ----------- |
+   | `subswath` (default) | ✅                     |             |
+   | `water_only`         |                        | ✅          |
+   | `water_and_subswath` | ✅                     | ✅          |
+   | `ignore`             |                        |             |
 
 3. Runs `whirlwind.unwrap(igram, corr, nlooks, mask)` — the exact public API an
    external user would call. This returns an unwrapped phase and SNAPHU-style
