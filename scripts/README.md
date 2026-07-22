@@ -21,6 +21,11 @@ Whirlwind-only sweep (no reference unwrappers):
 `bash scripts/sweep_single_tile_bench.sh`, or a single frame with
 `python scripts/bench_nisar_gunw_whirlwind.py --nlooks 16 --local-h5 <h5>`.
 
+Scripts that import `whirlwind_orig` (the old pure-Python reference
+implementation) need it installed separately - it's not a project dependency,
+so a fresh clone/pixi/uv env won't pull it in:
+`uv pip install -e /path/to/whirlwind` (or add it to your own venv).
+
 ## Diagnostics (the masked-frame parity investigation, ATBD §7.6.1)
 
 | script                       | what it shows                                                                                              |
