@@ -59,6 +59,17 @@ frame is unaffected by any value in the table.
    the "valid domain dropped" column without collecting the benefit. The A_140
    table in `README.md` shows a scene where 0.15 already drops 65% of labels.
 
+   *Cryo data point (2026-07-23, 023_088_A_141, Riiser-Larsen ice shelf +
+   sea-ice ocean):* the feared cryo failure does not materialize on this
+   frame — the shelf sits at coherence 0.4-0.65 while the ocean production
+   drops peaks at 0.05-0.1, so a floor of **0.10** removes 86.5% of the
+   ocean over-labeling while wrongly dropping only **0.2%** of
+   production-kept land (0.15 → 89.4% / 1.1%). For comparison, zeroing
+   labels on the product's water flag removes 87.4% at 2.1% land cost — the
+   flag misfires on coherent fast ice that production keeps, so the
+   coherence floor dominates it on this frame. Sweep reproduced with
+   `scripts/plot_conncomp_water_floor.py` on the frame's `full_arrays.npz`.
+
 2. **`auto` scales the wrong way for this purpose.** `auto` is
    `0.32/sqrt(nlooks)` — **0.045** at 50 looks. It gets *gentler* as looks rise,
    so on a well-multilooked product like GUNW it closes almost none of the gap.
