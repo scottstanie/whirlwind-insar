@@ -1092,19 +1092,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--conncomp-min-coherence",
         default="auto",
-        help="Coherence floor below which conncomp drops pixels to 0 (a reliability "
-        "mask). Default 'auto' is whirlwind's gentle looks-aware floor "
-        "(0.32/sqrt(nlooks), e.g. 0.045 at 50 looks). Pass a number for a fixed "
-        "cutoff, or 'none' to label every unwrapped pixel.",
+        help="Coherence-floor alternative to --conncomp-reliability (which takes "
+        "precedence and is set by default, so this is only used if you pass "
+        "--conncomp-reliability with no value). 'auto' is the looks-aware floor "
+        "(0.32/sqrt(nlooks)); a number is a fixed cutoff; 'none' labels every "
+        "unwrapped pixel.",
     )
     p.add_argument(
         "--conncomp-reliability",
         type=float,
-        default=None,
+        default=0.5,
         help="Solver-native conncomp margin in 1/sigma2 units (SNAPHU's "
         "CONNCOMPTHRESH analog): cut edges whose +/-1-cycle wiggle costs less "
-        "than this. Overrides --conncomp-min-coherence when set; ~0.5 zeroes "
-        "decorrelated ocean while keeping production-labeled land.",
+        "than this. Default 0.5 (whirlwind's shipping default) zeroes "
+        "decorrelated ocean while keeping production-labeled land; it forces "
+        "--conncomp-min-coherence off. Pass 0 for the old label-everything "
+        "behavior.",
     )
     p.add_argument(
         "--engine",
@@ -1131,10 +1134,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--conncomp-thicken",
-        action="store_true",
-        help="SNAPHU ThickenCosts behavior: laterally smooth conncomp cut "
-        "strengths so thin reliable bridges through unreliable regions do not "
-        "connect components.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="SNAPHU ThickenCosts behavior (on by default, matching whirlwind's "
+        "shipping default): laterally smooth conncomp cut strengths so thin "
+        "reliable bridges through unreliable regions do not connect components. "
+        "Use --no-conncomp-thicken to disable.",
     )
     p.add_argument(
         "--no-bridge",

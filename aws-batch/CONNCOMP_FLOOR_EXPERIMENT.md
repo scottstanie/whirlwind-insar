@@ -1,9 +1,16 @@
 # The conncomp coherence floor: a knob to test at campaign scale
 
-**Status: not changed — and superseded as the leading candidate (2026-07-23).**
-`--conncomp-min-coherence` stays at `auto`. The solver-native
-`conncomp_reliability` margin (below) achieves the same separation without any
-coherence heuristic and is what the campaign sweep should test first.
+**Status (2026-07-23): the reliability margin is now the SHIPPED DEFAULT.**
+`ww.unwrap` now defaults to `conncomp_min_coherence=None`,
+`conncomp_reliability=0.5`, `conncomp_thicken=True` (the CLI and `compare_gunw`
+match). The old default (`min_coherence="auto"`, a ~0.045-coherence floor
+≈ reliability 0.2, no thicken) mislabeled decorrelated ocean as one confident
+component (Riiser-Larsen frame: 3 components, 94.9% of production-dropped ocean
+still labeled). The new default gives 44 components, 8.7% of that ocean still
+labeled, 99.6% of production-kept land preserved; validated across 44 frames
+(per-comp match median 0.9947, recall gap ww−prod +0.30→+0.012, 0/44
+over-labeling by >0.15). The coherence floor below is retained as an opt-in
+alternative and historical record.
 
 ## 2026-07-23 update: the reliability margin IS SNAPHU's rule
 
