@@ -159,8 +159,29 @@ def gunw_paths(h5: h5py.File, pol: str | None) -> dict[str, str]:
     }
 
 
+def erode_bool(mask: np.ndarray, iterations: int) -> np.ndarray:
+    """Erode a boolean mask by ``iterations`` pixels (4-neighborhood).
+
+    Pure-numpy stand-in for ``scipy.ndimage.binary_erosion`` (scipy is not in
+    the batch image). Out-of-frame is treated as True, so a region touching
+    the frame edge does not erode from that edge.
+    """
+    m = mask.copy()
+    for _ in range(iterations):
+        e = m.copy()
+        e[1:, :] &= m[:-1, :]
+        e[:-1, :] &= m[1:, :]
+        e[:, 1:] &= m[:, :-1]
+        e[:, :-1] &= m[:, 1:]
+        m = e
+    return m
+
+
 def mask_to_bool(
-    mask_arr: np.ndarray | None, policy: str, shape: tuple[int, int]
+    mask_arr: np.ndarray | None,
+    policy: str,
+    shape: tuple[int, int],
+    water_erode_px: int = 25,
 ) -> np.ndarray:
     """Convert the GUNW ``mask`` code into a boolean valid-pixel mask.
 
@@ -183,14 +204,22 @@ def mask_to_bool(
     The two exclusions are independent, so the four policies are every
     combination of them:
 
-    ====================== ====================== ===========
+    ====================== ====================== ===================
     policy                 drops invalid subswath drops water
-    ====================== ====================== ===========
+    ====================== ====================== ===================
     ``subswath``           yes                    no
     ``water_only``         no                     yes
     ``water_and_subswath`` yes                    yes
+    ``open_water``         yes                    interior only
     ``ignore``             no                     no
-    ====================== ====================== ===========
+    ====================== ====================== ===================
+
+    ``open_water`` drops only water pixels more than ``water_erode_px`` pixels
+    from the nearest non-water pixel. Large oceans (whose pure-noise phase
+    dominates solver runtime on coastal frames) are excluded, while a
+    shoreline strip and every water body thinner than ``2 * water_erode_px``
+    (rivers, lakes) stay valid -- so the domain is not severed the way
+    ``water_only`` severs river scenes.
 
     Why ``subswath`` is the default
     --------------------------------
@@ -227,6 +256,11 @@ def mask_to_bool(
         # Both exclusions at once: non-water pixels that are also valid samples
         # in both RSLC subswaths.
         return valid_sample & (water == 0) & (ref_sub > 0) & (sec_sub > 0)
+    if policy == "open_water":
+        # Subswath validity, minus only INTERIOR open water: water eroded by
+        # `water_erode_px` px, so shorelines and thin water bodies stay valid.
+        interior_water = erode_bool(water != 0, water_erode_px)
+        return valid_sample & (ref_sub > 0) & (sec_sub > 0) & ~interior_water
     raise ValueError(f"Unknown mask policy {policy!r}")
 
 
@@ -774,7 +808,9 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
 
     water_full = gunw_water_mask(mask_arr_full, prod_unw_full.shape)
     subswath_valid_full = mask_to_bool(mask_arr_full, "subswath", prod_unw_full.shape)
-    base_mask_full = mask_to_bool(mask_arr_full, args.mask_policy, prod_unw_full.shape)
+    base_mask_full = mask_to_bool(
+        mask_arr_full, args.mask_policy, prod_unw_full.shape, args.water_erode_px
+    )
     base_mask_full &= (
         np.isfinite(prod_unw_full)
         & np.isfinite(coh_full)
@@ -1068,13 +1104,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pol", default=None, help="Polarization, e.g. HH. Default: first.")
     p.add_argument(
         "--mask-policy",
-        choices=["subswath", "water_only", "water_and_subswath", "ignore"],
+        choices=[
+            "subswath",
+            "water_only",
+            "water_and_subswath",
+            "open_water",
+            "ignore",
+        ],
         default="subswath",
         help="Which GUNW mask digits invalidate a pixel: 'subswath' drops samples "
         "invalid in either RSLC, 'water_only' drops water, 'water_and_subswath' "
-        "drops both, 'ignore' drops neither. 'subswath' is the default because it "
+        "drops both, 'open_water' drops subswath-invalid plus interior open water "
+        "(water eroded by --water-erode-px, keeping shorelines and rivers), "
+        "'ignore' drops neither. 'subswath' is the default because it "
         "keeps observed samples while excluding pixels absent from either RSLC; "
         "the policies that drop water can cut river scenes into many regions.",
+    )
+    p.add_argument(
+        "--water-erode-px",
+        type=int,
+        default=25,
+        help="For --mask-policy open_water: buffer (in unwrap-grid pixels) kept "
+        "valid around every non-water pixel; 25 px = 2 km at 80 m posting.",
     )
     p.add_argument("--coh-threshold", type=float, default=0.0)
     p.add_argument(
