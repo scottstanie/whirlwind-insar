@@ -544,11 +544,15 @@ fn unwrap_linear_ext_costs<'py>(
 ///   coherence) wells too, growing fewer/larger components.
 /// * ``min_size_px`` - drop components smaller than this many pixels.
 /// * ``max_ncomps`` - keep at most this many components (largest first).
+/// * ``thicken`` - SNAPHU ``ThickenCosts`` behavior: smooth each edge's cut
+///   strength ``max(0, threshold - reliability)`` laterally and cut where the
+///   smoothed strength is positive, so a one-pixel reliable bridge through a
+///   wide unreliable band no longer connects the two sides.
 #[pyfunction]
 #[pyo3(signature = (
     igram, corr, nlooks, unwrapped, mask = None,
     reliability_threshold = 0, min_size_px = 100, max_ncomps = 1024,
-    phase_grad_window = (7, 7),
+    phase_grad_window = (7, 7), thicken = false,
 ))]
 fn components_snaphu<'py>(
     py: Python<'py>,
@@ -561,6 +565,7 @@ fn components_snaphu<'py>(
     min_size_px: usize,
     max_ncomps: u32,
     phase_grad_window: (usize, usize),
+    thicken: bool,
 ) -> PyResult<Bound<'py, PyArray2<u32>>> {
     let ig = igram.as_array();
     let co = corr.as_array();
@@ -573,6 +578,7 @@ fn components_snaphu<'py>(
         min_size_frac: 0.0001,
         max_ncomps,
         phase_grad_window: window,
+        thicken_cuts: thicken,
     };
     let out = py.detach(|| whirlwind_core::components_snaphu(ig, co, nlooks, unw, m, params));
     let comps = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;

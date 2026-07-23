@@ -127,6 +127,7 @@ def components_snaphu(
     min_size_px: int = ...,
     max_ncomps: int = ...,
     phase_grad_window: tuple[int, int] = ...,
+    thicken: bool = ...,
 ) -> NDArray[np.uint32]:
     """SNAPHU-like connected components via the convex-cost ambiguity wiggle.
 
@@ -138,6 +139,9 @@ def components_snaphu(
     Water/invalid pixels (``mask`` False or non-finite ``unwrapped``) are cut and
     stay label 0. ``reliability_threshold=0`` (default) is the calibration-free
     half-cycle-tie test; raise it to label fewer low-coherence pixels.
+    ``thicken=True`` adds SNAPHU's ``ThickenCosts`` lateral smoothing of the
+    cut strengths, so a one-pixel reliable bridge through a wide unreliable
+    band no longer connects the two sides.
     Output label type is uint32, where 0 = background.
     The labels are renumbered 1..=K by size, capped at ``max_ncomps``.
     """

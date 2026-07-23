@@ -236,6 +236,7 @@ def unwrap(
     conncomp_algorithm: str = "snaphu",
     conncomp_min_coherence: "float | str | None" = "auto",
     conncomp_reliability: float = 0.0,
+    conncomp_thicken: bool = False,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -370,6 +371,13 @@ def unwrap(
         coherence use :func:`conncomp_reliability_from_coherence` (e.g.
         ``coherence=0.3`` -> about 3.2), or just set ``conncomp_min_coherence``.
         Only used when ``conncomp_algorithm="snaphu"``.
+    conncomp_thicken : bool, default False
+        SNAPHU ``ThickenCosts`` behavior for the default ("snaphu") connected
+        components: smooth each edge's cut strength laterally before cutting,
+        so a one-pixel reliable bridge through a wide unreliable region no
+        longer connects the two sides. Matches production SNAPHU's component
+        growing, which always thickens. Only used when
+        ``conncomp_algorithm="snaphu"``.
     cost_threshold : int, default 50
         Connected-component boundary threshold in raw cost units, for the
         ``"linear"`` algorithm only. An edge becomes a boundary when its
@@ -538,6 +546,7 @@ def unwrap(
             min_size_px,
             max_ncomps,
             pgw,
+            conncomp_thicken,
         )
     else:
         cc = cc_linear

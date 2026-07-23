@@ -731,6 +731,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
                     min_size_frac: min_component_frac,
                     max_ncomps,
                     phase_grad_window,
+                    thicken_cuts: false,
                 };
                 whirlwind_core::components_snaphu(
                     igram_orig.view(),

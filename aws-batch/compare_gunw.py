@@ -867,6 +867,11 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             mc = None
         elif isinstance(mc, str) and mc.lower() != "auto":
             mc = float(mc)
+        # An explicit reliability margin overrides the coherence-cutoff route
+        # (ww.unwrap gives conncomp_min_coherence precedence, so drop it).
+        reliability = args.conncomp_reliability
+        if reliability is not None:
+            mc = None
         ww_unw, ww_cc = ww.unwrap(
             ig_complex,
             coh_solver,
@@ -877,6 +882,8 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             interpolate=args.interpolate,
             interp_cutoff=args.interp_cutoff,
             conncomp_min_coherence=mc,
+            conncomp_reliability=0.0 if reliability is None else reliability,
+            conncomp_thicken=args.conncomp_thicken,
             goldstein_alpha=args.goldstein_alpha,
             goldstein_psize=args.goldstein_psize,
             phase_grad_window=tuple(args.phase_grad_window),
@@ -914,6 +921,8 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "goldstein_psize": args.goldstein_psize,
                 "phase_grad_window": list(args.phase_grad_window),
                 "conncomp_min_coherence": args.conncomp_min_coherence,
+                "conncomp_reliability": args.conncomp_reliability,
+                "conncomp_thicken": args.conncomp_thicken,
                 "mask_policy": args.mask_policy,
                 "whirlwind_version": getattr(ww, "__version__", "unknown"),
                 "input_phase_source": "phase(wrappedInterferogram)"
@@ -1057,6 +1066,22 @@ def parse_args() -> argparse.Namespace:
         "mask). Default 'auto' is whirlwind's gentle looks-aware floor "
         "(0.32/sqrt(nlooks), e.g. 0.045 at 50 looks). Pass a number for a fixed "
         "cutoff, or 'none' to label every unwrapped pixel.",
+    )
+    p.add_argument(
+        "--conncomp-reliability",
+        type=float,
+        default=None,
+        help="Solver-native conncomp margin in 1/sigma2 units (SNAPHU's "
+        "CONNCOMPTHRESH analog): cut edges whose +/-1-cycle wiggle costs less "
+        "than this. Overrides --conncomp-min-coherence when set; ~0.5 zeroes "
+        "decorrelated ocean while keeping production-labeled land.",
+    )
+    p.add_argument(
+        "--conncomp-thicken",
+        action="store_true",
+        help="SNAPHU ThickenCosts behavior: laterally smooth conncomp cut "
+        "strengths so thin reliable bridges through unreliable regions do not "
+        "connect components.",
     )
     p.add_argument(
         "--no-bridge",
