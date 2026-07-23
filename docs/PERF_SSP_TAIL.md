@@ -13,10 +13,17 @@ frame unless noted.
   20/40 MHz; p90 300 s; all top-15 slowest frames are 7700). They are not
   garbled data: quicklooks show real, near-aliased glacier/mountain fringes,
   and their match scores are still ≥0.98.
-- **Campaign wall times are ~5.6x contention-inflated** (6 concurrent
-  workers): frame 023_155 recorded 936 s in the campaign but solves in
-  ~164 s alone. Treat `runtime_s` in campaign CSVs as throughput
-  accounting, not single-frame benchmarks.
+- **Campaign runtimes carry a ~5.5x machine+environment factor vs the
+  M-series laptop**, and it is nearly constant across frames (023_080_D_126
+  47.7→8.3 s, 023_088_A_141 1159→218 s, 023_155 936→164 s). The campaign ran
+  6 workers x 4 threads on a 28-core server (mild CPU oversubscription), so
+  this is mostly single-thread hardware speed on a serial memory-latency-bound
+  solve, plus memory-bandwidth sharing between six concurrent solvers and
+  background load (the box showed a full 12 GB swap and an `aide` scan).
+  The constancy means campaign numbers are valid for relative ordering and
+  throughput/cost planning — just never mix them with laptop single-run
+  solver benchmarks. A lone run on the idle server would split the
+  hardware factor from the sharing factor.
 - **Anatomy of a slow solve** (023_155_D_053, 24 Mpx, valid 20%): the 8
   primal-dual passes take ~8 s and drain excess 5000→507; the serial
   single-source SSP tail then drains the remaining 507 sources one unit at a
