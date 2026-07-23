@@ -839,7 +839,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             continue
 
         print(
-            f"  {label}: running ww.unwrap on shape={ig.shape}, "
+            f"  {label}: running {args.engine} on shape={ig.shape}, "
             f"valid={mask.mean():.3f}, nlooks={nlooks:.0f}, "
             f"downsample={args.downsample}, interpolate={args.interpolate}, "
             f"goldstein_alpha={args.goldstein_alpha}",
@@ -860,35 +860,61 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
 
         gc.collect()
         rss0 = get_rss_mb()
-        t0 = time.perf_counter()
-        # "auto" / "none" pass through; a number becomes a fixed coherence cutoff.
-        mc = args.conncomp_min_coherence
-        if isinstance(mc, str) and mc.lower() in ("none", "off"):
-            mc = None
-        elif isinstance(mc, str) and mc.lower() != "auto":
-            mc = float(mc)
-        # An explicit reliability margin overrides the coherence-cutoff route
-        # (ww.unwrap gives conncomp_min_coherence precedence, so drop it).
-        reliability = args.conncomp_reliability
-        if reliability is not None:
-            mc = None
-        ww_unw, ww_cc = ww.unwrap(
-            ig_complex,
-            coh_solver,
-            nlooks,
-            mask,
-            bridge=args.bridge,
-            downsample=args.downsample,
-            interpolate=args.interpolate,
-            interp_cutoff=args.interp_cutoff,
-            conncomp_min_coherence=mc,
-            conncomp_reliability=0.0 if reliability is None else reliability,
-            conncomp_thicken=args.conncomp_thicken,
-            goldstein_alpha=args.goldstein_alpha,
-            goldstein_psize=args.goldstein_psize,
-            phase_grad_window=tuple(args.phase_grad_window),
-        )
-        runtime_s = time.perf_counter() - t0
+        if args.engine == "snaphu":
+            # Apples-to-apples SNAPHU: identical inputs (same re-wrapped phase,
+            # subswath mask, and calibrated nlooks that whirlwind gets above),
+            # only the solver differs. Single-tile cost=smooth init=mcf is the
+            # NISAR production unwrap config; single_tile_reoptimize is a no-op
+            # at ntiles=(1,1) and the tiled+reoptimize production path at N>1.
+            import snaphu
+
+            ntiles = args.snaphu_ntiles
+            overlap = 0 if ntiles == 1 else 400
+            nproc = args.snaphu_nproc or (1 if ntiles == 1 else (os.cpu_count() or 8))
+            t0 = time.perf_counter()
+            ww_unw, ww_cc = snaphu.unwrap(
+                ig_complex,
+                coh_solver,
+                nlooks=float(nlooks),
+                cost="smooth",
+                init="mcf",
+                mask=mask,
+                ntiles=(ntiles, ntiles),
+                tile_overlap=overlap,
+                nproc=nproc,
+                single_tile_reoptimize=True,
+            )
+            runtime_s = time.perf_counter() - t0
+        else:
+            t0 = time.perf_counter()
+            # "auto" / "none" pass through; a number becomes a fixed coherence cutoff.
+            mc = args.conncomp_min_coherence
+            if isinstance(mc, str) and mc.lower() in ("none", "off"):
+                mc = None
+            elif isinstance(mc, str) and mc.lower() != "auto":
+                mc = float(mc)
+            # An explicit reliability margin overrides the coherence-cutoff route
+            # (ww.unwrap gives conncomp_min_coherence precedence, so drop it).
+            reliability = args.conncomp_reliability
+            if reliability is not None:
+                mc = None
+            ww_unw, ww_cc = ww.unwrap(
+                ig_complex,
+                coh_solver,
+                nlooks,
+                mask,
+                bridge=args.bridge,
+                downsample=args.downsample,
+                interpolate=args.interpolate,
+                interp_cutoff=args.interp_cutoff,
+                conncomp_min_coherence=mc,
+                conncomp_reliability=0.0 if reliability is None else reliability,
+                conncomp_thicken=args.conncomp_thicken,
+                goldstein_alpha=args.goldstein_alpha,
+                goldstein_psize=args.goldstein_psize,
+                phase_grad_window=tuple(args.phase_grad_window),
+            )
+            runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
         rss_delta = None if (rss0 is None or rss1 is None) else rss1 - rss0
 
@@ -924,6 +950,10 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "conncomp_reliability": args.conncomp_reliability,
                 "conncomp_thicken": args.conncomp_thicken,
                 "mask_policy": args.mask_policy,
+                "engine": args.engine,
+                "snaphu_ntiles": args.snaphu_ntiles
+                if args.engine == "snaphu"
+                else None,
                 "whirlwind_version": getattr(ww, "__version__", "unknown"),
                 "input_phase_source": "phase(wrappedInterferogram)"
                 if args.use_product_wrapped
@@ -1075,6 +1105,29 @@ def parse_args() -> argparse.Namespace:
         "CONNCOMPTHRESH analog): cut edges whose +/-1-cycle wiggle costs less "
         "than this. Overrides --conncomp-min-coherence when set; ~0.5 zeroes "
         "decorrelated ocean while keeping production-labeled land.",
+    )
+    p.add_argument(
+        "--engine",
+        choices=["whirlwind", "snaphu"],
+        default="whirlwind",
+        help="Which unwrapper to run on the (identical) prepared inputs. "
+        "'snaphu' runs single-tile snaphu-py (cost=smooth, init=mcf, "
+        "reoptimize) -- the NISAR production config -- for an apples-to-apples "
+        "comparison scored the same way. Needs the snaphu package.",
+    )
+    p.add_argument(
+        "--snaphu-ntiles",
+        type=int,
+        default=1,
+        help="For --engine snaphu: NxN tiles (1 = single-tile, the production "
+        "unwrap). N>1 uses the tiled+reoptimize path.",
+    )
+    p.add_argument(
+        "--snaphu-nproc",
+        type=int,
+        default=None,
+        help="For --engine snaphu: max concurrent tile workers. Default: 1 for "
+        "single-tile, all cores for tiled. Dominant peak-memory lever.",
     )
     p.add_argument(
         "--conncomp-thicken",
