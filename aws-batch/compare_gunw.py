@@ -159,8 +159,29 @@ def gunw_paths(h5: h5py.File, pol: str | None) -> dict[str, str]:
     }
 
 
+def erode_bool(mask: np.ndarray, iterations: int) -> np.ndarray:
+    """Erode a boolean mask by ``iterations`` pixels (4-neighborhood).
+
+    Pure-numpy stand-in for ``scipy.ndimage.binary_erosion`` (scipy is not in
+    the batch image). Out-of-frame is treated as True, so a region touching
+    the frame edge does not erode from that edge.
+    """
+    m = mask.copy()
+    for _ in range(iterations):
+        e = m.copy()
+        e[1:, :] &= m[:-1, :]
+        e[:-1, :] &= m[1:, :]
+        e[:, 1:] &= m[:, :-1]
+        e[:, :-1] &= m[:, 1:]
+        m = e
+    return m
+
+
 def mask_to_bool(
-    mask_arr: np.ndarray | None, policy: str, shape: tuple[int, int]
+    mask_arr: np.ndarray | None,
+    policy: str,
+    shape: tuple[int, int],
+    water_erode_px: int = 25,
 ) -> np.ndarray:
     """Convert the GUNW ``mask`` code into a boolean valid-pixel mask.
 
@@ -183,14 +204,22 @@ def mask_to_bool(
     The two exclusions are independent, so the four policies are every
     combination of them:
 
-    ====================== ====================== ===========
+    ====================== ====================== ===================
     policy                 drops invalid subswath drops water
-    ====================== ====================== ===========
+    ====================== ====================== ===================
     ``subswath``           yes                    no
     ``water_only``         no                     yes
     ``water_and_subswath`` yes                    yes
+    ``open_water``         yes                    interior only
     ``ignore``             no                     no
-    ====================== ====================== ===========
+    ====================== ====================== ===================
+
+    ``open_water`` drops only water pixels more than ``water_erode_px`` pixels
+    from the nearest non-water pixel. Large oceans (whose pure-noise phase
+    dominates solver runtime on coastal frames) are excluded, while a
+    shoreline strip and every water body thinner than ``2 * water_erode_px``
+    (rivers, lakes) stay valid -- so the domain is not severed the way
+    ``water_only`` severs river scenes.
 
     Why ``subswath`` is the default
     --------------------------------
@@ -227,6 +256,11 @@ def mask_to_bool(
         # Both exclusions at once: non-water pixels that are also valid samples
         # in both RSLC subswaths.
         return valid_sample & (water == 0) & (ref_sub > 0) & (sec_sub > 0)
+    if policy == "open_water":
+        # Subswath validity, minus only INTERIOR open water: water eroded by
+        # `water_erode_px` px, so shorelines and thin water bodies stay valid.
+        interior_water = erode_bool(water != 0, water_erode_px)
+        return valid_sample & (ref_sub > 0) & (sec_sub > 0) & ~interior_water
     raise ValueError(f"Unknown mask policy {policy!r}")
 
 
@@ -774,7 +808,9 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
 
     water_full = gunw_water_mask(mask_arr_full, prod_unw_full.shape)
     subswath_valid_full = mask_to_bool(mask_arr_full, "subswath", prod_unw_full.shape)
-    base_mask_full = mask_to_bool(mask_arr_full, args.mask_policy, prod_unw_full.shape)
+    base_mask_full = mask_to_bool(
+        mask_arr_full, args.mask_policy, prod_unw_full.shape, args.water_erode_px
+    )
     base_mask_full &= (
         np.isfinite(prod_unw_full)
         & np.isfinite(coh_full)
@@ -803,7 +839,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             continue
 
         print(
-            f"  {label}: running ww.unwrap on shape={ig.shape}, "
+            f"  {label}: running {args.engine} on shape={ig.shape}, "
             f"valid={mask.mean():.3f}, nlooks={nlooks:.0f}, "
             f"downsample={args.downsample}, interpolate={args.interpolate}, "
             f"goldstein_alpha={args.goldstein_alpha}",
@@ -824,28 +860,61 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
 
         gc.collect()
         rss0 = get_rss_mb()
-        t0 = time.perf_counter()
-        # "auto" / "none" pass through; a number becomes a fixed coherence cutoff.
-        mc = args.conncomp_min_coherence
-        if isinstance(mc, str) and mc.lower() in ("none", "off"):
-            mc = None
-        elif isinstance(mc, str) and mc.lower() != "auto":
-            mc = float(mc)
-        ww_unw, ww_cc = ww.unwrap(
-            ig_complex,
-            coh_solver,
-            nlooks,
-            mask,
-            bridge=args.bridge,
-            downsample=args.downsample,
-            interpolate=args.interpolate,
-            interp_cutoff=args.interp_cutoff,
-            conncomp_min_coherence=mc,
-            goldstein_alpha=args.goldstein_alpha,
-            goldstein_psize=args.goldstein_psize,
-            phase_grad_window=tuple(args.phase_grad_window),
-        )
-        runtime_s = time.perf_counter() - t0
+        if args.engine == "snaphu":
+            # Apples-to-apples SNAPHU: identical inputs (same re-wrapped phase,
+            # subswath mask, and calibrated nlooks that whirlwind gets above),
+            # only the solver differs. Single-tile cost=smooth init=mcf is the
+            # NISAR production unwrap config; single_tile_reoptimize is a no-op
+            # at ntiles=(1,1) and the tiled+reoptimize production path at N>1.
+            import snaphu
+
+            ntiles = args.snaphu_ntiles
+            overlap = 0 if ntiles == 1 else 400
+            nproc = args.snaphu_nproc or (1 if ntiles == 1 else (os.cpu_count() or 8))
+            t0 = time.perf_counter()
+            ww_unw, ww_cc = snaphu.unwrap(
+                ig_complex,
+                coh_solver,
+                nlooks=float(nlooks),
+                cost="smooth",
+                init="mcf",
+                mask=mask,
+                ntiles=(ntiles, ntiles),
+                tile_overlap=overlap,
+                nproc=nproc,
+                single_tile_reoptimize=True,
+            )
+            runtime_s = time.perf_counter() - t0
+        else:
+            t0 = time.perf_counter()
+            # "auto" / "none" pass through; a number becomes a fixed coherence cutoff.
+            mc = args.conncomp_min_coherence
+            if isinstance(mc, str) and mc.lower() in ("none", "off"):
+                mc = None
+            elif isinstance(mc, str) and mc.lower() != "auto":
+                mc = float(mc)
+            # An explicit reliability margin overrides the coherence-cutoff route
+            # (ww.unwrap gives conncomp_min_coherence precedence, so drop it).
+            reliability = args.conncomp_reliability
+            if reliability is not None:
+                mc = None
+            ww_unw, ww_cc = ww.unwrap(
+                ig_complex,
+                coh_solver,
+                nlooks,
+                mask,
+                bridge=args.bridge,
+                downsample=args.downsample,
+                interpolate=args.interpolate,
+                interp_cutoff=args.interp_cutoff,
+                conncomp_min_coherence=mc,
+                conncomp_reliability=0.0 if reliability is None else reliability,
+                conncomp_thicken=args.conncomp_thicken,
+                goldstein_alpha=args.goldstein_alpha,
+                goldstein_psize=args.goldstein_psize,
+                phase_grad_window=tuple(args.phase_grad_window),
+            )
+            runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
         rss_delta = None if (rss0 is None or rss1 is None) else rss1 - rss0
 
@@ -878,7 +947,13 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "goldstein_psize": args.goldstein_psize,
                 "phase_grad_window": list(args.phase_grad_window),
                 "conncomp_min_coherence": args.conncomp_min_coherence,
+                "conncomp_reliability": args.conncomp_reliability,
+                "conncomp_thicken": args.conncomp_thicken,
                 "mask_policy": args.mask_policy,
+                "engine": args.engine,
+                "snaphu_ntiles": args.snaphu_ntiles
+                if args.engine == "snaphu"
+                else None,
                 "whirlwind_version": getattr(ww, "__version__", "unknown"),
                 "input_phase_source": "phase(wrappedInterferogram)"
                 if args.use_product_wrapped
@@ -1017,10 +1092,54 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--conncomp-min-coherence",
         default="auto",
-        help="Coherence floor below which conncomp drops pixels to 0 (a reliability "
-        "mask). Default 'auto' is whirlwind's gentle looks-aware floor "
-        "(0.32/sqrt(nlooks), e.g. 0.045 at 50 looks). Pass a number for a fixed "
-        "cutoff, or 'none' to label every unwrapped pixel.",
+        help="Coherence-floor alternative to --conncomp-reliability (which takes "
+        "precedence and is set by default, so this is only used if you pass "
+        "--conncomp-reliability with no value). 'auto' is the looks-aware floor "
+        "(0.32/sqrt(nlooks)); a number is a fixed cutoff; 'none' labels every "
+        "unwrapped pixel.",
+    )
+    p.add_argument(
+        "--conncomp-reliability",
+        type=float,
+        default=0.5,
+        help="Solver-native conncomp margin in 1/sigma2 units (SNAPHU's "
+        "CONNCOMPTHRESH analog): cut edges whose +/-1-cycle wiggle costs less "
+        "than this. Default 0.5 (whirlwind's shipping default) zeroes "
+        "decorrelated ocean while keeping production-labeled land; it forces "
+        "--conncomp-min-coherence off. Pass 0 for the old label-everything "
+        "behavior.",
+    )
+    p.add_argument(
+        "--engine",
+        choices=["whirlwind", "snaphu"],
+        default="whirlwind",
+        help="Which unwrapper to run on the (identical) prepared inputs. "
+        "'snaphu' runs single-tile snaphu-py (cost=smooth, init=mcf, "
+        "reoptimize) -- the NISAR production config -- for an apples-to-apples "
+        "comparison scored the same way. Needs the snaphu package.",
+    )
+    p.add_argument(
+        "--snaphu-ntiles",
+        type=int,
+        default=1,
+        help="For --engine snaphu: NxN tiles (1 = single-tile, the production "
+        "unwrap). N>1 uses the tiled+reoptimize path.",
+    )
+    p.add_argument(
+        "--snaphu-nproc",
+        type=int,
+        default=None,
+        help="For --engine snaphu: max concurrent tile workers. Default: 1 for "
+        "single-tile, all cores for tiled. Dominant peak-memory lever.",
+    )
+    p.add_argument(
+        "--conncomp-thicken",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="SNAPHU ThickenCosts behavior (on by default, matching whirlwind's "
+        "shipping default): laterally smooth conncomp cut strengths so thin "
+        "reliable bridges through unreliable regions do not connect components. "
+        "Use --no-conncomp-thicken to disable.",
     )
     p.add_argument(
         "--no-bridge",
@@ -1068,13 +1187,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pol", default=None, help="Polarization, e.g. HH. Default: first.")
     p.add_argument(
         "--mask-policy",
-        choices=["subswath", "water_only", "water_and_subswath", "ignore"],
+        choices=[
+            "subswath",
+            "water_only",
+            "water_and_subswath",
+            "open_water",
+            "ignore",
+        ],
         default="subswath",
         help="Which GUNW mask digits invalidate a pixel: 'subswath' drops samples "
         "invalid in either RSLC, 'water_only' drops water, 'water_and_subswath' "
-        "drops both, 'ignore' drops neither. 'subswath' is the default because it "
+        "drops both, 'open_water' drops subswath-invalid plus interior open water "
+        "(water eroded by --water-erode-px, keeping shorelines and rivers), "
+        "'ignore' drops neither. 'subswath' is the default because it "
         "keeps observed samples while excluding pixels absent from either RSLC; "
         "the policies that drop water can cut river scenes into many regions.",
+    )
+    p.add_argument(
+        "--water-erode-px",
+        type=int,
+        default=25,
+        help="For --mask-policy open_water: buffer (in unwrap-grid pixels) kept "
+        "valid around every non-water pixel; 25 px = 2 km at 80 m posting.",
     )
     p.add_argument("--coh-threshold", type=float, default=0.0)
     p.add_argument(

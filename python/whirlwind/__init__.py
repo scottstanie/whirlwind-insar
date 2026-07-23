@@ -234,8 +234,9 @@ def unwrap(
     interp_min_radius: int = 0,
     interp_alpha: float = 0.75,
     conncomp_algorithm: str = "snaphu",
-    conncomp_min_coherence: "float | str | None" = "auto",
-    conncomp_reliability: float = 0.0,
+    conncomp_min_coherence: "float | str | None" = None,
+    conncomp_reliability: float = 0.5,
+    conncomp_thicken: bool = True,
     cost_threshold: int = 50,
     conncomp_cycle_prob: "float | None" = None,
     conncomp_sigma: "float | None" = None,
@@ -351,25 +352,34 @@ def unwrap(
         coherence-cost grow, tuned by ``cost_threshold`` / ``conncomp_sigma`` /
         ``conncomp_cycle_prob``.
     conncomp_min_coherence : float or "auto" or None, default "auto"
-        Coherence below which pixels are labeled ``0`` (background) in the default
-        ("snaphu") connected components. ``"auto"`` uses
-        :func:`conncomp_min_coherence_auto` (``0.32 / sqrt(nlooks)``); pass a float
-        for a fixed cutoff, or ``None`` to disable the cutoff and use
-        ``conncomp_reliability`` (``0`` labels every reliably unwrapped pixel).
-        Takes precedence over ``conncomp_reliability``. Only used when
+        Optional coherence cutoff for the default ("snaphu") connected
+        components: pixels roughly below it are labeled ``0`` (background).
+        Default ``None`` disables the cutoff and uses ``conncomp_reliability``
+        instead. Pass a float for a fixed cutoff, or ``"auto"`` for the
+        looks-aware floor :func:`conncomp_min_coherence_auto`
+        (``0.32 / sqrt(nlooks)``). When set (not ``None``) it takes precedence
+        over ``conncomp_reliability``. Only used when
         ``conncomp_algorithm="snaphu"``.
-    conncomp_reliability : float, default 0.0
-        Lower-level conservativeness knob for the default ("snaphu") connected
-        components, in inverse-variance (``1 / sigma2``) units, so values are
-        small. Used only when ``conncomp_min_coherence`` is ``None``. An edge
-        becomes a component boundary when a one-cycle ambiguity flip across it is
-        no more expensive than the achieved flow; an edge of coherence ``gamma``
-        is cut roughly when ``conncomp_reliability`` exceeds ``1 / sigma2(gamma)``.
-        ``0`` labels essentially every reliably unwrapped pixel; raise it to cut
-        more low-coherence interior edges. To pick one from a target minimum
-        coherence use :func:`conncomp_reliability_from_coherence` (e.g.
-        ``coherence=0.3`` -> about 3.2), or just set ``conncomp_min_coherence``.
-        Only used when ``conncomp_algorithm="snaphu"``.
+    conncomp_reliability : float, default 0.5
+        Conservativeness of the default ("snaphu") connected components, in
+        inverse-variance (``1 / sigma2``) units. An edge becomes a component
+        boundary when a one-cycle ambiguity flip across it costs no more than
+        this; an edge of coherence ``gamma`` is cut roughly when this exceeds
+        ``1 / sigma2(gamma)``. The default ``0.5`` corresponds to about a
+        coherence-0.1 floor (nlooks-dependent) -- it drops decorrelated water
+        and near-noise while keeping real low-coherence land, matching
+        production SNAPHU's positive cut margin. ``0`` labels essentially every
+        unwrapped pixel (the old default, which mislabeled decorrelated ocean
+        as one confident component); raise it to cut more. Pick one from a
+        target coherence with :func:`conncomp_reliability_from_coherence`. Used
+        only when ``conncomp_min_coherence`` is ``None`` and
+        ``conncomp_algorithm="snaphu"``.
+    conncomp_thicken : bool, default True
+        SNAPHU ``ThickenCosts`` behavior for the default ("snaphu") connected
+        components: smooth each edge's cut strength laterally before cutting,
+        so a one-pixel reliable bridge through a wide unreliable region no
+        longer connects the two sides. On by default because production SNAPHU
+        always thickens. Only used when ``conncomp_algorithm="snaphu"``.
     cost_threshold : int, default 50
         Connected-component boundary threshold in raw cost units, for the
         ``"linear"`` algorithm only. An edge becomes a boundary when its
@@ -538,6 +548,7 @@ def unwrap(
             min_size_px,
             max_ncomps,
             pgw,
+            conncomp_thicken,
         )
     else:
         cc = cc_linear

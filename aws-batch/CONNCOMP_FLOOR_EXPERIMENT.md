@@ -1,8 +1,48 @@
 # The conncomp coherence floor: a knob to test at campaign scale
 
-**Status: not changed.** `--conncomp-min-coherence` stays at `auto`. This note
-records why it is worth testing, what the single-frame evidence looks like, and
-what would have to hold across a campaign before the default moves.
+**Status (2026-07-23): the reliability margin is now the SHIPPED DEFAULT.**
+`ww.unwrap` now defaults to `conncomp_min_coherence=None`,
+`conncomp_reliability=0.5`, `conncomp_thicken=True` (the CLI and `compare_gunw`
+match). The old default (`min_coherence="auto"`, a ~0.045-coherence floor
+≈ reliability 0.2, no thicken) mislabeled decorrelated ocean as one confident
+component (Riiser-Larsen frame: 3 components, 94.9% of production-dropped ocean
+still labeled). The new default gives 44 components, 8.7% of that ocean still
+labeled, 99.6% of production-kept land preserved; validated across 44 frames
+(per-comp match median 0.9947, recall gap ww−prod +0.30→+0.012, 0/44
+over-labeling by >0.15). The coherence floor below is retained as an opt-in
+alternative and historical record.
+
+## 2026-07-23 update: the reliability margin IS SNAPHU's rule
+
+SNAPHU's `GrowConnCompsMask` (snaphu 2.0.7 `snaphu_tile.c:663`) computes the
+same per-arc ambiguity-wiggle reliability our `components_snaphu` computes —
+`min(poscost, negcost)` of a ±1 flow change — and cuts arcs whose reliability
+falls below **`CONNCOMPTHRESH = 300`, a positive margin**, then dilates the
+cut regions (`ThickenCosts`). Our faithful port ships
+`reliability_threshold = 0`: cut only at an *exact* cost tie. In decorrelated
+ocean the convex wells are shallow but strict, so a zero margin labels
+everything; a positive margin drops it — that, not any algorithmic
+difference, is why production zeroes the ocean and we don't.
+
+Sweep on 023_088_A_141 (Riiser-Larsen ice shelf + sea-ice ocean, labels only,
+phase untouched):
+
+| `conncomp_reliability` | ocean over-label still labeled | prod-kept land still labeled |
+| ---: | ---: | ---: |
+| 0 (default) | 97.6% | 99.9% |
+| **0.5** | **10.5%** | **99.9%** |
+| 1.0 | 9.5% | 99.3% |
+| 2.3 | 8.4% | 97.0% |
+
+At 0.5 this matches or beats the best coherence-floor point (floor 0.10:
+86.5% removed at 0.2% land cost) with no coherence threshold anywhere — the
+margin is in the solver's own cost units, exactly the "how the solver sees
+it" quantity. The residual ~10% is plausibly what SNAPHU's `ThickenCosts`
+dilation (which we do not implement) cleans up. The campaign experiment
+below should therefore sweep `conncomp_reliability` in {0, 0.25, 0.5, 1.0}
+(the coherence floor rows can ride along for comparison), and a
+`ThickenCosts`-style dilation is the follow-up if the last few percent
+matter.
 
 ## Where the gap comes from
 
@@ -58,6 +98,17 @@ frame is unaffected by any value in the table.
    coherence 0.2 — cryo, dense vegetation, long temporal baselines — would pay
    the "valid domain dropped" column without collecting the benefit. The A_140
    table in `README.md` shows a scene where 0.15 already drops 65% of labels.
+
+   *Cryo data point (2026-07-23, 023_088_A_141, Riiser-Larsen ice shelf +
+   sea-ice ocean):* the feared cryo failure does not materialize on this
+   frame — the shelf sits at coherence 0.4-0.65 while the ocean production
+   drops peaks at 0.05-0.1, so a floor of **0.10** removes 86.5% of the
+   ocean over-labeling while wrongly dropping only **0.2%** of
+   production-kept land (0.15 → 89.4% / 1.1%). For comparison, zeroing
+   labels on the product's water flag removes 87.4% at 2.1% land cost — the
+   flag misfires on coherent fast ice that production keeps, so the
+   coherence floor dominates it on this frame. Sweep reproduced with
+   `scripts/plot_conncomp_water_floor.py` on the frame's `full_arrays.npz`.
 
 2. **`auto` scales the wrong way for this purpose.** `auto` is
    `0.32/sqrt(nlooks)` — **0.045** at 50 looks. It gets *gentler* as looks rise,

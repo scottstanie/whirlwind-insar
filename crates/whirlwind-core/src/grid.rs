@@ -236,43 +236,67 @@ impl ResidualGraph for RectangularGridGraph {
         RectangularGridGraph::arc_endpoints(self, arc)
     }
     // Writes the (arc, head) pairs straight into `out` - this runs once per
-    // popped node in every Dijkstra/BFS flood, and the profile showed the
-    // SmallVec8-then-copy detour surviving as two non-inlined calls worth
-    // ~10% of a full-frame solve.
+    // popped node in every Dijkstra/BFS flood. Reserve all eight possible
+    // slots once, then initialize the spare capacity directly: ordinary
+    // `Vec::push` leaves a capacity branch at every one of the eight sites in
+    // release builds.
     #[inline]
     fn outgoing(&self, node: usize, out: &mut Vec<(usize, usize)>) {
         let (i, j) = self.node_ij(node);
         let n = self.n;
-        // Forward arcs out of (i, j), then residual reverses of forward arcs
-        // pointing INTO (i, j) - same order as `outgoing_ij`.
-        if let Some(a) = self.down_arc(i, j) {
-            out.push((a, node + n));
-        }
-        if let Some(a) = self.up_arc(i, j) {
-            out.push((a, node - n));
-        }
-        if let Some(a) = self.right_arc(i, j) {
-            out.push((a, node + 1));
-        }
-        if let Some(a) = self.left_arc(i, j) {
-            out.push((a, node - 1));
-        }
-        if i + 1 < self.m {
-            let fwd = self.up_arc(i + 1, j).unwrap();
-            out.push((self.transpose(fwd), node + n));
-        }
-        if i >= 1 {
-            let down_into = self.down_arc(i - 1, j).unwrap();
-            out.push((self.transpose(down_into), node - n));
-        }
-        if j + 1 < n {
-            let left_into = self.left_arc(i, j + 1).unwrap();
-            out.push((self.transpose(left_into), node + 1));
-        }
-        if j >= 1 {
-            let right_into = self.right_arc(i, j - 1).unwrap();
-            out.push((self.transpose(right_into), node - 1));
-        }
+        let base_len = out.len();
+        out.reserve(8);
+        let added = {
+            let spare = out.spare_capacity_mut();
+            debug_assert!(spare.len() >= 8);
+            let mut len = 0;
+            macro_rules! emit {
+                ($arc:expr, $head:expr) => {{
+                    // SAFETY: `reserve(8)` above guarantees eight spare slots,
+                    // and this routine emits at most one pair for each of the
+                    // grid's eight possible residual arcs.
+                    unsafe {
+                        spare.get_unchecked_mut(len).write(($arc, $head));
+                    }
+                    len += 1;
+                }};
+            }
+
+            // Forward arcs out of (i, j), then residual reverses of forward arcs
+            // pointing INTO (i, j) - same order as `outgoing_ij`.
+            if let Some(a) = self.down_arc(i, j) {
+                emit!(a, node + n);
+            }
+            if let Some(a) = self.up_arc(i, j) {
+                emit!(a, node - n);
+            }
+            if let Some(a) = self.right_arc(i, j) {
+                emit!(a, node + 1);
+            }
+            if let Some(a) = self.left_arc(i, j) {
+                emit!(a, node - 1);
+            }
+            if i + 1 < self.m {
+                let fwd = self.up_arc(i + 1, j).unwrap();
+                emit!(self.transpose(fwd), node + n);
+            }
+            if i >= 1 {
+                let down_into = self.down_arc(i - 1, j).unwrap();
+                emit!(self.transpose(down_into), node - n);
+            }
+            if j + 1 < n {
+                let left_into = self.left_arc(i, j + 1).unwrap();
+                emit!(self.transpose(left_into), node + 1);
+            }
+            if j >= 1 {
+                let right_into = self.right_arc(i, j - 1).unwrap();
+                emit!(self.transpose(right_into), node - 1);
+            }
+            len
+        };
+        // SAFETY: `reserve(8)` made room for every possible emission and the
+        // first `added` spare slots were initialized above.
+        unsafe { out.set_len(base_len + added) };
     }
 }
 
@@ -339,6 +363,21 @@ mod tests {
             ResidualGraph::outgoing(&g, node, &mut out);
             assert_eq!(out, expect, "order/content mismatch at node ({i}, {j})");
         }
+    }
+
+    #[test]
+    fn trait_outgoing_appends_after_existing_items() {
+        use crate::residual_graph::ResidualGraph;
+        let g = RectangularGridGraph::new(5, 4);
+        let node = g.node_id(2, 2);
+        let expected: Vec<_> = g.outgoing_ij(2, 2).iter().copied().collect();
+        let sentinel = (usize::MAX, usize::MAX);
+        let mut out = vec![sentinel];
+
+        ResidualGraph::outgoing(&g, node, &mut out);
+
+        assert_eq!(out[0], sentinel);
+        assert_eq!(&out[1..], expected);
     }
 
     #[test]

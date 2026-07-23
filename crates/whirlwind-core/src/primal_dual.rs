@@ -187,6 +187,20 @@ fn run_impl_full_fused<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usi
     reset_timings();
     let dbg = debug_enabled();
     let tag = "pd_full";
+    // EXPERIMENTAL PD/SSP split knobs (defaults reproduce the shipped
+    // behavior exactly). On SSP-heavy frames the 8-pass cap hands hundreds of
+    // sources to the serial per-source SSP while the multi-source PD passes
+    // are still draining tens of units per ~1s pass; these let an A/B extend
+    // PD until its per-pass yield drops below SSP's per-unit cost.
+    let env_usize = |name: &str, default: usize| -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default)
+    };
+    let max_iter = env_usize("WHIRLWIND_PD_MAX_ITER", max_iter);
+    // Break to SSP once a pass augments fewer than this many units (0 = off).
+    let min_drain = env_usize("WHIRLWIND_PD_MIN_DRAIN", 0);
     assert!(
         !net.reuse_mode && !net.convex_mode,
         "run_impl_full_fused only supports linear-cost networks"
@@ -334,6 +348,14 @@ fn run_impl_full_fused<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usi
             if iter >= max_iter {
                 if dbg {
                     eprintln!("[{tag}] hit max_iter, falling to SSP");
+                }
+                break;
+            }
+            if min_drain > 0 && (augmented as usize) < min_drain {
+                if dbg {
+                    eprintln!(
+                        "[{tag}] pass drained {augmented} < min_drain={min_drain}, falling to SSP"
+                    );
                 }
                 break;
             }

@@ -326,18 +326,26 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = ConnCompAlgorithm::Snaphu)]
     conncomp_algorithm: ConnCompAlgorithm,
     /// Conservativeness of the default `snaphu` conncomp, in inverse-variance
-    /// (1/sigma^2) units. Used only when --conncomp-min-coherence <= 0. Raise to
-    /// label fewer lower-coherence pixels; prefer --conncomp-min-coherence.
-    #[arg(long, default_value_t = 0.0)]
+    /// (1/sigma^2) units. The default 0.5 is roughly a coherence-0.1 floor
+    /// (nlooks-dependent): it drops decorrelated water/near-noise while keeping
+    /// real low-coherence land, matching production SNAPHU's positive cut
+    /// margin. Pass 0 to label every unwrapped pixel. Used when
+    /// --conncomp-min-coherence is "off" (the default).
+    #[arg(long, default_value_t = 0.5)]
     conncomp_reliability: f64,
-    /// Drop (label conncomp 0) pixels roughly below this coherence, so conncomp>0
-    /// is a reliability mask. Default "auto" is a gentle looks-aware floor
-    /// (0.32/sqrt(nlooks), e.g. 0.08 at 16 looks) that scales with the coherence
-    /// noise floor. Pass a number for a fixed coherence cutoff, or "off" to use
-    /// --conncomp-reliability instead (0 = label every unwrapped pixel). Takes
-    /// precedence over --conncomp-reliability. Only used by the `snaphu` algorithm.
-    #[arg(long, default_value = "auto")]
+    /// Coherence-floor alternative to --conncomp-reliability, which is used by
+    /// default. Pass a number for a fixed cutoff (label conncomp 0 below it), or
+    /// "auto" for the looks-aware floor (0.32/sqrt(nlooks)); either takes
+    /// precedence over --conncomp-reliability. Default "off" uses the reliability
+    /// margin. Only used by the `snaphu` algorithm.
+    #[arg(long, default_value = "off")]
     conncomp_min_coherence: String,
+    /// Disable SNAPHU ThickenCosts smoothing of conncomp cut strengths (on by
+    /// default, matching production SNAPHU). With thickening, a one-pixel
+    /// reliable bridge through a wide unreliable region does not connect
+    /// components. Only used by the `snaphu` algorithm.
+    #[arg(long)]
+    no_conncomp_thicken: bool,
     /// output unwrapped phase; format chosen by --out-format (default:
     /// by extension)
     #[arg(long)]
@@ -427,6 +435,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         conncomp_algorithm,
         conncomp_reliability,
         conncomp_min_coherence,
+        no_conncomp_thicken,
         phase_grad_window,
         out,
     } = args;
@@ -731,6 +740,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
                     min_size_frac: min_component_frac,
                     max_ncomps,
                     phase_grad_window,
+                    thicken_cuts: !no_conncomp_thicken,
                 };
                 whirlwind_core::components_snaphu(
                     igram_orig.view(),

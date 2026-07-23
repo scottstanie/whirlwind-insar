@@ -259,6 +259,16 @@ pub struct SnaphuConnCompParams {
     /// match the window the phase was solved with for the reliability costs to
     /// be consistent with the achieved flow.
     pub phase_grad_window: cost::PhaseGradWindow,
+    /// SNAPHU `ThickenCosts` behavior: convert each edge to a cut *strength*
+    /// `max(0, threshold - reliability)`, smooth the strengths laterally
+    /// (down-edges along the row direction, right-edges along the column
+    /// direction, kernel `(2·self + neighbors) / n`), and cut wherever the
+    /// smoothed strength is positive. A one-pixel reliable bridge through a
+    /// wide unreliable band then no longer connects the two sides. Off by
+    /// default; note the tie handling differs from the plain test (an edge
+    /// with `reliability == threshold` passes here, matching SNAPHU's strict
+    /// `< costthresh` cut).
+    pub thicken_cuts: bool,
 }
 
 impl Default for SnaphuConnCompParams {
@@ -269,6 +279,7 @@ impl Default for SnaphuConnCompParams {
             min_size_frac: 0.0001,
             max_ncomps: 1024,
             phase_grad_window: cost::PhaseGradWindow::default(),
+            thicken_cuts: false,
         }
     }
 }
@@ -356,25 +367,90 @@ pub fn grow_components_snaphu(
     // vertical edge (i, j)-(i+1, j). Edges touching an invalid pixel are cut.
     let mut cut_right = Array2::<bool>::from_elem((m, n - 1), true);
     let mut cut_down = Array2::<bool>::from_elem((m - 1, n), true);
-    for i in 0..m {
-        for j in 0..n - 1 {
-            if valid(i, j) && valid(i, j + 1) {
-                // Horizontal edge ↔ down_arc(i, j+1) (offset uses +α, matching
-                // the integrator's forward j-increasing net flow).
-                let arc = g.down_arc(i, j + 1).unwrap();
-                let k = ambiguity(i, j, i, j + 1);
-                cut_right[(i, j)] = reliability(arc, k) <= thresh;
+    if params.thicken_cuts {
+        // SNAPHU `GrowConnCompsMask` + `ThickenCosts` semantics: per-edge cut
+        // strength `max(0, thresh - reliability)`, laterally smoothed so a
+        // thin reliable bridge through a wide unreliable band is still cut.
+        // Invalid edges carry strength `thresh` (SNAPHU's masked arcs have
+        // ~zero reliability, so they smear a soft barrier onto neighbors) and
+        // are additionally cut unconditionally below.
+        let invalid_strength = thresh.max(0);
+        let mut s_right = Array2::<i64>::from_elem((m, n - 1), invalid_strength);
+        let mut s_down = Array2::<i64>::from_elem((m - 1, n), invalid_strength);
+        for i in 0..m {
+            for j in 0..n - 1 {
+                if valid(i, j) && valid(i, j + 1) {
+                    let arc = g.down_arc(i, j + 1).unwrap();
+                    let k = ambiguity(i, j, i, j + 1);
+                    s_right[(i, j)] = (thresh - reliability(arc, k)).max(0);
+                }
             }
         }
-    }
-    for i in 0..m - 1 {
-        for j in 0..n {
-            if valid(i, j) && valid(i + 1, j) {
-                // Vertical edge ↔ left_arc(i+1, j+1) (offset uses +α, matching
-                // the integrator's forward i-increasing net flow).
-                let arc = g.left_arc(i + 1, j + 1).unwrap();
-                let k = ambiguity(i, j, i + 1, j);
-                cut_down[(i, j)] = reliability(arc, k) <= thresh;
+        for i in 0..m - 1 {
+            for j in 0..n {
+                if valid(i, j) && valid(i + 1, j) {
+                    let arc = g.left_arc(i + 1, j + 1).unwrap();
+                    let k = ambiguity(i, j, i + 1, j);
+                    s_down[(i, j)] = (thresh - reliability(arc, k)).max(0);
+                }
+            }
+        }
+        // SNAPHU convolves each arc's strength with its lateral neighbors:
+        // horizontal (right) edges across adjacent rows, vertical (down)
+        // edges across adjacent columns, kernel (2·self + neighbors) / n.
+        for i in 0..m {
+            for j in 0..n - 1 {
+                let mut acc = 2 * s_right[(i, j)];
+                let mut cnt = 2.0_f64;
+                if i >= 1 {
+                    acc += s_right[(i - 1, j)];
+                    cnt += 1.0;
+                }
+                if i + 1 < m {
+                    acc += s_right[(i + 1, j)];
+                    cnt += 1.0;
+                }
+                let smoothed = (acc as f64 / cnt).round() as i64;
+                cut_right[(i, j)] = !(valid(i, j) && valid(i, j + 1)) || smoothed > 0;
+            }
+        }
+        for i in 0..m - 1 {
+            for j in 0..n {
+                let mut acc = 2 * s_down[(i, j)];
+                let mut cnt = 2.0_f64;
+                if j >= 1 {
+                    acc += s_down[(i, j - 1)];
+                    cnt += 1.0;
+                }
+                if j + 1 < n {
+                    acc += s_down[(i, j + 1)];
+                    cnt += 1.0;
+                }
+                let smoothed = (acc as f64 / cnt).round() as i64;
+                cut_down[(i, j)] = !(valid(i, j) && valid(i + 1, j)) || smoothed > 0;
+            }
+        }
+    } else {
+        for i in 0..m {
+            for j in 0..n - 1 {
+                if valid(i, j) && valid(i, j + 1) {
+                    // Horizontal edge ↔ down_arc(i, j+1) (offset uses +α, matching
+                    // the integrator's forward j-increasing net flow).
+                    let arc = g.down_arc(i, j + 1).unwrap();
+                    let k = ambiguity(i, j, i, j + 1);
+                    cut_right[(i, j)] = reliability(arc, k) <= thresh;
+                }
+            }
+        }
+        for i in 0..m - 1 {
+            for j in 0..n {
+                if valid(i, j) && valid(i + 1, j) {
+                    // Vertical edge ↔ left_arc(i+1, j+1) (offset uses +α, matching
+                    // the integrator's forward i-increasing net flow).
+                    let arc = g.left_arc(i + 1, j + 1).unwrap();
+                    let k = ambiguity(i, j, i + 1, j);
+                    cut_down[(i, j)] = reliability(arc, k) <= thresh;
+                }
             }
         }
     }
@@ -567,6 +643,74 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A wide decorrelated horizontal band with a single high-coherence column
+    /// bridging it. The plain per-edge test keeps the bridge (its own edges
+    /// are deep wells) so the frame stays one component; SNAPHU's
+    /// `ThickenCosts` smoothing smears the band's cut strength onto the
+    /// bridge laterally and severs it. Uniformly coherent data must stay a
+    /// single component under the same thickened threshold.
+    #[test]
+    fn snaphu_thicken_cuts_severs_thin_bridge() {
+        let (m, n) = (32, 32);
+        let truth = Array2::from_shape_fn((m, n), |(i, j)| 0.2 * (i as f32 + j as f32));
+        let igram: Array2<Complex32> = truth.mapv(|p| Complex32::from_polar(1.0, p));
+        // Coherence 0.05 in rows 12..21, except a coherent bridge at column 16.
+        let corr = Array2::from_shape_fn((m, n), |(i, j)| {
+            if (12..21).contains(&i) && j != 16 {
+                0.05
+            } else {
+                0.95
+            }
+        });
+        // Threshold between the band's shallow wells and the bridge's deep
+        // ones: ~0.5 in the public 1/sigma2 knob units at 50 looks.
+        let params = SnaphuConnCompParams {
+            reliability_threshold: 500_000,
+            min_size_px: 1,
+            ..Default::default()
+        };
+        let plain =
+            grow_components_snaphu(igram.view(), corr.view(), 50.0, truth.view(), None, &params);
+        assert_eq!(
+            plain[(2, 16)],
+            plain[(30, 16)],
+            "without thickening the coherent bridge connects the halves"
+        );
+        let thick_params = SnaphuConnCompParams {
+            thicken_cuts: true,
+            ..params.clone()
+        };
+        let thick = grow_components_snaphu(
+            igram.view(),
+            corr.view(),
+            50.0,
+            truth.view(),
+            None,
+            &thick_params,
+        );
+        let top = thick[(2, 16)];
+        let bottom = thick[(30, 16)];
+        assert!(top > 0 && bottom > 0, "both sides should stay labeled");
+        assert_ne!(top, bottom, "thickened cuts must sever the 1-px bridge");
+
+        // Uniform high coherence: thickening must not fragment anything.
+        let corr_hi = Array2::<f32>::from_elem((m, n), 0.95);
+        let uniform = grow_components_snaphu(
+            igram.view(),
+            corr_hi.view(),
+            50.0,
+            truth.view(),
+            None,
+            &thick_params,
+        );
+        let first = uniform[(0, 0)];
+        assert!(first > 0);
+        assert!(
+            uniform.iter().all(|&l| l == first),
+            "uniformly coherent frame must stay one component with thickening"
+        );
     }
 
     /// A clean ramp whose *output* has been corrupted by a spurious 2π jump on
