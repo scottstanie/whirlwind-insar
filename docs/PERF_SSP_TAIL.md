@@ -64,7 +64,29 @@ WHIRLWIND_TIMING=1 WHIRLWIND_DEBUG=1 python ~/repos/whirlwind-insar/aws-batch/co
 python scripts/quicklook_gunw_hardest.py FILE.h5 --out-dir quicklooks
 ```
 
-The glacier benchmark set (20 products + delivered `.rc.yaml` runconfigs, for
-a later SNAPHU-with-production-parameters comparison) lives in
-`.../nisar_provisional/nisar_glacier/`; whirlwind baselines accumulate in its
-`ww_baseline/` as downloads complete.
+## Glacier benchmark set baseline (2026-07-23)
+
+The glacier set (20 products + delivered `.rc.yaml` runconfigs, for a later
+SNAPHU-with-production-parameters comparison) lives in
+`.../nisar_provisional/nisar_glacier/`. Whirlwind baseline on this branch
+(single sequential runs; full table in that directory's
+`test-perf-ssp-tail-and-open-water/AGGREGATE.md`):
+
+- Runtime median **46.2 s**, max **218.4 s** (023_088_A_141, ocean+glacier),
+  18.8 min for the whole set. (The same frame's 1159 s campaign figure was
+  6-worker contention — see above.)
+- Per-component match median **0.9928**, 16/20 ≥ 0.98. The three below 0.95:
+  one garbage input (023_103_A_140: 9-s sliver, coherence 0.06, production
+  labeled 0.01% of pixels), one 4%-valid sliver (023_088_A_140), and one
+  genuinely hard dense-fringe/decorrelated-belt scene (023_059_A_141 at
+  0.940) — the right quality target on this set.
+- Whirlwind labels ~0.98-0.99 of unwrapped pixels vs production's median
+  0.66; the extra coverage is exactly the low-coherence area production
+  declined to label, so the match metric cannot validate it. Frame it as
+  "more coverage, maskable by coherence", not "better recall".
+
+Note (2026-07-23): byte-parity with ww-orig is retired as a design
+constraint (S.S.: the Python original is a stranded project; whirlwind is
+the product). Equal-cost-optimum output changes are acceptable when the
+trade is worth it — they still need campaign-level revalidation, but not
+byte-identity.
