@@ -13,7 +13,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 license = "BSD-3-Clause OR Apache-2.0"
 authors = ["Scott Staniewicz <scott.stanie@utexas.edu>"]
