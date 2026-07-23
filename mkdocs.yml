@@ -28,6 +28,7 @@ exclude_docs: |
 nav:
   - Home: index.md
   - Algorithm: ALGORITHM.md
+  - Why it's Bayesian: BAYESIAN.md
   - NISAR comparison: NISAR_SUMMARY.md
   - Why SNAPHU/PHASS differ: SNAPHU_PHASS_SPEED.md
   - Bridging disconnected regions: BRIDGING.md

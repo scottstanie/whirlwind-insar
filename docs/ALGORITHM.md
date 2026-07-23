@@ -21,6 +21,8 @@ Wrapped gradients (differences between adjacent pixels) can be locally inconsist
 7. If the valid mask has disconnected regions, apply a bridge post-pass to set their relative $2\pi$ offsets from local phase at the region boundaries (a size-monotone tree in which large regions anchor smaller ones).
 8. Grow SNAPHU-faithful connected-component labels from the final unwrapped phase by the ambiguity-wiggle reliability test.
 
+The cost model gives the flow solve a precise statistical meaning: minimizing total cost maximizes a posterior probability over the integer cycle corrections. See [Why it's Bayesian](BAYESIAN.md) for the formulation and how it differs from SNAPHU's cost model.
+
 ## Inputs
 
 | Input    | Meaning                                                |
