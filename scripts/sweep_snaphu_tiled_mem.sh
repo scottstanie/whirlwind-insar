@@ -37,13 +37,16 @@ run() {  # frame engine h5 nproc(optional)
   echo "    $(awk "BEGIN{printf \"%.2f\",${b:-0}/1e9}") GB  nproc=${n:-?}  rt=${rt:-?}s"
 }
 
-# Capped-concurrency example on 005_A_025.
-A025=$(ls "$H5DIR"/*_A_025_*.h5 2>/dev/null | head -1)
-[ -n "$A025" ] && run 005_A_025 snaphu_np4 "$A025" 4
+# Capped-concurrency (nproc=4) across all 13 frames: the memory-sane default,
+# for the "report both" runtime/memory tradeoff against the all-tiles run below.
+for h5 in "$H5DIR"/*.h5; do
+  fr=$(basename "$h5" | sed -E 's/.*_([0-9]{3}_[AD]_[0-9]{3})_.*/\1/')
+  run "$fr" snaphu_np4 "$h5" 4
+done
 
 # All frames, all tiles parallel (default nproc = cpu_count).
 for h5 in "$H5DIR"/*.h5; do
-  fr=$(basename "$h5" | sed -E 's/.*_([AD]_[0-9]{3})_.*/\1/')
+  fr=$(basename "$h5" | sed -E 's/.*_([0-9]{3}_[AD]_[0-9]{3})_.*/\1/')
   run "$fr" snaphu_par "$h5"
 done
 echo "DONE -> $CSV"
