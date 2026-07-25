@@ -23,6 +23,7 @@ def _unwrap_native(
     cost_threshold: int = ...,
     min_size_px: int = ...,
     max_ncomps: int = ...,
+    phase_grad_window: tuple[int, int] = ...,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """Engine behind :func:`whirlwind.unwrap`: single-tile linear coherence-cost
     unwrap returning ``(phase, conn_components)``.

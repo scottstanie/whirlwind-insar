@@ -54,6 +54,7 @@ def unwrap(
     conncomp_algorithm: str = ...,
     conncomp_min_coherence: float | str | None = ...,
     conncomp_reliability: float = ...,
+    conncomp_thicken: bool = ...,
     cost_threshold: int = ...,
     conncomp_cycle_prob: float | None = ...,
     conncomp_sigma: float | None = ...,
@@ -61,6 +62,7 @@ def unwrap(
     max_ncomps: int = ...,
     goldstein_alpha: float = ...,
     goldstein_psize: int = ...,
+    phase_grad_window: tuple[int, int] = ...,
 ) -> tuple[NDArray[np.float32], NDArray[np.uint32]]:
     """Unwrap an interferogram, returning ``(unwrapped_phase, conncomp)``.
 

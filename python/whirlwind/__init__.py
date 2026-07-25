@@ -351,15 +351,15 @@ def unwrap(
         ``conncomp_reliability``. ``"linear"`` is the older global
         coherence-cost grow, tuned by ``cost_threshold`` / ``conncomp_sigma`` /
         ``conncomp_cycle_prob``.
-    conncomp_min_coherence : float or "auto" or None, default "auto"
+    conncomp_min_coherence : float or "auto" or None, default None
         Optional coherence cutoff for the default ("snaphu") connected
         components: pixels roughly below it are labeled ``0`` (background).
-        Default ``None`` disables the cutoff and uses ``conncomp_reliability``
-        instead. Pass a float for a fixed cutoff, or ``"auto"`` for the
-        looks-aware floor :func:`conncomp_min_coherence_auto`
-        (``0.32 / sqrt(nlooks)``). When set (not ``None``) it takes precedence
-        over ``conncomp_reliability``. Only used when
-        ``conncomp_algorithm="snaphu"``.
+        The default ``None`` disables the cutoff and uses
+        ``conncomp_reliability`` instead. Pass a float for a fixed cutoff, or
+        ``"auto"`` for the looks-aware floor
+        :func:`conncomp_min_coherence_auto` (``0.32 / sqrt(nlooks)``). When set
+        (not ``None``) it takes precedence over ``conncomp_reliability``. Only
+        used when ``conncomp_algorithm="snaphu"``.
     conncomp_reliability : float, default 0.5
         Conservativeness of the default ("snaphu") connected components, in
         inverse-variance (``1 / sigma2``) units. An edge becomes a component
