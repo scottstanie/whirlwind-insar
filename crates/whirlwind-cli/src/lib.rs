@@ -205,7 +205,9 @@ struct Cli {
     /// can slow down by 10-100x.
     #[arg(long)]
     mask: Option<PathBuf>,
-    /// number of looks
+    /// Effective number of looks. The default phase-cost table represents up
+    /// to 300 looks. Runtime Lee-PDF paths, including the default SNAPHU
+    /// connected components, are capped at 80 for numerical stability.
     #[arg(long, default_value_t = 1.0)]
     nlooks: f32,
     /// Coarse-solve factor for noisy scenes. When > 1, the complex
@@ -454,14 +456,17 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         }
     };
 
-    // Reject nonphysical looks early (NaN included), and note the high-end cap.
+    // Reject nonphysical looks early (NaN included), and distinguish the
+    // runtime Lee-PDF cap from the embedded phase-cost table's 300-look axis.
     if nlooks.is_nan() || nlooks < 1.0 {
         bail!("--nlooks must be a finite value >= 1, got {nlooks}");
     }
     if nlooks > whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS {
         eprintln!(
-            "warning: --nlooks {nlooks} exceeds the cost-model cap of {}; using {} \
-             (the Lee 1994 phase PDF has effectively converged by then).",
+            "warning: --nlooks {nlooks} exceeds the runtime Lee cost-model cap \
+             of {}; SNAPHU connected components and grounded/convex unwrap paths \
+             use {} because that PDF implementation is numerically unstable above \
+             the cap. The default phase solve uses its embedded table up to 300.",
             whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS,
             whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS,
         );

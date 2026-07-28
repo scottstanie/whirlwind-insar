@@ -31,10 +31,12 @@
 //!   * α is nearly saturated at 31 nodes: refining to 121 buys only ~10%,
 //!     because the stored quantities are *integrals* of the phase PDF and stay
 //!     smooth in α even when the PDF itself is narrow.
-//!   * γ and L are the binding axes (~30% each going 11 -> 21). Going
-//!     11x11 -> 21x21 cuts mean interpolation error 2.9x (0.26 -> 0.09 nats)
-//!     for 107 KB, which is the knee of the curve; 41 or 51 γ nodes cost
-//!     2-2.5x the memory for a further ~1.6x.
+//!   * γ and L are the binding axes (~30% each going 11 -> 21 when all nodes
+//!     span [1, 80]). For the table actually embedded here, whose 21 L nodes
+//!     cover the wider [1, 300] interval, an off-node check over the shared
+//!     [1, 80] domain cuts mean interpolation error from 0.260 to 0.134 nats
+//!     (~1.9x) and p99 from 3.1 to 1.7 nats. The earlier 0.090 / 2.9x result
+//!     was for a different candidate with all 21 L nodes inside [1, 80].
 //!   * The L axis runs to 300 because real GUNW coherence carries far more than
 //!     80 looks (water-fit measurements give L ~ 143-276) and the arc costs
 //!     keep changing that far out. 21 log-spaced nodes over [1, 300] is finer

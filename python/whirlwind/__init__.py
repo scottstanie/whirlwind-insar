@@ -54,8 +54,9 @@ if TYPE_CHECKING:
 # coherence. Keep in sync with `MAX_COST_MODEL_NLOOKS` in
 # crates/whirlwind-core/src/cost/lut.rs.
 #
-# NOTE: the default `unwrap` path does not go through those runtime LUTs -- it
-# reads the embedded spline table, which clamps to its own `L` axis instead.
+# NOTE: the default phase solve does not go through those runtime LUTs -- it
+# reads the embedded spline table, whose `L` axis reaches 300. The default
+# SNAPHU connected-component grow does use the capped variance LUT, however.
 _MAX_COST_MODEL_NLOOKS = 80.0
 
 
@@ -70,11 +71,11 @@ def _validate_nlooks(nlooks: float) -> None:
         raise ValueError(f"nlooks must be a finite value >= 1, got {nlooks!r}")
     if nlooks > _MAX_COST_MODEL_NLOOKS:
         logger.warning(
-            "nlooks=%g exceeds the runtime cost-LUT cap of %g, so paths that "
-            "build those LUTs (connected components, grounded/convex unwrap) "
-            "will use %g looks. The default unwrap path is unaffected: it reads "
-            "the embedded spline table and clamps to that table's own looks "
-            "axis instead.",
+            "nlooks=%g exceeds the runtime Lee cost-model cap of %g, so "
+            "SNAPHU connected components and grounded/convex unwrap paths use "
+            "%g looks because that PDF implementation is numerically unstable "
+            "above the cap. The default phase solve uses the embedded table up "
+            "to its separate 300-look limit.",
             nlooks,
             _MAX_COST_MODEL_NLOOKS,
             _MAX_COST_MODEL_NLOOKS,
@@ -282,8 +283,12 @@ def unwrap(
         Effective number of looks used to estimate ``corr``. Must be at least
         ``1`` (values below raise ``ValueError``). A higher number of looks
         means higher confidence in ``corr`` and a narrower coherence cost model.
-        Very large values (above ~80 looks) are capped for the cost model, with
-        a warning, since the phase PDF has effectively converged by then.
+        The default phase-cost table represents up to 300 looks and clamps
+        larger values to that endpoint. The runtime Lee-PDF tables used by the
+        default SNAPHU connected-component grow and the experimental
+        grounded/convex solvers are separately capped at 80 looks, with a
+        warning, because their hypergeometric evaluation is numerically
+        unstable above that limit.
     mask : ndarray of bool, optional
         Valid-pixel mask, ``True`` = valid. Defaults to ``(igram != 0) &
         (corr > 0)``, so exact-zero phase or zero-coherence pixels are excluded.
