@@ -28,18 +28,20 @@ const GAMMA_HI: f32 = 0.999;
 ///   against the product metadata by fitting the zero-coherence sample-coherence
 ///   distribution over open water.
 ///
-/// The real reason to cap is that [`super::lee_pdf::pdf`] stops being
-/// trustworthy, and the axis that drives that is **coherence, not looks**: the
-/// `₂F₁(½−L, −½; ½; z)` branch is evaluated by a plain Gauss series whose terms
-/// alternate and blow up for large `L`, so the PDF returns negative densities
-/// from γ ≈ 0.8 upward (γ = 0.99 already fails at L = 20, returning −4.3).
-/// Capping at 80 bounds the damage; it does not remove it. Fixing that branch
-/// (scipy's `hyp2f1` handles the same arguments cleanly) is the real repair.
+/// The cap used to sit at 80 because [`super::lee_pdf::pdf`] stopped being
+/// trustworthy above it — its `₂F₁(½−L, −½; ½; z)` branch summed an alternating
+/// series that lost all significance, returning *negative* densities from
+/// γ ≈ 0.8 upward (−17.7 at γ = 0.99, L = 80). That branch is gone: the PDF now
+/// evaluates one positive-term series in log space and is non-negative and
+/// reference-accurate across the whole (γ, L) range, so the cap no longer
+/// guards a defect.
 ///
-/// This does **not** cap the default unwrap path. `compute_carballo_costs_parity*`
-/// reads [`super::spline_lut`], which passes `nlooks` straight to its own
-/// trilinear bracket and therefore clamps to that table's `L` axis instead.
-pub const MAX_COST_MODEL_NLOOKS: f32 = 80.0;
+/// It is now simply the top of [`super::spline_lut`]'s looks axis. Matching the
+/// two matters: the default unwrap path prices arcs from the spline table while
+/// connected components take their variance from [`get_or_build_variance`]
+/// here, so a lower value would have those two paths disagree about how many
+/// looks the same interferogram has.
+pub const MAX_COST_MODEL_NLOOKS: f32 = 300.0;
 
 /// Cap `nlooks` at [`MAX_COST_MODEL_NLOOKS`] for LUT construction. Only the
 /// high end is capped: `nlooks < 1` is rejected at the public API boundary

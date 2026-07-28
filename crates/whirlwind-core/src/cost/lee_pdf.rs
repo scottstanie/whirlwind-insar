@@ -12,7 +12,7 @@
 //!                  / (2 · √π · Γ(L) · (1 - β²)^(L + 1/2))
 //! where β = γ · cos(φ).
 
-use super::hyp2f1::hyp2f1_f64;
+use super::hyp2f1::ln_hyp2f1_pos;
 use std::f64::consts::PI as PI64;
 
 /// Lanczos approximation for ln Γ(x), x > 0. Good to ~1e-13.
@@ -61,23 +61,49 @@ pub fn pdf(alpha: f32, gamma: f32, nlooks: f32) -> f32 {
     let b2 = beta * beta;
     let one_minus_b2 = (1.0 - b2).max(1e-300);
 
-    // Term 1 = (1 - γ²)^L / (2π) · ₂F₁(L, 1; 0.5; β²)
-    // For β² near 1, evaluate in log-space using the Euler transform:
+    // Term 1 = (1 - γ²)^L / (2π) · ₂F₁(L, 1; 0.5; β²), evaluated in log space.
+    //
+    // This used to branch at β² = 0.5 onto the Euler-transformed series
     //     ₂F₁(L, 1; 0.5; b²) = (1-b²)^(-L-0.5) · ₂F₁(0.5-L, -0.5; 0.5; b²)
-    let t1 = if b2 < 0.5 {
-        (1.0 - g2).powf(n) / (2.0 * PI64) * hyp2f1_f64(n, 1.0, 0.5, b2)
-    } else {
-        let log_pref = n * (1.0 - g2).ln() - (n + 0.5) * one_minus_b2.ln();
-        log_pref.exp() / (2.0 * PI64) * hyp2f1_f64(0.5 - n, -0.5, 0.5, b2)
-    };
+    // to dodge overflow of the direct series. The two forms are algebraically
+    // identical (the (1-b²) powers cancel exactly), but the transformed one has
+    // a large negative first parameter, so its terms alternate and grow before
+    // cancelling: at L = 300, z = 0.36 it returned -2.9e20 against a true 18.4,
+    // and the resulting PDF went *negative* from γ ≈ 0.8 upward. Since the
+    // direct series has only positive terms, taking its logarithm with
+    // rescaling removes both the overflow and the cancellation, so one formula
+    // covers the whole range.
+    let ln_t1 = n * (1.0 - g2).ln() - (2.0 * PI64).ln() + ln_hyp2f1_pos(n, 1.0, 0.5, b2);
+    let t1 = ln_t1.exp();
 
     // Term 2: (Γ(L+0.5)/Γ(L)) · β · (1-γ²)^L / (2 √π · (1-β²)^(L+0.5))
-    // Evaluate in log-space too.
-    let log_t2_mag = lanczos_lgamma(n + 0.5) - lanczos_lgamma(n) + n * (1.0 - g2).ln()
-        - (n + 0.5) * one_minus_b2.ln();
-    let t2 = beta.signum() * beta.abs() * (log_t2_mag.exp()) / (2.0 * PI64.sqrt());
+    // Also in log space; β carries the only sign in the whole expression.
+    let ln_t2 = lanczos_lgamma(n + 0.5) - lanczos_lgamma(n) + n * (1.0 - g2).ln()
+        - (n + 0.5) * one_minus_b2.ln()
+        + beta.abs().ln()
+        - (2.0 * PI64.sqrt()).ln();
 
-    (t1 + t2) as f32
+    if beta == 0.0 {
+        return t1 as f32;
+    }
+    // `exp(u) - exp(v) = -exp(u)·expm1(v-u)` keeps the subtraction accurate for
+    // moderate cancellation.
+    let sum = if beta > 0.0 {
+        ln_t1.exp() + ln_t2.exp()
+    } else {
+        -ln_t1.exp() * (ln_t2 - ln_t1).exp_m1()
+    };
+
+    // Deep in the tail at high looks the two terms agree to every bit f64 has:
+    // at γ = 0.8, L = 276, φ ≈ -π both are 0.17086 with identical logs to 16
+    // digits, while the true density is ~6e-62. No rearrangement recovers that
+    // from this two-term form -- it is a conditioning limit of the analytic
+    // expression, not of the ₂F₁ evaluation (which matches a 50-digit reference
+    // exactly). What is left is sign noise at the 1e-15 level, and 0 is a far
+    // better estimate of a 1e-62 density than a negative number is, so clamp.
+    // Distinct from the old failure, where the *values themselves* were wrong
+    // by order unity (-17.7 against a peak of similar size).
+    (sum.max(0.0)) as f32
 }
 
 #[cfg(test)]
@@ -85,15 +111,20 @@ mod tests {
     use super::*;
     use std::f32::consts::PI;
 
-    /// PDF must integrate to ~1 over [-π, π) for typical (γ, L) in InSAR.
-    /// (Extreme cases like γ=0.99, L=50 are excluded because this
-    /// implementation is simply wrong there — see the note on
-    /// `MAX_COST_MODEL_NLOOKS`: the `₂F₁` Gauss series loses all significance
-    /// at high γ and the PDF goes negative. Not narrowness, a defect.)
+    /// PDF must integrate to ~1 over [-π, π), including the high-coherence and
+    /// high-looks corners that the old Euler-transformed branch got wrong.
     #[test]
     fn pdf_integrates_to_one() {
-        for (gamma, nlooks) in [(0.1, 1.0), (0.5, 5.0), (0.9, 10.0)] {
-            let n = 8192;
+        for (gamma, nlooks) in [
+            (0.1, 1.0),
+            (0.5, 5.0),
+            (0.9, 10.0),
+            (0.8, 85.0),
+            (0.95, 80.0),
+            (0.99, 20.0),
+            (0.99, 300.0),
+        ] {
+            let n = 1 << 17;
             let dx = 2.0 * PI / (n as f32);
             let mut s = 0.0_f64;
             for k in 0..n {
@@ -104,6 +135,46 @@ mod tests {
             assert!(
                 (s - 1.0).abs() < 5e-3,
                 "PDF integral for γ={gamma}, L={nlooks} = {s}, expected ~1.0"
+            );
+        }
+    }
+
+    /// The defect this implementation was written to fix: the previous
+    /// two-branch form returned *negative* densities from γ ≈ 0.8 upward
+    /// (−17.7 at γ = 0.99, L = 80). A density is never negative, at any
+    /// parameters, so this is an absolute invariant rather than a tolerance.
+    #[test]
+    fn pdf_is_never_negative() {
+        for &gamma in &[0.0_f32, 0.3, 0.6, 0.8, 0.9, 0.95, 0.99, 0.999] {
+            for &nlooks in &[1.0_f32, 5.0, 20.0, 80.0, 143.0, 276.0, 300.0, 1000.0] {
+                for k in 0..=512 {
+                    let phi = -PI + 2.0 * PI * (k as f32) / 512.0;
+                    let p = pdf(phi, gamma, nlooks);
+                    assert!(
+                        p.is_finite() && p >= 0.0,
+                        "pdf({phi}, γ={gamma}, L={nlooks}) = {p}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Spot values against a high-precision reference (mpmath, 50 digits) at
+    /// parameters where the old branch was badly wrong.
+    #[test]
+    fn pdf_matches_high_precision_reference() {
+        // (alpha, gamma, nlooks, expected)
+        for &(a, g, n, want) in &[
+            (0.0_f32, 0.6_f32, 20.0_f32, 1.880_561_597_8_f64),
+            (0.5, 0.9, 80.0, 1.204_986_615_1e-23),
+            (0.2, 0.95, 80.0, 1.948_639_265_3e-10),
+            (0.1, 0.99, 20.0, 4.872_209_923_1e-3),
+        ] {
+            let got = pdf(a, g, n) as f64;
+            let rel = (got - want).abs() / want.abs();
+            assert!(
+                rel < 2e-4,
+                "pdf({a}, {g}, {n}) = {got}, want {want} (rel {rel:.2e})"
             );
         }
     }

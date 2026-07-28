@@ -463,10 +463,10 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
     }
     if nlooks > whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS {
         eprintln!(
-            "warning: --nlooks {nlooks} exceeds the runtime Lee cost-model cap \
-             of {}; SNAPHU connected components and grounded/convex unwrap paths \
-             use {} because that PDF implementation is numerically unstable above \
-             the cap. The default phase solve uses its embedded table up to 300.",
+            "warning: --nlooks {nlooks} exceeds the cost model's looks range \
+             of {}; both the arc costs and the connected-component variance will \
+             use {}. That is the extent of the cost table, not a point where the \
+             phase statistics stop changing.",
             whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS,
             whirlwind_core::cost::lut::MAX_COST_MODEL_NLOOKS,
         );

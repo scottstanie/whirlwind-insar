@@ -46,18 +46,16 @@ _interpolate = interpolate
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# Effective looks above this are capped when building the *runtime* Lee (1994)
-# cost LUTs. This is a numerical-safety bound, not a statistical one: the phase
-# PDF at these look counts is narrow but nowhere near degenerate, and look counts
-# well above 80 are entirely physical (NISAR GUNW coherence measures L ~ 143-276).
-# The cap exists because the Rust `lee_pdf` 2F1 series breaks down at high
-# coherence. Keep in sync with `MAX_COST_MODEL_NLOOKS` in
-# crates/whirlwind-core/src/cost/lut.rs.
+# Top of the cost model's looks range, shared by the embedded spline table (arc
+# costs) and the runtime Lee LUTs (connected-component variance), so both price
+# the same interferogram at the same number of looks. Keep in sync with
+# `MAX_COST_MODEL_NLOOKS` in crates/whirlwind-core/src/cost/lut.rs.
 #
-# NOTE: the default phase solve does not go through those runtime LUTs -- it
-# reads the embedded spline table, whose `L` axis reaches 300. The default
-# SNAPHU connected-component grow does use the capped variance LUT, however.
-_MAX_COST_MODEL_NLOOKS = 80.0
+# This is the table's extent, not a point where the phase statistics converge --
+# they do not, and look counts in this range are entirely physical (NISAR GUNW
+# coherence measures L ~ 143-276, confirmed by fitting the zero-coherence
+# sample-coherence distribution over open water).
+_MAX_COST_MODEL_NLOOKS = 300.0
 
 
 def _validate_nlooks(nlooks: float) -> None:
@@ -71,11 +69,10 @@ def _validate_nlooks(nlooks: float) -> None:
         raise ValueError(f"nlooks must be a finite value >= 1, got {nlooks!r}")
     if nlooks > _MAX_COST_MODEL_NLOOKS:
         logger.warning(
-            "nlooks=%g exceeds the runtime Lee cost-model cap of %g, so "
-            "SNAPHU connected components and grounded/convex unwrap paths use "
-            "%g looks because that PDF implementation is numerically unstable "
-            "above the cap. The default phase solve uses the embedded table up "
-            "to its separate 300-look limit.",
+            "nlooks=%g exceeds the cost model's looks range of %g, so both "
+            "the arc costs and the connected-component variance will use %g. "
+            "That is the extent of the cost table, not a point where the phase "
+            "statistics stop changing.",
             nlooks,
             _MAX_COST_MODEL_NLOOKS,
             _MAX_COST_MODEL_NLOOKS,

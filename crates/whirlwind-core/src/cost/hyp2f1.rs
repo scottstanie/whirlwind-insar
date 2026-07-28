@@ -39,6 +39,48 @@ pub fn hyp2f1_f64(a: f64, b: f64, c: f64, z: f64) -> f64 {
     pref * gauss_series(c - a, c - b, c, z, 1000)
 }
 
+/// `ln ₂F₁(a, b; c; z)` for `a, b, c > 0` and `z ∈ [0, 1)`.
+///
+/// In this parameter range every term of the Gauss series is positive, so there
+/// is no cancellation and the only hazard is overflow of the partial sum. That
+/// is handled by rescaling and carrying the scale in the logarithm, which makes
+/// the result usable far beyond the point where the value itself overflows f64
+/// (e.g. `₂F₁(80, 1; ½; 0.98) ≈ 9e137`).
+///
+/// This is what lets [`super::lee_pdf`] use a single formula instead of
+/// switching to an Euler-transformed series whose terms alternate: that series
+/// is what returned negative densities at high coherence.
+///
+/// Convergence is geometric with ratio `z`, so `z` very close to 1 needs many
+/// terms. Callers are LUT builders, which are cached per `nlooks`, so the cost
+/// is paid once.
+pub fn ln_hyp2f1_pos(a: f64, b: f64, c: f64, z: f64) -> f64 {
+    debug_assert!(a > 0.0 && b > 0.0 && c > 0.0, "positive-term form only");
+    debug_assert!((0.0..1.0).contains(&z), "z must be in [0, 1)");
+    if z <= 0.0 {
+        return 0.0;
+    }
+    const RESCALE: f64 = 1e250;
+    let ln_rescale = RESCALE.ln();
+    let mut term = 1.0_f64;
+    let mut sum = 1.0_f64;
+    let mut ln_scale = 0.0_f64;
+    for k in 0..200_000 {
+        let kf = k as f64;
+        term *= (a + kf) * (b + kf) * z / ((c + kf) * (kf + 1.0));
+        sum += term;
+        if sum > RESCALE {
+            sum /= RESCALE;
+            term /= RESCALE;
+            ln_scale += ln_rescale;
+        }
+        if term <= 1e-16 * sum {
+            break;
+        }
+    }
+    sum.ln() + ln_scale
+}
+
 /// f32 convenience wrapper.
 pub fn hyp2f1(a: f32, b: f32, c: f32, z: f32) -> f32 {
     hyp2f1_f64(a as f64, b as f64, c as f64, z as f64) as f32
