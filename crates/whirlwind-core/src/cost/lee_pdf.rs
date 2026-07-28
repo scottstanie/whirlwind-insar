@@ -86,8 +86,10 @@ mod tests {
     use std::f32::consts::PI;
 
     /// PDF must integrate to ~1 over [-π, π) for typical (γ, L) in InSAR.
-    /// (Extreme cases like γ=0.99, L=50 produce delta-spike PDFs that need
-    /// adaptive quadrature; not worth testing here.)
+    /// (Extreme cases like γ=0.99, L=50 are excluded because this
+    /// implementation is simply wrong there — see the note on
+    /// `MAX_COST_MODEL_NLOOKS`: the `₂F₁` Gauss series loses all significance
+    /// at high γ and the PDF goes negative. Not narrowness, a defect.)
     #[test]
     fn pdf_integrates_to_one() {
         for (gamma, nlooks) in [(0.1, 1.0), (0.5, 5.0), (0.9, 10.0)] {

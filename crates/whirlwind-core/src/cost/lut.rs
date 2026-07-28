@@ -15,15 +15,30 @@ const ALPHA_HI: f32 = 3.0 * TAU;
 const GAMMA_LO: f32 = 0.0;
 const GAMMA_HI: f32 = 0.999;
 
-/// Maximum effective looks any cost LUT is evaluated at. Above this the Lee
-/// (1994) multilook phase PDF is already a near-delta spike whose cost *shape*
-/// no longer changes, while the `₂F₁` series in [`super::lee_pdf`] starts to
-/// overflow/underflow into NaN at high coherence (empirically from ~100 looks
-/// for the Carballo CDF, ~500 for the raw PDF). Independent looks are also
-/// bounded in practice — real multilook windows oversample correlated pixels —
-/// so capping here costs nothing physical. Matches the upper grid point of the
-/// embedded parity spline LUT ([`super::spline_lut`]), which already clamps to
-/// it; keeping the cap identical makes every cost path agree at high looks.
+/// Maximum effective looks the **runtime** LUTs in this module are built at.
+///
+/// This is a numerical-safety limit, not a statement about the statistics.
+/// Two earlier claims here were wrong and are worth not repeating:
+///
+/// * *"the PDF is a near-delta spike by then"* — it is narrow, not degenerate.
+///   At γ = 0.6, L = 256 the phase standard deviation is still ≈ 0.06 rad,
+///   comfortably resolved by this module's 501-point α grid.
+/// * *"that many independent looks is not physically reachable"* — NISAR GUNW
+///   coherence measures L ≈ 143 (13×16 looks) to ≈ 276 (26×16), confirmed
+///   against the product metadata by fitting the zero-coherence sample-coherence
+///   distribution over open water.
+///
+/// The real reason to cap is that [`super::lee_pdf::pdf`] stops being
+/// trustworthy, and the axis that drives that is **coherence, not looks**: the
+/// `₂F₁(½−L, −½; ½; z)` branch is evaluated by a plain Gauss series whose terms
+/// alternate and blow up for large `L`, so the PDF returns negative densities
+/// from γ ≈ 0.8 upward (γ = 0.99 already fails at L = 20, returning −4.3).
+/// Capping at 80 bounds the damage; it does not remove it. Fixing that branch
+/// (scipy's `hyp2f1` handles the same arguments cleanly) is the real repair.
+///
+/// This does **not** cap the default unwrap path. `compute_carballo_costs_parity*`
+/// reads [`super::spline_lut`], which passes `nlooks` straight to its own
+/// trilinear bracket and therefore clamps to that table's `L` axis instead.
 pub const MAX_COST_MODEL_NLOOKS: f32 = 80.0;
 
 /// Cap `nlooks` at [`MAX_COST_MODEL_NLOOKS`] for LUT construction. Only the

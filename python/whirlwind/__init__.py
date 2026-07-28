@@ -46,11 +46,16 @@ _interpolate = interpolate
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# Effective looks above this are capped when building the Lee (1994) cost LUTs.
-# The PDF is already a near-delta spike there (the cost shape stops changing),
-# and that many *independent* looks is not physically reachable from correlated
-# multilook windows. Keep in sync with `MAX_COST_MODEL_NLOOKS` in
+# Effective looks above this are capped when building the *runtime* Lee (1994)
+# cost LUTs. This is a numerical-safety bound, not a statistical one: the phase
+# PDF at these look counts is narrow but nowhere near degenerate, and look counts
+# well above 80 are entirely physical (NISAR GUNW coherence measures L ~ 143-276).
+# The cap exists because the Rust `lee_pdf` 2F1 series breaks down at high
+# coherence. Keep in sync with `MAX_COST_MODEL_NLOOKS` in
 # crates/whirlwind-core/src/cost/lut.rs.
+#
+# NOTE: the default `unwrap` path does not go through those runtime LUTs -- it
+# reads the embedded spline table, which clamps to its own `L` axis instead.
 _MAX_COST_MODEL_NLOOKS = 80.0
 
 
@@ -65,10 +70,11 @@ def _validate_nlooks(nlooks: float) -> None:
         raise ValueError(f"nlooks must be a finite value >= 1, got {nlooks!r}")
     if nlooks > _MAX_COST_MODEL_NLOOKS:
         logger.warning(
-            "nlooks=%g exceeds the cost-model cap of %g; the Lee (1994) phase "
-            "PDF is already a near-delta spike by then, so the cost model uses "
-            "%g looks. (That many independent looks is rarely physical from "
-            "correlated multilook windows.)",
+            "nlooks=%g exceeds the runtime cost-LUT cap of %g, so paths that "
+            "build those LUTs (connected components, grounded/convex unwrap) "
+            "will use %g looks. The default unwrap path is unaffected: it reads "
+            "the embedded spline table and clamps to that table's own looks "
+            "axis instead.",
             nlooks,
             _MAX_COST_MODEL_NLOOKS,
             _MAX_COST_MODEL_NLOOKS,
