@@ -280,12 +280,11 @@ def unwrap(
         Effective number of looks used to estimate ``corr``. Must be at least
         ``1`` (values below raise ``ValueError``). A higher number of looks
         means higher confidence in ``corr`` and a narrower coherence cost model.
-        The default phase-cost table represents up to 300 looks and clamps
-        larger values to that endpoint. The runtime Lee-PDF tables used by the
-        default SNAPHU connected-component grow and the experimental
-        grounded/convex solvers are separately capped at 80 looks, with a
-        warning, because their hypergeometric evaluation is numerically
-        unstable above that limit.
+        The cost model represents up to 300 looks and clamps larger values to
+        that endpoint, with a warning. That limit is shared: the phase-cost
+        table and the runtime Lee-PDF tables behind the SNAPHU
+        connected-component grow and the grounded/convex solvers all use it, so
+        every path prices the same interferogram at the same number of looks.
     mask : ndarray of bool, optional
         Valid-pixel mask, ``True`` = valid. Defaults to ``(igram != 0) &
         (corr > 0)``, so exact-zero phase or zero-coherence pixels are excluded.

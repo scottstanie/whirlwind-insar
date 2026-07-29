@@ -399,10 +399,12 @@ mod tests {
         );
     }
 
-    /// Every cost LUT must stay finite at extreme `nlooks`. Without the
-    /// [`MAX_COST_MODEL_NLOOKS`] cap, the Lee PDF / Carballo CDF overflow to
-    /// NaN at high coherence (the `>100` looks bug that forced a downstream
-    /// clamp in dolphin). Builders cap at 80, so all of these must be clean.
+    /// Every cost LUT must stay finite at extreme `nlooks`. This used to hold
+    /// only because builders clamped to 80: above that the Lee PDF's old
+    /// Euler-transformed `₂F₁` branch lost all significance at high coherence
+    /// (the `>100` looks bug that forced a downstream clamp in dolphin). That
+    /// branch is gone, so the finiteness now comes from the evaluation itself
+    /// and the clamp at [`MAX_COST_MODEL_NLOOKS`] only bounds table build cost.
     #[test]
     fn cost_luts_finite_at_extreme_nlooks() {
         use std::f32::consts::PI;
