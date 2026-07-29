@@ -99,6 +99,8 @@ import numpy as np  # noqa: E402
 TWOPI = 2.0 * np.pi
 SHORT_NAME = "NISAR_L2_GUNW_PROVISIONAL_V1"
 SHORT_NAME_BETA = "NISAR_L2_GUNW_BETA_V1"
+DEFAULT_NLOOKS_REQUEST = "auto"
+CAP_TO_50_NLOOKS_REQUESTS = {"cap-to-50", "calibrated"}
 
 # ---------------------------------------------------------------------------
 # Comparison core.
@@ -293,15 +295,10 @@ def nominal_enl_from_product(h5: h5py.File) -> float:
     disagreement. It is still not necessarily the value production passes to
     SNAPHU. Use ``scripts/estimate_gunw_enl.py`` to inspect a single product.
 
-    The default ``calibrated`` mode caps it at 50 anyway. That is a deliberate
-    under-trust, and the reason is *not* that the cost model saturates -- it
-    does not; arc costs keep changing to at least L = 300, and the model now
-    represents that range. The remaining argument is that sliding multilook
-    windows and geocoding make neighbouring coherence estimates correlated
-    (measured sample-inflation factor ~1.9 median), which the per-arc cost model
-    does not account for, and the cost of over-trusting is asymmetric. Note that
-    50 is more conservative than that factor alone would justify against a
-    nominal 143, so treat it as a knob, not a derived value.
+    The optional ``cap-to-50`` mode deliberately under-trusts this estimate.
+    It is a legacy sensitivity/reproduction knob, not a model limit or a
+    derived correction for spatial dependence. ``calibrated`` remains accepted
+    as a backward-compatible alias.
     """
     mp = "/science/LSAR/GUNW/metadata/processingInformation/parameters"
     u = h5[f"{mp}/unwrappedInterferogram/frequencyA"]
@@ -315,6 +312,25 @@ def nominal_enl_from_product(h5: h5py.File) -> float:
     )
     assert rg_over > 0 and az_over > 0, f"bad oversampling {rg_over}, {az_over}"
     return samples / (rg_over * az_over)
+
+
+def resolve_nlooks_request(request: str | float, nominal_nlooks: float | None) -> float:
+    """Resolve an ``--nlooks`` token to the value passed to Whirlwind.
+
+    ``auto`` uses the product-derived estimate. ``cap-to-50`` applies the
+    explicit legacy cap; ``calibrated`` is retained as an alias so old campaign
+    commands remain reproducible. Numeric requests do not need product metadata.
+    """
+    token = str(request).strip().lower()
+    if token == "auto":
+        if nominal_nlooks is None:
+            raise ValueError("nominal_nlooks is required for --nlooks auto")
+        return nominal_nlooks
+    if token in CAP_TO_50_NLOOKS_REQUESTS:
+        if nominal_nlooks is None:
+            raise ValueError(f"nominal_nlooks is required for --nlooks {token}")
+        return min(50.0, nominal_nlooks)
+    return float(request)
 
 
 def center_crop_slices(
@@ -783,20 +799,24 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         prod_cc_full = h5[paths["cc"]][()].astype(np.int64, copy=False)
         mask_arr_full = h5[paths["mask"]][()] if paths["mask"] in h5 else None
         nlooks_request = str(args.nlooks).lower()
-        if nlooks_request in {"auto", "calibrated"}:
+        if nlooks_request == "auto" or nlooks_request in CAP_TO_50_NLOOKS_REQUESTS:
             nominal_nlooks = nominal_enl_from_product(h5)
+            nlooks = resolve_nlooks_request(nlooks_request, nominal_nlooks)
             if nlooks_request == "auto":
-                nlooks = nominal_nlooks
                 print(f"  nlooks: auto -> {nlooks:.0f} (nominal looks)", flush=True)
             else:
-                nlooks = min(50.0, nominal_nlooks)
+                alias_note = (
+                    " (legacy alias for cap-to-50)"
+                    if nlooks_request == "calibrated"
+                    else ""
+                )
                 print(
-                    f"  nlooks: calibrated -> {nlooks:.0f} "
-                    f"(nominal {nominal_nlooks:.0f}, cap 50)",
+                    f"  nlooks: {nlooks_request}{alias_note} -> {nlooks:.0f} "
+                    f"(nominal {nominal_nlooks:.0f})",
                     flush=True,
                 )
         else:
-            nlooks = float(args.nlooks)
+            nlooks = resolve_nlooks_request(args.nlooks, None)
         if args.use_product_wrapped and paths["wrapped"] in h5:
             wrapped_complex = h5[paths["wrapped"]][()]
             if wrapped_complex.shape == prod_unw_full.shape:
@@ -867,7 +887,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         rss0 = get_rss_mb()
         if args.engine == "snaphu":
             # Apples-to-apples SNAPHU: identical inputs (same re-wrapped phase,
-            # subswath mask, and calibrated nlooks that whirlwind gets above),
+            # subswath mask, and selected nlooks that whirlwind gets above),
             # only the solver differs. Single-tile cost=smooth init=mcf is the
             # NISAR production unwrap config; single_tile_reoptimize is a no-op
             # at ntiles=(1,1) and the tiled+reoptimize production path at N>1.
@@ -1081,13 +1101,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--nlooks",
-        default="calibrated",
-        help="Equivalent looks for the cost model. Default 'calibrated' uses the "
-        "smaller of the product's nominal metadata estimate and a deliberately "
-        "conservative cap of 50. Pass 'auto' for the uncapped nominal estimate "
-        "(water-fit measurements confirm it to within ~3%), or any number to "
-        "override. The cost model itself now represents up to 300 looks, so the "
-        "50 is a trust choice rather than a model limit.",
+        default=DEFAULT_NLOOKS_REQUEST,
+        help="Equivalent looks for the cost model. Default 'auto' uses the "
+        "product's nominal metadata estimate, which water-fit measurements "
+        "confirm to within ~3%%. Pass 'cap-to-50' for the legacy conservative "
+        "cap used by earlier campaigns, or any number to override. "
+        "'calibrated' remains an alias for 'cap-to-50'.",
     )
     p.add_argument(
         "--sizes",

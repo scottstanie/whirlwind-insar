@@ -103,3 +103,18 @@ def test_none_mask_is_all_valid():
 def test_shape_mismatch_raises():
     with pytest.raises(ValueError, match="Mask shape"):
         cg.mask_to_bool(CODES, "subswath", (5, 5))
+
+
+def test_nlooks_auto_is_the_default_and_uses_nominal_enl():
+    assert cg.DEFAULT_NLOOKS_REQUEST == "auto"
+    assert cg.resolve_nlooks_request("auto", 143.25) == 143.25
+
+
+@pytest.mark.parametrize("token", ["cap-to-50", "calibrated"])
+def test_nlooks_cap_to_50_and_legacy_alias(token):
+    assert cg.resolve_nlooks_request(token, 143.25) == 50.0
+    assert cg.resolve_nlooks_request(token, 32.0) == 32.0
+
+
+def test_numeric_nlooks_does_not_require_nominal_metadata():
+    assert cg.resolve_nlooks_request("72.5", None) == 72.5

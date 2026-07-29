@@ -133,10 +133,11 @@ uv run aws-batch/compare_gunw.py \
   --out-dir out
 ```
 
-The default `--nlooks calibrated` uses the smaller of the product's nominal
-metadata estimate and 50. The cap is a conservative Whirlwind calibration, not
-a claim about what production passes to SNAPHU. Use `--nlooks auto` to inspect
-the uncapped nominal estimate or pass a number for a controlled experiment.
+The default `--nlooks auto` uses the product's nominal metadata estimate,
+which open-water fits confirm to within about 3%. Use `--nlooks cap-to-50` to
+reproduce the deliberately conservative setting used by earlier campaigns, or
+pass a number for a controlled experiment. The old name `calibrated` remains a
+backward-compatible alias for `cap-to-50`.
 
 Run all three samples at once:
 

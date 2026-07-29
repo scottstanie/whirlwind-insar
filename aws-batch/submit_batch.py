@@ -67,7 +67,12 @@ def main() -> None:
         required=True,
         help="S3 prefix for results; each job uploads to <s3-out>/<id>/.",
     )
-    p.add_argument("--nlooks", default="calibrated")
+    p.add_argument(
+        "--nlooks",
+        default="auto",
+        help="Passed through to compare_gunw.py. Use 'cap-to-50' to reproduce "
+        "the legacy conservative campaign setting.",
+    )
     p.add_argument("--dump-flat", action="store_true")
     p.add_argument("--region", default="us-west-2")
     p.add_argument("--profile", default=None)
