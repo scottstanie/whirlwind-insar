@@ -26,6 +26,16 @@ Two independent estimates are printed:
    a mean estimate downward in L. Water is not guaranteed to have zero true
    coherence, so this is a diagnostic fit rather than a ground-truth ENL.
 
+   Both moment estimators here are biased low by that same contamination, and
+   neither can tell you when the "water" is not decorrelated at all (ice, a
+   sheltered bay) -- they return a confident number regardless. Fitting the
+   whole distribution instead is closed-form and can refuse: the substitution
+   v = -log(1 - g^2) is exactly Exponential(L-1), so a truncated fit plus a
+   scan of the truncation point for a plateau both validates the model and
+   estimates L. Doing that across 85 granules puts the water estimate at 0.97x
+   the nominal metadata ENL, against 0.73x for the naive all-pixel version.
+   See the whirlwind paper repo, explainers/measuring-looks-from-water.md.
+
 Takes either a GUNW .h5 (both estimates) or a compare_gunw `_arrays.npz`
 (water fit only). New NPZ files store the actual GUNW water and subswath flags;
 older files without them must be regenerated or inspected through the HDF5.
