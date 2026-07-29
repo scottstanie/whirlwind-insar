@@ -310,7 +310,9 @@ def main() -> None:
         "--nlooks",
         default="calibrated",
         help="Passed through to compare_gunw.py. 'calibrated' caps the product's "
-        "nominal metadata estimate at 50; 'auto' uses the uncapped estimate.",
+        "nominal metadata estimate at 50 as a deliberate under-trust; 'auto' "
+        "uses the uncapped estimate, which water-fit measurements confirm to "
+        "within ~3%. The cost model represents up to 300 looks either way.",
     )
     p.add_argument(
         "--compare-arg",

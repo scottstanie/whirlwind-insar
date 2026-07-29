@@ -287,16 +287,21 @@ def nominal_enl_from_product(h5: h5py.File) -> float:
     over the processed azimuth bandwidth. A 13 x 16 product is about 143
     nominal independent looks.
 
-    This is a metadata-based upper-bound estimate, not the value production
-    necessarily passes to SNAPHU and not a measurement of the supplied geocoded
-    coherence distribution. The default ``calibrated`` mode caps this estimate
-    at 50, a conservative Whirlwind calibration value, so products with fewer
-    nominal looks are not forced upward. Use ``scripts/estimate_gunw_enl.py`` to
-    inspect a product rather than treating either number as universal.
+    This estimate is **confirmed**, not an upper bound: fitting the
+    zero-coherence sample-coherence distribution over open water across 85 NISAR
+    granules gives a median of 0.97x this number, with 3.2% median absolute
+    disagreement. It is still not necessarily the value production passes to
+    SNAPHU. Use ``scripts/estimate_gunw_enl.py`` to inspect a single product.
 
-    Note that ``MAX_COST_MODEL_NLOOKS`` (80) caps only the **cost LUT**; the
-    connected-component reliability conversion uses the raw value, so a large
-    ``nlooks`` still moves component counts even though the costs saturate.
+    The default ``calibrated`` mode caps it at 50 anyway. That is a deliberate
+    under-trust, and the reason is *not* that the cost model saturates -- it
+    does not; arc costs keep changing to at least L = 300, and the model now
+    represents that range. The remaining argument is that sliding multilook
+    windows and geocoding make neighbouring coherence estimates correlated
+    (measured sample-inflation factor ~1.9 median), which the per-arc cost model
+    does not account for, and the cost of over-trusting is asymmetric. Note that
+    50 is more conservative than that factor alone would justify against a
+    nominal 143, so treat it as a knob, not a derived value.
     """
     mp = "/science/LSAR/GUNW/metadata/processingInformation/parameters"
     u = h5[f"{mp}/unwrappedInterferogram/frequencyA"]
@@ -1078,10 +1083,11 @@ def parse_args() -> argparse.Namespace:
         "--nlooks",
         default="calibrated",
         help="Equivalent looks for the cost model. Default 'calibrated' uses the "
-        "smaller of the product's nominal metadata estimate and the conservative "
-        "Whirlwind calibration cap of 50. Pass 'auto' for the uncapped nominal "
-        "estimate, or any number to override. This is not the value production "
-        "necessarily passes to SNAPHU.",
+        "smaller of the product's nominal metadata estimate and a deliberately "
+        "conservative cap of 50. Pass 'auto' for the uncapped nominal estimate "
+        "(water-fit measurements confirm it to within ~3%), or any number to "
+        "override. The cost model itself now represents up to 300 looks, so the "
+        "50 is a trust choice rather than a model limit.",
     )
     p.add_argument(
         "--sizes",

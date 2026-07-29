@@ -15,16 +15,33 @@ const ALPHA_HI: f32 = 3.0 * TAU;
 const GAMMA_LO: f32 = 0.0;
 const GAMMA_HI: f32 = 0.999;
 
-/// Maximum effective looks any cost LUT is evaluated at. Above this the Lee
-/// (1994) multilook phase PDF is already a near-delta spike whose cost *shape*
-/// no longer changes, while the `₂F₁` series in [`super::lee_pdf`] starts to
-/// overflow/underflow into NaN at high coherence (empirically from ~100 looks
-/// for the Carballo CDF, ~500 for the raw PDF). Independent looks are also
-/// bounded in practice — real multilook windows oversample correlated pixels —
-/// so capping here costs nothing physical. Matches the upper grid point of the
-/// embedded parity spline LUT ([`super::spline_lut`]), which already clamps to
-/// it; keeping the cap identical makes every cost path agree at high looks.
-pub const MAX_COST_MODEL_NLOOKS: f32 = 80.0;
+/// Maximum effective looks the **runtime** LUTs in this module are built at.
+///
+/// This is a numerical-safety limit, not a statement about the statistics.
+/// Two earlier claims here were wrong and are worth not repeating:
+///
+/// * *"the PDF is a near-delta spike by then"* — it is narrow, not degenerate.
+///   At γ = 0.6, L = 256 the phase standard deviation is still ≈ 0.06 rad,
+///   comfortably resolved by this module's 501-point α grid.
+/// * *"that many independent looks is not physically reachable"* — NISAR GUNW
+///   coherence measures L ≈ 143 (13×16 looks) to ≈ 276 (26×16), confirmed
+///   against the product metadata by fitting the zero-coherence sample-coherence
+///   distribution over open water.
+///
+/// The cap used to sit at 80 because [`super::lee_pdf::pdf`] stopped being
+/// trustworthy above it — its `₂F₁(½−L, −½; ½; z)` branch summed an alternating
+/// series that lost all significance, returning *negative* densities from
+/// γ ≈ 0.8 upward (−17.7 at γ = 0.99, L = 80). That branch is gone: the PDF now
+/// evaluates one positive-term series in log space and is non-negative and
+/// reference-accurate across the whole (γ, L) range, so the cap no longer
+/// guards a defect.
+///
+/// It is now simply the top of [`super::spline_lut`]'s looks axis. Matching the
+/// two matters: the default unwrap path prices arcs from the spline table while
+/// connected components take their variance from [`get_or_build_variance`]
+/// here, so a lower value would have those two paths disagree about how many
+/// looks the same interferogram has.
+pub const MAX_COST_MODEL_NLOOKS: f32 = 300.0;
 
 /// Cap `nlooks` at [`MAX_COST_MODEL_NLOOKS`] for LUT construction. Only the
 /// high end is capped: `nlooks < 1` is rejected at the public API boundary
@@ -382,10 +399,12 @@ mod tests {
         );
     }
 
-    /// Every cost LUT must stay finite at extreme `nlooks`. Without the
-    /// [`MAX_COST_MODEL_NLOOKS`] cap, the Lee PDF / Carballo CDF overflow to
-    /// NaN at high coherence (the `>100` looks bug that forced a downstream
-    /// clamp in dolphin). Builders cap at 80, so all of these must be clean.
+    /// Every cost LUT must stay finite at extreme `nlooks`. This used to hold
+    /// only because builders clamped to 80: above that the Lee PDF's old
+    /// Euler-transformed `₂F₁` branch lost all significance at high coherence
+    /// (the `>100` looks bug that forced a downstream clamp in dolphin). That
+    /// branch is gone, so the finiteness now comes from the evaluation itself
+    /// and the clamp at [`MAX_COST_MODEL_NLOOKS`] only bounds table build cost.
     #[test]
     fn cost_luts_finite_at_extreme_nlooks() {
         use std::f32::consts::PI;

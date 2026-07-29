@@ -19,8 +19,28 @@
 //!
 //! Grid dimensions (all in C-row-major order in the stored arrays):
 //!   axis 0 - phase_diff α : 31 samples, uniformly spaced in [-π, π]
-//!   axis 1 - coherence γ  : 11 samples, [0.0, 0.1, …, 1.0]
-//!   axis 2 - nlooks L     : 11 samples, log-spaced [1.0, …, 80.0]
+//!   axis 1 - coherence γ  : 21 samples, [0.0, 0.05, …, 1.0]
+//!   axis 2 - nlooks L     : 21 samples, log-spaced [1.0, …, 300.0]
+//!
+//! Sizing rationale (measured off-node against a 241x51x21 reference, on arcs
+//! cheap enough to carry flow):
+//!
+//!   * Store p0/p1, NOT the cost. They are bounded and smooth on [0, 1]; the
+//!     cost has a log divergence and two clamps, and interpolating it directly
+//!     is ~3x worse at the same grid.
+//!   * α is nearly saturated at 31 nodes: refining to 121 buys only ~10%,
+//!     because the stored quantities are *integrals* of the phase PDF and stay
+//!     smooth in α even when the PDF itself is narrow.
+//!   * γ and L are the binding axes (~30% each going 11 -> 21 when all nodes
+//!     span [1, 80]). For the table actually embedded here, whose 21 L nodes
+//!     cover the wider [1, 300] interval, an off-node check over the shared
+//!     [1, 80] domain cuts mean interpolation error from 0.260 to 0.134 nats
+//!     (~1.9x) and p99 from 3.1 to 1.7 nats. The earlier 0.090 / 2.9x result
+//!     was for a different candidate with all 21 L nodes inside [1, 80].
+//!   * The L axis runs to 300 because real GUNW coherence carries far more than
+//!     80 looks (water-fit measurements give L ~ 143-276) and the arc costs
+//!     keep changing that far out. 21 log-spaced nodes over [1, 300] is finer
+//!     in log-L (ratio 1.33) than the old 11 over [1, 80] (ratio 1.55).
 
 use std::sync::OnceLock;
 
@@ -44,9 +64,9 @@ fn bytes_to_f32(bytes: &[u8]) -> Vec<f32> {
 
 pub struct CarballoSplineLut {
     phase: Vec<f32>,  // length 31
-    corr: Vec<f32>,   // length 11
-    nlooks: Vec<f32>, // length 11
-    p0: Vec<f32>,     // shape [31][11][11], row-major
+    corr: Vec<f32>,   // length 21
+    nlooks: Vec<f32>, // length 21
+    p0: Vec<f32>,     // shape [31][21][21], row-major
     p1: Vec<f32>,
     n_corr: usize,
     n_nlooks: usize,
@@ -173,8 +193,12 @@ mod tests {
         let lut = get_or_load();
         // Grid shapes match the documented embedded layout.
         assert_eq!(lut.phase.len(), 31);
-        assert_eq!(lut.corr.len(), 11);
-        assert_eq!(lut.nlooks.len(), 11);
+        assert_eq!(lut.corr.len(), 21);
+        assert_eq!(lut.nlooks.len(), 21);
+        // The looks axis is the *effective* cap on the default unwrap path:
+        // `cost` brackets into this grid, so nlooks above the top node clamps
+        // here rather than at `lut::MAX_COST_MODEL_NLOOKS`.
+        assert_eq!(lut.nlooks[lut.nlooks.len() - 1], 300.0);
         // A wrap line (alpha = pi) is free to cut; a smooth interior edge costs more.
         let wrap = lut.cost(std::f32::consts::PI, 0.5, 16.0);
         let smooth = lut.cost(0.0, 0.5, 16.0);

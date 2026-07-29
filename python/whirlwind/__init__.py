@@ -46,12 +46,16 @@ _interpolate = interpolate
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# Effective looks above this are capped when building the Lee (1994) cost LUTs.
-# The PDF is already a near-delta spike there (the cost shape stops changing),
-# and that many *independent* looks is not physically reachable from correlated
-# multilook windows. Keep in sync with `MAX_COST_MODEL_NLOOKS` in
-# crates/whirlwind-core/src/cost/lut.rs.
-_MAX_COST_MODEL_NLOOKS = 80.0
+# Top of the cost model's looks range, shared by the embedded spline table (arc
+# costs) and the runtime Lee LUTs (connected-component variance), so both price
+# the same interferogram at the same number of looks. Keep in sync with
+# `MAX_COST_MODEL_NLOOKS` in crates/whirlwind-core/src/cost/lut.rs.
+#
+# This is the table's extent, not a point where the phase statistics converge --
+# they do not, and look counts in this range are entirely physical (NISAR GUNW
+# coherence measures L ~ 143-276, confirmed by fitting the zero-coherence
+# sample-coherence distribution over open water).
+_MAX_COST_MODEL_NLOOKS = 300.0
 
 
 def _validate_nlooks(nlooks: float) -> None:
@@ -65,10 +69,10 @@ def _validate_nlooks(nlooks: float) -> None:
         raise ValueError(f"nlooks must be a finite value >= 1, got {nlooks!r}")
     if nlooks > _MAX_COST_MODEL_NLOOKS:
         logger.warning(
-            "nlooks=%g exceeds the cost-model cap of %g; the Lee (1994) phase "
-            "PDF is already a near-delta spike by then, so the cost model uses "
-            "%g looks. (That many independent looks is rarely physical from "
-            "correlated multilook windows.)",
+            "nlooks=%g exceeds the cost model's looks range of %g, so both "
+            "the arc costs and the connected-component variance will use %g. "
+            "That is the extent of the cost table, not a point where the phase "
+            "statistics stop changing.",
             nlooks,
             _MAX_COST_MODEL_NLOOKS,
             _MAX_COST_MODEL_NLOOKS,
@@ -276,8 +280,11 @@ def unwrap(
         Effective number of looks used to estimate ``corr``. Must be at least
         ``1`` (values below raise ``ValueError``). A higher number of looks
         means higher confidence in ``corr`` and a narrower coherence cost model.
-        Very large values (above ~80 looks) are capped for the cost model, with
-        a warning, since the phase PDF has effectively converged by then.
+        The cost model represents up to 300 looks and clamps larger values to
+        that endpoint, with a warning. That limit is shared: the phase-cost
+        table and the runtime Lee-PDF tables behind the SNAPHU
+        connected-component grow and the grounded/convex solvers all use it, so
+        every path prices the same interferogram at the same number of looks.
     mask : ndarray of bool, optional
         Valid-pixel mask, ``True`` = valid. Defaults to ``(igram != 0) &
         (corr > 0)``, so exact-zero phase or zero-coherence pixels are excluded.

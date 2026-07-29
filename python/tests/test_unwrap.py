@@ -118,7 +118,13 @@ class TestUnwrap:
             unw, cc = ww.unwrap(igram, corr, nlooks=10_000.0)
         assert np.all(np.isfinite(unw)), "huge nlooks produced non-finite phase"
         assert cc.dtype == np.uint32
-        assert any("cost-model cap" in r.message for r in caplog.records)
+        # Match on the cap's value, not on prose: the message wording has
+        # changed twice and a substring assertion silently tracks neither the
+        # behaviour nor the constant.
+        assert any(
+            str(int(ww._MAX_COST_MODEL_NLOOKS)) in r.getMessage()
+            for r in caplog.records
+        ), f"expected a warning naming the {ww._MAX_COST_MODEL_NLOOKS} cap"
 
     def test_unwrap_returns_conncomp(self):
         """Default path returns (phase, conncomp); Goldstein off by default."""

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generate/export ww-orig Carballo/Touzi probability lookup tables.
+"""Generate/export Whirlwind Carballo/Touzi probability lookup tables.
 
 This script has two deliberately separate modes:
 
-1. ``--source-table-dir``: byte-parity export mode. It reads the surviving
-   ww-orig ``carballo-pdf-{0,1}-spline`` tables (``.npz`` or the first-commit
-   ``.pkl`` RegularGridInterpolator pickles) and writes the five little-endian
-   ``f32`` blobs embedded by Rust. This is the supported way to recreate
-   ``crates/whirlwind-core/src/cost/carballo_*.bin`` from preserved artifacts.
+1. ``--source-table-dir``: byte-parity export mode. It reads any preserved
+   ``carballo-pdf-{0,1}-spline`` tables (``.npz`` or the first-commit ``.pkl``
+   RegularGridInterpolator pickles) and writes their five little-endian ``f32``
+   blobs. This reproduces the supplied artifact exactly; the surviving ww-orig
+   tables are the historical 31x11x11, L<=80 model, not the current embedded
+   table.
 
 2. analytic reconstruction mode (default): computes a readable reference
    implementation of the documented model from Geoff's unwrapping notes:
@@ -31,27 +32,35 @@ integrate that difference PDF over the wrap intervals. Runtime cost is then:
 
 Which mode to use:
 
-* To recreate the exact embedded blobs, use ``--source-table-dir`` (mode 1).
-  The embedded blobs are an `f32` dump of the saved ww-orig tables, so this is
-  byte-for-byte.
-* The analytic mode (mode 2) is the readable, theory-driven definition of the
-  cost model - the thing to read, extend, and regenerate LUTs from. It is a
-  close but not identical match to the saved tables (it reproduces the
-  coherence-marginalization fingerprint - tables vary with ``L`` at
-  ``gamma_hat = 0`` - and on the 13 NISAR frames its LUTs unwrap essentially
-  identically to the embedded ones). Run with ``--compare-dir`` to see the
-  numeric difference. ``--write-rust-bins`` is guarded so the analytic output
-  cannot silently replace the embedded blobs without ``--allow-overwrite-embedded``.
+* To recreate the current embedded blobs, use analytic mode (mode 2) with its
+  defaults: 31 phase nodes, 21 coherence nodes, and 21 looks nodes over
+  ``[1, 300]``. This is the readable, theory-driven definition of the shipping
+  cost table.
+* To re-export a preserved table byte-for-byte, use ``--source-table-dir``
+  (mode 1). Pointing it at the surviving ww-orig artifact intentionally emits
+  that older 31x11x11 table.
+* The analytic model is close but not identical to the historical ww-orig
+  table. It reproduces the coherence-marginalization fingerprint (tables vary
+  with ``L`` at ``gamma_hat = 0``), and on the 13 NISAR frames it unwraps
+  essentially identically. Run with ``--compare-dir`` to inspect the numeric
+  difference. ``--write-rust-bins`` is guarded so output cannot silently
+  replace non-identical embedded blobs without ``--allow-overwrite-embedded``.
 
-Example - recreate the embedded Rust blobs from saved ww-orig tables:
+Example - recreate and verify the current embedded Rust blobs:
 
     python scripts/generate_carballo_tables.py \\
-        --source-table-dir /Users/staniewi/repos/whirlwind/src/whirlwind_orig \\
         --out-dir /tmp/carballo_tables \\
         --write-rust-bins \\
         --verify-rust-bin-dir crates/whirlwind-core/src/cost
 
-Example - inspect the model and its gap vs the shipping tables:
+Example - re-export the historical ww-orig blobs:
+
+    python scripts/generate_carballo_tables.py \\
+        --source-table-dir /Users/staniewi/repos/whirlwind/src/whirlwind_orig \\
+        --out-dir /tmp/carballo_tables_old \\
+        --write-rust-bins
+
+Example - inspect the current model and its gap vs the historical tables:
 
     python scripts/generate_carballo_tables.py \\
         --out-dir /tmp/carballo_tables \\
@@ -576,6 +585,8 @@ def report_rust_bin_parity(
         print(f"  {name:<28} {status}  sha256={sha256_bytes(data)}")
     if all_match:
         print("  all five blobs match byte-for-byte")
+    else:
+        raise SystemExit("Rust .bin parity check failed")
 
 
 def report_comparison(
@@ -678,9 +689,9 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--phase-count", type=int, default=31)
-    parser.add_argument("--corr-count", type=int, default=11)
-    parser.add_argument("--nlooks-count", type=int, default=11)
-    parser.add_argument("--nlooks-max", type=float, default=80.0)
+    parser.add_argument("--corr-count", type=int, default=21)
+    parser.add_argument("--nlooks-count", type=int, default=21)
+    parser.add_argument("--nlooks-max", type=float, default=300.0)
     parser.add_argument(
         "--phase-samples",
         type=int,
