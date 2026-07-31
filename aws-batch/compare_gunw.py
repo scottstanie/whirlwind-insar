@@ -11,6 +11,7 @@
 #   "boto3",
 #   "requests",
 #   "psutil",
+#   "snaphu>=0.4",
 # ]
 # ///
 """Compare whirlwind's unwrapping against a NISAR L2 GUNW product.
@@ -101,6 +102,9 @@ SHORT_NAME = "NISAR_L2_GUNW_PROVISIONAL_V1"
 SHORT_NAME_BETA = "NISAR_L2_GUNW_BETA_V1"
 DEFAULT_NLOOKS_REQUEST = "auto"
 CAP_TO_50_NLOOKS_REQUESTS = {"cap-to-50", "calibrated"}
+# snaphu-py does not expose the deformation parameters individually. Its
+# bundled SNAPHU 2.0.7 uses the documented default below whenever cost="defo".
+SNAPHU_DEFAULT_DEFO_MAX_CYCLE = 1.2
 
 # ---------------------------------------------------------------------------
 # Comparison core.
@@ -493,13 +497,14 @@ def plot_result(
     amb_diff: np.ndarray,
     valid: np.ndarray,
     title: str,
+    candidate_label: str = "whirlwind",
     stride: int = 1,
 ) -> None:
     """Eight-panel comparison figure.
 
-    Row 1: wrapped input, coherence, NISAR GUNW unwrapped, whirlwind unwrapped.
-    Row 2: NISAR GUNW (SNAPHU) conncomps, whirlwind conncomps, conncomp coverage
-    difference (which unwrapper labels each pixel), and the 2*pi ambiguity diff.
+    Row 1: wrapped input, coherence, NISAR GUNW unwrapped, candidate unwrapped.
+    Row 2: NISAR GUNW (SNAPHU) conncomps, candidate conncomps, conncomp
+    coverage difference, and the 2*pi ambiguity difference.
     """
     from matplotlib.colors import BoundaryNorm, ListedColormap
 
@@ -526,15 +531,17 @@ def plot_result(
     coverage[valid_s & ~wl & pl] = -1.0
     cov_cmap = ListedColormap(["#2c7bb6", "#d9d9d9", "#d7191c"])
     cov_norm = BoundaryNorm([-1.5, -0.5, 0.5, 1.5], cov_cmap.N)
+    candidate_cc_name = f"{candidate_label} conncomps"
+    coverage_name = f"conncomp coverage ({candidate_label}-prod)"
 
     panels = [
         ("wrapped input (rad)", ig[s], "twilight"),
         ("coherence", coh[s], "gray"),
         ("NISAR GUNW unwrapped", prod_unw[s], "viridis"),
-        ("whirlwind aligned", ww_aligned[s], "viridis"),
+        (f"{candidate_label} aligned", ww_aligned[s], "viridis"),
         ("NISAR GUNW (SNAPHU) conncomps", prod_cc_s, "tab20"),
-        ("whirlwind conncomps", ww_cc_s, "tab20"),
-        ("conncomp coverage (ww-prod)", coverage, None),
+        (candidate_cc_name, ww_cc_s, "tab20"),
+        (coverage_name, coverage, None),
         ("ambiguity diff (cycles)", amb_diff[s], "RdBu"),
     ]
 
@@ -545,12 +552,12 @@ def plot_result(
         ax.set_xticks([])
         ax.set_yticks([])
         arrp = np.asarray(arr, dtype=float)
-        if name == "conncomp coverage (ww-prod)":
+        if name == coverage_name:
             im = ax.imshow(arrp, cmap=cov_cmap, norm=cov_norm, interpolation="nearest")
             cb = fig.colorbar(im, ax=ax, shrink=0.78, ticks=[-1, 0, 1])
-            cb.ax.set_yticklabels(["prod only", "both", "ww only"])
+            cb.ax.set_yticklabels(["prod only", "both", f"{candidate_label} only"])
             continue
-        if name in {"NISAR GUNW (SNAPHU) conncomps", "whirlwind conncomps"}:
+        if name in {"NISAR GUNW (SNAPHU) conncomps", candidate_cc_name}:
             arrp = np.where(arrp > 0, ((arrp - 1) % 20) + 1, np.nan)
             vmin, vmax = 0, 20
         else:
@@ -888,9 +895,10 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
         if args.engine == "snaphu":
             # Apples-to-apples SNAPHU: identical inputs (same re-wrapped phase,
             # subswath mask, and selected nlooks that whirlwind gets above),
-            # only the solver differs. Single-tile cost=smooth init=mcf is the
-            # NISAR production unwrap config; single_tile_reoptimize is a no-op
-            # at ntiles=(1,1) and the tiled+reoptimize production path at N>1.
+            # only the solver differs. cost=smooth is the NISAR production
+            # unwrap config; cost=defo uses SNAPHU's deformation model and its
+            # default DEFOMAX_CYCLE=1.2. single_tile_reoptimize is a no-op at
+            # ntiles=(1,1) and the tiled+reoptimize path at N>1.
             import snaphu
 
             ntiles = args.snaphu_ntiles
@@ -901,7 +909,7 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 ig_complex,
                 coh_solver,
                 nlooks=float(nlooks),
-                cost="smooth",
+                cost=args.snaphu_cost,
                 init="mcf",
                 mask=mask,
                 ntiles=(ntiles, ntiles),
@@ -979,6 +987,14 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "snaphu_ntiles": args.snaphu_ntiles
                 if args.engine == "snaphu"
                 else None,
+                "snaphu_nproc": nproc if args.engine == "snaphu" else None,
+                "snaphu_tile_overlap": overlap if args.engine == "snaphu" else None,
+                "snaphu_single_tile_reoptimize": args.engine == "snaphu"
+                and args.snaphu_ntiles > 1,
+                "snaphu_cost": args.snaphu_cost if args.engine == "snaphu" else None,
+                "snaphu_defo_max_cycle": SNAPHU_DEFAULT_DEFO_MAX_CYCLE
+                if args.engine == "snaphu" and args.snaphu_cost == "defo"
+                else None,
                 "whirlwind_version": getattr(ww, "__version__", "unknown"),
                 "input_phase_source": "phase(wrappedInterferogram)"
                 if args.use_product_wrapped
@@ -1014,8 +1030,13 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             valid=mask & np.isfinite(ww_unw),
             title=(
                 f"{path.name}\n{label}, pol={pol}, nlooks={nlooks:.0f}, "
+                f"engine={args.engine}"
+                f"{f' ({args.snaphu_cost})' if args.engine == 'snaphu' else ''}, "
                 f"runtime={runtime_s:.1f}s"
             ),
+            candidate_label="whirlwind"
+            if args.engine == "whirlwind"
+            else f"SNAPHU {args.snaphu_cost}",
             stride=max(1, args.plot_downsample),
         )
         rec_ww = stats.get("ww_unwrapped_recall")
@@ -1139,9 +1160,18 @@ def parse_args() -> argparse.Namespace:
         choices=["whirlwind", "snaphu"],
         default="whirlwind",
         help="Which unwrapper to run on the (identical) prepared inputs. "
-        "'snaphu' runs single-tile snaphu-py (cost=smooth, init=mcf, "
-        "reoptimize) -- the NISAR production config -- for an apples-to-apples "
-        "comparison scored the same way. Needs the snaphu package.",
+        "'snaphu' runs snaphu-py with the selected --snaphu-cost, MCF "
+        "initialization, and optional tiled reoptimization for an "
+        "apples-to-apples comparison scored the same way. Needs the snaphu "
+        "package.",
+    )
+    p.add_argument(
+        "--snaphu-cost",
+        choices=["smooth", "defo"],
+        default="smooth",
+        help="For --engine snaphu: statistical cost model. 'smooth' matches "
+        "the NISAR production configuration. 'defo' uses SNAPHU's deformation "
+        "model with the bundled SNAPHU 2.0.7 default DEFOMAX_CYCLE=1.2.",
     )
     p.add_argument(
         "--snaphu-ntiles",
