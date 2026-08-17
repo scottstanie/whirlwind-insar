@@ -78,6 +78,45 @@ class TestConnectGapsHelper:
         assert not added[:, :6].any()
         assert not added[mask].any()
 
+    def test_connects_along_track_gaps_too(self):
+        """Horizontal bands must work as well as NISAR's vertical stripes."""
+        mask = np.ones((80, 8), dtype=bool)
+        mask[:6, :] = False  # frame edge
+        mask[40:44, :] = False  # interior gap, only crossable down a column
+        igram = np.exp(1j * np.zeros((80, 8))).astype(np.complex64)
+        igram[~mask] = 0
+        _out, added = ww.connect_gaps(igram, mask, edge=8)
+        assert added[40:44, :].all()
+        assert not added[:6, :].any()
+
+    def test_carries_the_fringe_rate_across_a_column_gap(self):
+        """The along-track crossing must continue fringes, not just exist."""
+        m, n, gap_a, gap_b = 120, 32, 55, 65
+        cycles = 4.0
+        truth = TWOPI * cycles * np.arange(m) / (m - 1)
+        igram = np.exp(1j * np.tile(truth[:, None], (1, n))).astype(np.complex64)
+        mask = np.ones((m, n), dtype=bool)
+        mask[gap_a:gap_b, :] = False
+        igram[~mask] = 0
+        out, added = ww.connect_gaps(igram, mask, edge=32)
+        got = np.unwrap(np.angle(out[:, n // 2]))
+        got -= got[0] - truth[0]
+        err = np.abs(got[gap_a:gap_b] - truth[gap_a:gap_b]) / TWOPI
+        assert err.max() < 0.25, f"max {err.max():.2f} cycles off across the gap"
+        assert added[gap_a:gap_b, :].all()
+
+    def test_levels_along_track_stripes_end_to_end(self):
+        """A frame banded across-track, solved through the public API."""
+        igram, corr, mask, truth, nlooks = striped_scene()
+        # Transpose the whole scene: the stripes now run the other way.
+        igram, corr, mask, truth = igram.T.copy(), corr.T.copy(), mask.T.copy(), truth.T
+        off, _ = ww.unwrap(igram, corr, nlooks, mask)
+        on, _ = ww.unwrap(igram, corr, nlooks, mask, connect_gaps=True)
+        score_off = on_cycle_fraction(off, truth, mask)
+        score_on = on_cycle_fraction(on, truth, mask)
+        assert score_off < 0.9, f"baseline unexpectedly fine ({score_off:.2f})"
+        assert score_on > 0.99, f"connect_gaps left {1 - score_on:.1%} off-cycle"
+
     def test_skips_gaps_without_enough_data_to_extrapolate_from(self):
         """A sliver of a region cannot define a fringe rate, so leave the gap."""
         mask = np.ones((8, 40), dtype=bool)

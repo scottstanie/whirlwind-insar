@@ -331,15 +331,17 @@ def unwrap(
         change across data you do not have. Connecting first folds that choice
         into the solve, which decides it from the real data on either side.
 
-        This is **not** ``interpolate``. That pass smooths existing valid
-        pixels whose coherence is poor and skips nodata entirely, so it cannot
-        join two regions; this one writes phase where there is no data at all,
-        purely to create a path. They compose, and are controlled separately.
+        Distinct from ``interpolate``, which smooths *existing valid* pixels by
+        taking a circular mean of their neighbours. A circular mean is the
+        short-arc answer, which discards the whole-cycle count across a gap --
+        the one quantity a crossing has to preserve. This pass extrapolates the
+        fringe rate instead. They compose, and are controlled separately.
 
         Prefer this to ``remove_ramp`` on gapped frames: it does not assume the
         bulk phase is a plane, so a curved ionosphere is handled too. Note it is
         a geometric rule, not a NISAR-specific one -- any interior hole narrower
-        than ``connect_gaps_max_px`` is crossed, including water or layover.
+        than ``connect_gaps_max_px`` is crossed, along a row or down a column,
+        including water or layover.
         See :func:`connect_gaps` for the details and for the manual equivalent.
     connect_gaps_max_px : int, default 300
         Widest gap to cross, in pixels. Wider holes are left for ``bridge``:
