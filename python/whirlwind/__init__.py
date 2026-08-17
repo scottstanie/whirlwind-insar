@@ -14,11 +14,14 @@ logger = logging.getLogger(__name__)
 __version__ = version("whirlwind-insar")
 
 from ._native import (
+    add_ramp,
     bridge_components,
     closure_correct,
     closure_refine_mcf,
     compute_residues,
+    deramp,
     diagonal_ramp,
+    fit_ramp,
     goldstein,
     interpolate,
     num_threads,
@@ -230,6 +233,7 @@ def unwrap(
     mask: "NDArray[np.bool_] | None" = None,
     *,
     bridge: bool = True,
+    remove_ramp: bool = False,
     downsample: int = 1,
     interpolate: bool = False,
     interp_cutoff: float = 0.1,
@@ -299,6 +303,22 @@ def unwrap(
         boundaries and snaps it to an integer number of cycles. Regions are
         processed from largest to smallest and anchored to the nearest region
         already processed, so a tiny island cannot set a large landmass's level.
+    remove_ramp : bool, default False
+        Fit and remove a linear phase ramp from the wrapped phase before the
+        solve, then add the same plane back to the unwrapped result. Large
+        ionospheric (dominant for NISAR) or tropospheric ramps add many fringes
+        across a frame; when the valid mask splits the scene into subswath
+        rectangles that must be bridged together, a steep ramp makes the
+        per-region 2π offsets large and the bridge/Goldstein/interpolation
+        passes struggle. Flattening the fringe rate first shrinks those offsets.
+        The plane is estimated from the mean wrapped phase gradient (a
+        single-pass, memory-light complex-covariance fit; no FFT). Like the other
+        pre-passes it only INFORMS the solver: the de-ramp is congruence-preserving
+        (unwrapping ``igram · exp(-i·ramp)`` and adding ``ramp`` back is a valid
+        unwrapping of ``igram`` for *any* plane), so every per-pixel value the
+        caller passed in is preserved regardless of how well the plane matches the
+        true ramp. Runs before ``interpolate`` / ``goldstein_alpha`` / ``downsample``.
+        See :func:`fit_ramp`, :func:`deramp`, and :func:`add_ramp` for the pieces.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
         interferogram is coherently averaged into ``downsample x downsample``
@@ -454,11 +474,28 @@ def unwrap(
     if conncomp_cycle_prob is not None:
         cost_threshold = cost_threshold_from_cycle_prob(conncomp_cycle_prob)
 
-    # Build the phase fed to the MCF. Interpolation and Goldstein filtering both
-    # only INFORM the solver; the integer 2π·k field they produce is transferred
-    # back onto the ORIGINAL wrapped phase below, so every per-pixel value the
-    # caller passed in is preserved.
+    # Build the phase fed to the MCF. Ramp removal, interpolation, and Goldstein
+    # filtering all only INFORM the solver; the integer 2π·k field they produce is
+    # transferred back onto the solver's input base phase below (`solve_base`), so
+    # every per-pixel value the caller passed in is preserved.
     ig_solve = igram
+    # Wrapped phase the K-transfer rounds back onto: the de-ramped phase when
+    # `remove_ramp`, else the original igram.
+    solve_base = igram
+    ramp_slopes: "tuple[float, float] | None" = None
+    if remove_ramp:
+        # Fit the dominant linear phase ramp (ionospheric/tropospheric) and
+        # de-ramp the complex phase: ig_solve = igram · exp(-i·ramp). Flattening
+        # the fringe rate shrinks the per-region 2π offsets the bridge pass must
+        # resolve across subswath gaps, so the whole solve + bridge runs in the
+        # de-ramped domain and the fitted plane is added back only at the very end
+        # (after bridging). De-ramping is congruence-preserving, so the final
+        # per-pixel result is a valid unwrapping regardless of how well the plane
+        # matches the true ramp.
+        row_slope, col_slope = fit_ramp(igram, mask=mask)
+        ramp_slopes = (row_slope, col_slope)
+        ig_solve = deramp(igram, row_slope, col_slope)
+        solve_base = ig_solve
     if interpolate:
         # Spiral PS interpolator: fill each valid pixel whose coherence is below
         # interp_cutoff from a Gaussian distance-weighted average of nearby
@@ -508,17 +545,18 @@ def unwrap(
         phase_grad_window=pgw,
     )
 
-    if ig_solve is igram:
+    if ig_solve is solve_base:
         unw = np.asarray(unw_solve, dtype=np.float32)
     else:
         # Transfer the integer 2π·k field from the interpolated/filtered unwrap
-        # onto the *original* wrapped phase, rounding against the original (not
-        # the modified) phase to avoid the dolphin-#364 artefact: any pixel where
-        # the pre-pass moved phase across the ±π discontinuity would otherwise
-        # pick up a spurious ±2π cycle, producing visible outlines along fringe
-        # boundaries.
+        # onto the solver's input base phase, rounding against that base (not the
+        # modified phase) to avoid the dolphin-#364 artefact: any pixel where the
+        # pre-pass moved phase across the ±π discontinuity would otherwise pick up
+        # a spurious ±2π cycle, producing visible outlines along fringe
+        # boundaries. When `remove_ramp` is on, the base is the de-ramped phase,
+        # so `unw` stays in the flat de-ramped domain through the bridge below.
         tau = np.float32(2 * np.pi)
-        phase_orig = np.angle(igram).astype(np.float32)
+        phase_orig = np.angle(solve_base).astype(np.float32)
         k = np.round((np.asarray(unw_solve) - phase_orig) / tau).astype(np.float32)
         unw = (phase_orig + tau * k).astype(np.float32)
         # Masked pixels get the same nodata fill as the no-pre-pass branch
@@ -527,7 +565,20 @@ def unwrap(
         unw[~mask] = np.nan
 
     if bridge:
+        # Runs on the (de-ramped, flat) phase when remove_ramp is on, so the
+        # per-region 2π offsets it must resolve across subswath gaps are small.
         unw = bridge_components(unw, mask)
+
+    if ramp_slopes is not None:
+        # Add the fitted ramp back, AFTER bridging, so every pre-pass and the
+        # bridge operated on the flat de-ramped phase. `unw` is now a valid
+        # unwrapping of the original igram (the de-ramp is congruence-preserving),
+        # which the conncomp grow below reads against the original igram.
+        unw = add_ramp(
+            np.asarray(unw, dtype=np.float32), ramp_slopes[0], ramp_slopes[1]
+        )
+        if mask is not None:
+            unw[~mask] = 0.0
 
     # Connected components. The default "snaphu" grow runs on the FINAL (bridged)
     # unwrapped phase via the convex-cost ambiguity wiggle; it is bridge-invariant
@@ -583,11 +634,14 @@ def unwrap(
 #   - the synthetic-scene generators (``diagonal_ramp``, ``simulate_ifg``) -
 #     test/benchmark utilities.
 __all__ = [
+    "add_ramp",
     "bridge_components",
     "compute_residues",
     "conncomp_reliability_from_coherence",
     "conncomp_min_coherence_auto",
     "cost_threshold_from_cycle_prob",
+    "deramp",
+    "fit_ramp",
     "goldstein",
     "interpolate",
     "label_components",
