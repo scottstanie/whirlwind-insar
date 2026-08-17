@@ -228,6 +228,15 @@ struct Cli {
     /// unchanged either way.
     #[arg(long = "no-bridge", action = clap::ArgAction::SetTrue)]
     no_bridge: bool,
+    /// Fit and remove a linear phase ramp before unwrapping, then add it back
+    /// afterward. Flattens large ionospheric / tropospheric ramps (ionosphere is
+    /// the dominant one for NISAR) so the bridge / Goldstein / interpolation
+    /// passes see a smaller fringe rate across subswath gaps. The plane is fit
+    /// from the mean wrapped phase gradient; removing it only INFORMS the solver
+    /// (it is congruence-preserving), so every per-pixel value is preserved.
+    /// Runs before `--interpolate` and `--goldstein-alpha`.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    remove_ramp: bool,
     /// Spiral persistent-scatterer interpolation pre-pass. When set, every
     /// valid pixel whose coherence is below `--interp-cutoff` has its phase
     /// replaced by a Gaussian distance-weighted average of nearby
@@ -418,6 +427,7 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         nlooks,
         downsample,
         no_bridge,
+        remove_ramp,
         interpolate,
         interp_cutoff,
         interp_num_neighbors,
@@ -621,12 +631,25 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         cost_threshold
     };
 
-    // Build the phase fed to the MCF. Interpolation and Goldstein filtering both
-    // only INFORM the solver; the integer 2π·k field they produce is transferred
-    // back onto the ORIGINAL wrapped phase below, so every per-pixel value is
-    // preserved. Order matches Python: interpolate, then Goldstein.
+    // Build the phase fed to the MCF. Ramp removal, interpolation, and Goldstein
+    // filtering all only INFORM the solver; the integer 2π·k field they produce is
+    // transferred back onto the solver's input base phase below (the de-ramped
+    // phase when a ramp was removed, else the original `ph`), so every per-pixel
+    // value is preserved. Order matches Python: remove ramp, interpolate, then
+    // Goldstein.
     let mut ig_solve = igram_orig.clone();
     let mut used_prepass = false;
+    // Ramp removal runs first: fit the dominant linear ramp, de-ramp the complex
+    // phase (multiply by exp(-i·ramp)), and remember the slopes so the plane can
+    // be added back onto the unwrapped phase after the solve.
+    let ramp_slopes = if remove_ramp {
+        let slopes = whirlwind_core::ramp::fit_ramp(ig_solve.view(), mk.as_ref().map(|m| m.view()));
+        ig_solve = whirlwind_core::ramp::deramp(ig_solve.view(), slopes);
+        used_prepass = true;
+        Some(slopes)
+    } else {
+        None
+    };
     if interpolate {
         // Spiral PS interpolator: weights are clamped coherence (NaN -> 0),
         // matching `np.clip(np.nan_to_num(corr), 0, 1)`.
@@ -672,19 +695,37 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
         phase_grad_window,
     )?;
 
-    // K-transfer to original wrapped phase (dolphin PR #364 convention).
-    // Rounding against `ph` (the original, *unfiltered* phase) avoids the
-    // spurious ±2π jumps at fringe boundaries. If no pre-pass ran, this is a
-    // no-op (unw_solve is already congruent with ph).
+    // K-transfer to the solver's input base phase (dolphin PR #364 convention):
+    // round the (interpolated / filtered / de-ramped) unwrap back to that base so
+    // the pre-passes only INFORM the solve. Without ramp removal the base is the
+    // original phase `ph`; with it, the base is the de-ramped wrapped phase
+    // angle(igram·e^{-i·ramp}) = wrap(ph − ramp), so `unw` stays in the flat
+    // de-ramped domain through the bridge below and the plane is added back only
+    // at the very end. If no pre-pass ran, this is a no-op.
+    let deramped_base: Option<Array2<f32>> = ramp_slopes.map(|s| {
+        let a = s.row_slope as f64;
+        let b = s.col_slope as f64;
+        Array2::from_shape_fn(ph.dim(), |(i, j)| {
+            let v = ph[(i, j)] as f64 - (a * i as f64 + b * j as f64);
+            // Wrap to (-π, π], matching Complex::arg on the de-ramped phasor.
+            let w = v.rem_euclid(std::f64::consts::TAU);
+            (if w > std::f64::consts::PI {
+                w - std::f64::consts::TAU
+            } else {
+                w
+            }) as f32
+        })
+    });
+    let base_phase: &Array2<f32> = deramped_base.as_ref().unwrap_or(&ph);
     let tau = std::f32::consts::TAU;
     let mut unw = if used_prepass {
         let mut out_arr = Array2::<f32>::zeros(ph.dim());
         ndarray::Zip::from(&mut out_arr)
-            .and(&ph)
+            .and(base_phase)
             .and(&unw_solve)
-            .for_each(|o, &p_orig, &u_filt| {
-                let k = ((u_filt - p_orig) / tau).round();
-                *o = p_orig + tau * k;
+            .for_each(|o, &p_base, &u_filt| {
+                let k = ((u_filt - p_base) / tau).round();
+                *o = p_base + tau * k;
             });
         if let Some(m) = &mk {
             ndarray::Zip::from(&mut out_arr).and(m).for_each(|o, &v| {
@@ -699,7 +740,9 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
     };
 
     // Bridge post-pass (ON by default, matching Python): re-level regions the
-    // valid mask splits into disconnected pieces.
+    // valid mask splits into disconnected pieces. When a ramp was removed this
+    // runs on the flat de-ramped phase, so the per-region offsets it resolves
+    // across subswath gaps are small.
     if bridge {
         unw = whirlwind_core::bridge_components(
             unw.view(),
@@ -708,6 +751,21 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
             whirlwind_core::bridge::DEFAULT_MIN_PX,
             whirlwind_core::bridge::DEFAULT_MAX_BOUNDARY,
         );
+    }
+
+    // Add the fitted ramp back, AFTER bridging, so every pre-pass and the bridge
+    // operated on the flat de-ramped phase. `unw` is then a valid unwrapping of
+    // the original interferogram (the de-ramp is congruence-preserving), which
+    // the conncomp grow below reads against `igram_orig` / `ph`.
+    if let Some(slopes) = ramp_slopes {
+        unw = whirlwind_core::ramp::add_ramp(unw.view(), slopes);
+        if let Some(m) = &mk {
+            ndarray::Zip::from(&mut unw).and(m).for_each(|o, &v| {
+                if !v {
+                    *o = 0.0;
+                }
+            });
+        }
     }
 
     // Connected components on the FINAL phase (unless --no-conncomp). The

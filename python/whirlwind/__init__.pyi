@@ -15,8 +15,11 @@ from numpy.typing import NDArray
 __version__: str
 
 from ._native import (
+    add_ramp as add_ramp,
     bridge_components as bridge_components,
     compute_residues as compute_residues,
+    deramp as deramp,
+    fit_ramp as fit_ramp,
     goldstein as goldstein,
     interpolate as interpolate,
     label_components as label_components,
@@ -44,6 +47,7 @@ def unwrap(
     mask: NDArray[np.bool_] | None = ...,
     *,
     bridge: bool = ...,
+    remove_ramp: bool = ...,
     downsample: int = ...,
     interpolate: bool = ...,
     interp_cutoff: float = ...,
