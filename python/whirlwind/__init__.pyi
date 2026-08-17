@@ -29,16 +29,16 @@ from ._native import (
     wrap_phase as wrap_phase,
 )
 
-def fill_gaps(
+def connect_gaps(
     igram: NDArray[np.complex64],
     mask: NDArray[np.bool_],
     max_gap: int = ...,
     edge: int = ...,
 ) -> tuple[NDArray[np.complex64], NDArray[np.bool_]]:
-    """Bridge interior nodata gaps by continuing the fringe rate across them.
+    """Synthesise phase across interior nodata gaps to join separated regions.
 
-    Returns ``(filled_igram, filled_mask)``; see the full docstring in
-    ``whirlwind/_gapfill.py``."""
+    Returns ``(connected_igram, added)``; see the full docstring in
+    ``whirlwind/_connect_gaps.py``."""
 
 def cost_threshold_from_cycle_prob(cycle_prob: float) -> int: ...
 def conncomp_min_coherence_auto(nlooks: float) -> float:
@@ -58,9 +58,8 @@ def unwrap(
     mask: NDArray[np.bool_] | None = ...,
     *,
     bridge: bool = ...,
-    fill_gaps: bool = ...,
-    fill_gaps_max_px: int = ...,
-    fill_gaps_coherence: float = ...,
+    connect_gaps: bool = ...,
+    connect_gaps_max_px: int = ...,
     remove_ramp: bool = ...,
     downsample: int = ...,
     interpolate: bool = ...,

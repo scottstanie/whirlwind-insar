@@ -18,11 +18,16 @@ Scene
 
 Arms
 ----
-``none``        bridge disabled -- the do-nothing baseline. Without this guard a
-                method can look good merely by not making things worse.
-``bridge``      current default: minimum-jump re-leveling across the gap.
-``remove_ramp`` PR #99's pre-pass (needs a build that has it).
-``gapfill``     fill the gaps, widen the mask, let the MCF choose the integers.
+``none``         bridge disabled -- the do-nothing baseline. Without this guard
+                 a method can look good merely by not making things worse.
+``bridge``       current default: minimum-jump re-leveling across the gap.
+``remove_ramp``  PR #99's plane-fit pre-pass.
+``connect_gaps`` the shipped ``unwrap(connect_gaps=True)``: cross the gaps so
+                 the frame is connected and the solve levels the stripes.
+``fillnearest`` / ``fillinear``
+                 deliberately-inferior local baselines, for contrast.
+
+Prefix any arm with ``ramp+`` to combine it with ``remove_ramp``.
 
 The predictor to watch is ``cyc/gap``: the true phase change across a gap, in
 cycles, measured from truth. Minimum-jump assumes it is zero, so it must start
@@ -45,7 +50,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from exp_gap_interp import fill_gaps  # noqa: E402
+from exp_gap_interp import baseline_fill  # noqa: E402
 
 TWOPI = 2.0 * np.pi
 LAMBDA_L_BAND_M = 0.2385  # NISAR L-band centre wavelength
@@ -128,14 +133,30 @@ def run_arms(
 
     out: dict[str, np.ndarray] = {}
     for arm in arms:
-        # Arm syntax: [ramp+]{none|bridge|fill<method>}
-        use_ramp = arm.startswith("ramp+")
-        base = arm[len("ramp+") :] if use_ramp else arm
-        if base.startswith("fill"):
+        # Arm syntax: [ramp+]{none|bridge|connect_gaps|fill<method>}, plus the
+        # alias `remove_ramp` for `ramp+bridge`. The alias is spelled out
+        # because a bare "remove_ramp" otherwise falls through to the plain
+        # bridge branch and silently reports the baseline under a name that
+        # says otherwise.
+        spec = "ramp+bridge" if arm == "remove_ramp" else arm
+        use_ramp = spec.startswith("ramp+")
+        base = spec[len("ramp+") :] if use_ramp else spec
+        if base == "connect_gaps":
+            # The shipped path, called exactly as a user would -- no local
+            # reimplementation, so this arm measures the real library.
+            kw = {"connect_gaps": True}
+            if use_ramp:
+                kw["remove_ramp"] = True
+            unw, _cc = ww.unwrap(igram, corr_s, nlooks, mask, **kw)
+        elif base.startswith("fill"):
+            # Deliberately-inferior baselines (see exp_gap_interp), kept so the
+            # figure shows WHY the shipped rule is shaped the way it is.
+            from whirlwind import _SYNTHETIC_COHERENCE
+
             method = base[len("fill") :] or "nearest"
-            zf, filled = fill_gaps(np.where(mask, wrapped, np.nan), mask, method)
+            zf, filled = baseline_fill(np.where(mask, wrapped, np.nan), mask, method)
             c2 = corr_s.copy()
-            c2[filled] = 0.05
+            c2[filled] = _SYNTHETIC_COHERENCE
             kw = {"remove_ramp": True} if use_ramp else {}
             unw, _cc = ww.unwrap(zf, c2, nlooks, mask | filled, **kw)
         else:
@@ -166,7 +187,7 @@ def main() -> None:
     p.add_argument("--figure-ramp", type=float, default=10.0)
     p.add_argument("--out", type=Path, default=Path("nisar-pngs/sim_leveling.png"))
     p.add_argument(
-        "--arms", nargs="*", default=["none", "bridge", "remove_ramp", "gapfill"]
+        "--arms", nargs="*", default=["none", "bridge", "remove_ramp", "connect_gaps"]
     )
     args = p.parse_args()
 
