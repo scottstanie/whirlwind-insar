@@ -40,11 +40,14 @@ from ._native import (
     components_snaphu,
     label_components,
 )
+from ._gapfill import fill_gaps
 
 # `interpolate` is re-exported above as the public native binding. Alias it so
 # the `interpolate=` keyword argument inside unwrap() (which shadows the name in
 # that scope) can still reach the function.
 _interpolate = interpolate
+# Same shadowing problem for the `fill_gaps=` keyword argument below.
+_fill_gaps = fill_gaps
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -233,6 +236,9 @@ def unwrap(
     mask: "NDArray[np.bool_] | None" = None,
     *,
     bridge: bool = True,
+    fill_gaps: bool = False,
+    fill_gaps_max_px: int = 300,
+    fill_gaps_coherence: float = 0.05,
     remove_ramp: bool = False,
     downsample: int = 1,
     interpolate: bool = False,
@@ -301,6 +307,29 @@ def unwrap(
         boundaries and snaps it to an integer number of cycles. Regions are
         processed from largest to smallest and anchored to the nearest region
         already processed, so a tiny island cannot set a large landmass's level.
+    fill_gaps : bool, default False
+        Bridge nodata gaps that split the frame into disconnected regions, by
+        continuing the fringe rate across them, so the solver sees one connected
+        scene. Use this when nodata *stripes* cut the frame apart -- a NISAR
+        fixed-PRF frame arrives as subswaths separated by ~140 px of nodata.
+        Each disconnected region otherwise unwraps on its own arbitrary 2*pi
+        level, and choosing those levels afterwards (``bridge``) means guessing
+        the phase change across data you do not have. Filling first lets the
+        solver choose them with its cost model instead, using the real data on
+        either side; the synthesised pixels enter at ``fill_gaps_coherence`` and
+        are removed from the returned phase and labels. Prefer this to
+        ``remove_ramp`` on gapped frames: it does not assume the bulk phase is a
+        plane, so it also handles a curved ionosphere.
+    fill_gaps_max_px : int, default 300
+        Widest gap to fill, in pixels. Wider holes are left for ``bridge``: past
+        some width the fringe rate on one side stops predicting the other, and a
+        gap that gets bridged beats a confidently wrong fill.
+    fill_gaps_coherence : float, default 0.05
+        Coherence assigned to filled pixels. Deliberately near-worthless: these
+        pixels are synthesised, so they should be cheap for the solver to route
+        cycles through and should never outvote a measurement. Results are
+        insensitive to it over a wide range, so there is rarely a reason to
+        raise it.
     remove_ramp : bool, default False
         Fit and remove a linear phase ramp from the wrapped phase before the
         solve, then add the same plane back to the unwrapped result. Large
@@ -465,6 +494,22 @@ def unwrap(
         mask = (igram != 0) & (corr > 0)
     mask = np.ascontiguousarray(mask, dtype=bool)
 
+    # Gap fill runs before everything else: it changes which pixels are valid,
+    # so the mask it produces is the one the rest of the pipeline (pre-passes,
+    # solve, bridge, connected components) works with. The filled pixels are
+    # handed over at a low coherence, cheap enough for the solver to route the
+    # required cycles through and distrusted enough never to outvote real data.
+    filled: "NDArray[np.bool_] | None" = None
+    if fill_gaps:
+        igram_filled, gap_px = _fill_gaps(igram, mask, max_gap=fill_gaps_max_px)
+        if gap_px.any():
+            filled = gap_px
+            igram = igram_filled
+            mask = mask | filled
+            corr = np.where(filled, np.float32(fill_gaps_coherence), corr).astype(
+                np.float32
+            )
+
     if conncomp_sigma is not None:
         import math
 
@@ -519,6 +564,13 @@ def unwrap(
         ig_solve = np.array(ig_solve, dtype=np.complex64, copy=True)
         if mask is not None:
             ig_solve[~mask] = 0
+        if filled is not None:
+            # Restore the gap fill over whatever the pre-passes did to it. The
+            # interpolator in particular reads the filled pixels' deliberately
+            # low coherence as "needs filling" and replaces them with a local
+            # average, which erases the fringe continuation the fill exists to
+            # provide and puts the frame back where it started.
+            ig_solve[filled] = igram[filled]
 
     if conncomp_algorithm not in ("snaphu", "linear"):
         raise ValueError(
@@ -610,6 +662,16 @@ def unwrap(
         )
     else:
         cc = cc_linear
+
+    if filled is not None:
+        # Synthesised pixels were only ever scaffolding to connect the regions.
+        # Drop them from both outputs so the caller never sees a phase or a
+        # component label at a pixel that had no measurement.
+        unw = np.array(unw, dtype=np.float32, copy=True)
+        unw[filled] = 0.0
+        if cc is not None:
+            cc = np.array(cc, copy=True)
+            cc[filled] = 0
     return unw, cc
 
 
@@ -637,6 +699,7 @@ __all__ = [
     "conncomp_min_coherence_auto",
     "cost_threshold_from_cycle_prob",
     "deramp",
+    "fill_gaps",
     "fit_ramp",
     "goldstein",
     "interpolate",
