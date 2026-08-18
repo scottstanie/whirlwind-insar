@@ -83,8 +83,9 @@ markdown_extensions:
       generic: true
 
 extra_javascript:
-  # Render LaTeX from `pymdownx.arithmatex` via MathJax.
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  # Render LaTeX from `pymdownx.arithmatex` via MathJax. Deliberately no
+  # polyfill.io shim: that domain was sold and served malware to every site
+  # embedding it (June 2024), and MathJax 3 needs no ES6 polyfill anyway.
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 extra:
