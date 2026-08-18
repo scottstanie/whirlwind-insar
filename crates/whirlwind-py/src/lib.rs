@@ -585,6 +585,39 @@ fn components_snaphu<'py>(
     Ok(comps.into_pyarray(py))
 }
 
+/// Legacy linear connected components without running the phase solver.
+#[pyfunction]
+#[pyo3(name = "_components_linear", signature = (
+    igram, corr, nlooks, mask = None,
+    cost_threshold = 50, min_size_px = 100, max_ncomps = 1024,
+    phase_grad_window = (7, 7),
+))]
+fn components_linear<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    corr: PyReadonlyArray2<'py, f32>,
+    nlooks: f32,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    cost_threshold: i32,
+    min_size_px: usize,
+    max_ncomps: u32,
+    phase_grad_window: (usize, usize),
+) -> PyResult<Bound<'py, PyArray2<u32>>> {
+    let ig = igram.as_array();
+    let co = corr.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let window = parse_phase_grad_window(phase_grad_window)?;
+    let params = whirlwind_core::ConnCompParams {
+        cost_threshold,
+        min_size_px,
+        min_size_frac: 0.0001,
+        max_ncomps,
+    };
+    let out = py.detach(|| whirlwind_core::components_only(ig, co, nlooks, m, params, window));
+    let comps = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(comps.into_pyarray(py))
+}
+
 /// Per-pixel quality from temporal triangles (3-cycles).
 ///
 /// Same idea as `quality_map` but uses only triangles instead of the
@@ -816,19 +849,10 @@ fn goldstein<'py>(
     Ok(out.into_pyarray(py))
 }
 
-/// Fit the dominant linear phase ramp of a wrapped interferogram.
+/// Estimate row and column phase slopes in radians per pixel.
 ///
-/// Returns ``(row_slope, col_slope)`` in radians per pixel, defining the plane
-/// ``φ(i, j) = row_slope·i + col_slope·j``. Estimated from the mean wrapped phase
-/// gradient (the circular mean of adjacent-pixel phase differences), which is
-/// single-pass, ``O(1)`` extra memory, sub-pixel accurate, and needs no FFT.
-///
-/// * ``igram`` - complex64 wrapped interferogram, shape ``(m, n)``. Nodata is
-///   ``0+0j``.
-/// * ``mask`` - optional bool valid mask; only pairs whose both endpoints are
-///   valid, finite, and nonzero contribute, so nodata and subswath gaps are
-///   skipped. Pass this to keep the gaps of a NISAR fixed-PRF frame out of the
-///   fit.
+/// The estimate uses mean wrapped phase gradients between adjacent valid,
+/// finite, nonzero pixels. An optional mask further restricts those pairs.
 #[pyfunction]
 #[pyo3(signature = (igram, mask = None))]
 fn fit_ramp<'py>(
@@ -842,12 +866,9 @@ fn fit_ramp<'py>(
     (s.row_slope, s.col_slope)
 }
 
-/// De-ramp a wrapped interferogram: ``igram · exp(-i·(row_slope·i + col_slope·j))``.
+/// Remove a linear phase ramp while preserving magnitude.
 ///
-/// Subtracts the plane (given by :func:`fit_ramp`) from the phase while
-/// preserving magnitude; nodata (``0+0j``) and non-finite pixels stay ``0+0j``.
-/// The plane angle is evaluated in f64 so it stays accurate over large frames.
-/// Returns a complex64 ``(m, n)`` array.
+/// Zero and non-finite input pixels remain zero.
 #[pyfunction]
 fn deramp<'py>(
     py: Python<'py>,
@@ -864,12 +885,10 @@ fn deramp<'py>(
     out.into_pyarray(py)
 }
 
-/// Add a linear ramp ``row_slope·i + col_slope·j`` back onto an unwrapped-phase
-/// array - the unwrapped-domain inverse of :func:`deramp`.
+/// Add a linear phase ramp to an unwrapped-phase array.
 ///
-/// After unwrapping the de-ramped phase, this restores the fitted ramp so the
-/// result is a valid unwrapping of the original interferogram. Non-finite pixels
-/// pass through unchanged. Returns a float32 ``(m, n)`` array.
+/// This is the unwrapped-domain inverse of `deramp`. Non-finite pixels pass
+/// through unchanged.
 #[pyfunction]
 fn add_ramp<'py>(
     py: Python<'py>,
@@ -988,6 +1007,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_linear, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_linear_ext_costs, m)?)?;
     m.add_function(wrap_pyfunction!(components_snaphu, m)?)?;
+    m.add_function(wrap_pyfunction!(components_linear, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_native, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;

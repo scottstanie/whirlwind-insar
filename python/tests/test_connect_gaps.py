@@ -1,11 +1,4 @@
-"""Tests for the ``connect_gaps`` pre-pass.
-
-The point of connecting is to make a gapped frame a single component so the
-solve picks the per-region 2*pi levels itself. So the tests assert the thing
-that actually matters -- the regions come out on the right relative level -- and
-each one checks the baseline FAILS the same case, because an assertion that
-passes with the feature switched off is not testing the feature.
-"""
+"""Tests for the ``connect_gaps`` pre-pass."""
 
 from __future__ import annotations
 
@@ -28,12 +21,7 @@ def striped_scene(
     nlooks: int = 40,
     seed: int = 3,
 ):
-    """A scene cut into subswath stripes, plus its truth and mask.
-
-    ``curvature_cycles`` adds a smooth NON-planar surface. That matters because
-    a plane fit can absorb a pure ramp, so a ramp-only scene cannot tell a
-    method that models curvature apart from one that does not.
-    """
+    """Create a striped scene and its phase truth, mask, and look count."""
     ii, jj = np.mgrid[0:m, 0:n]
     x = jj / (n - 1)
     y = ii / (m - 1)
@@ -193,6 +181,26 @@ class TestUnwrapConnectGaps:
         assert np.all(np.asarray(unw)[added] == 0)
         assert np.all(np.asarray(cc)[added] == 0)
 
+    @pytest.mark.parametrize("algorithm", ["snaphu", "linear"])
+    def test_components_are_computed_from_measurements(self, algorithm):
+        """A returned label must not span islands separated by removed pixels."""
+        igram, corr, mask, _truth, nlooks = striped_scene()
+        _unw, cc = ww.unwrap(
+            igram,
+            corr,
+            nlooks,
+            mask,
+            connect_gaps=True,
+            conncomp_algorithm=algorithm,
+        )
+
+        cc = np.asarray(cc)
+        labels = np.unique(cc[cc > 0])
+        assert labels.size > 1, "the measurement stripes must remain separate labels"
+        for label in labels:
+            _islands, count = ww.label_components(cc == label)
+            assert count == 1, f"label {label} occupies {count} disconnected islands"
+
     def test_noop_without_gaps(self):
         """A frame with no interior gaps must be untouched."""
         m = n = 96
@@ -230,15 +238,7 @@ class TestUnwrapConnectGaps:
         assert on_cycle_fraction(unw, truth, mask) > 0.99, kwargs
 
     def test_composes_with_a_steep_ramp_and_a_curved_surface(self):
-        """Regression: the synthesised path must live in the SOLVER's domain.
-
-        ``remove_ramp`` de-ramps the phase the solver sees. Restoring the
-        synthesised pixels from the original igram after that put them a full
-        fitted-ramp offset away from their neighbours, tearing the frame at
-        every gap edge -- and it did so worst on steep ramps, which is exactly
-        when someone reaches for ``remove_ramp``. A mild ramp hides this, so
-        this scene uses a steep one plus curvature no plane can absorb.
-        """
+        """Gap phase must remain in the de-ramped solver domain."""
         igram, corr, mask, truth, nlooks = striped_scene(
             m=384, n=384, n_stripes=7, gap=16, ramp_cycles=40.0, curvature_cycles=6.0
         )
@@ -249,17 +249,10 @@ class TestUnwrapConnectGaps:
         s_alone = on_cycle_fraction(alone, truth, mask)
         s_both = on_cycle_fraction(both, truth, mask)
         assert s_alone > 0.99, f"connect_gaps alone regressed ({s_alone:.3f})"
-        # The bug drove this to ~0.14 (one stripe of seven) while `alone` stayed
-        # at 1.0, so adding a pre-pass made the result far worse than omitting
-        # it. Composition must not cost anything here.
         assert s_both > 0.99, f"remove_ramp broke the connection ({s_both:.3f})"
 
     def test_ramp_is_fitted_to_measured_pixels_only(self, monkeypatch):
-        """Synthesised phase must not feed back into the plane fit.
-
-        Asserted on the mask `fit_ramp` actually receives, because the effect on
-        the fitted slopes is far too small to detect from the output.
-        """
+        """Synthesised phase must not feed back into the plane fit."""
         igram, corr, mask, _truth, nlooks = striped_scene(
             n_stripes=7, gap=16, ramp_cycles=20.0
         )

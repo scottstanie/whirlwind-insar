@@ -36,6 +36,7 @@ from ._native import (
     wrap_phase,
 )
 from ._native import (
+    _components_linear,
     _unwrap_native,
     components_snaphu,
     label_components,
@@ -49,19 +50,9 @@ _interpolate = interpolate
 # Same shadowing problem for the `connect_gaps=` keyword argument below.
 _connect_gaps = connect_gaps
 
-# Coherence handed to pixels synthesised by `connect_gaps`. Deliberately not a
-# public knob: it exists so the solver can route cycles through a synthesised
-# path cheaply while never letting that path outvote a real measurement, and
-# there is no scene-dependent information a caller could use to choose better.
-#
-# It is not inert, though, so the value is picked rather than guessed. Swept on
-# a gapped NISAR frame (023_076), per-component agreement is flat at 0.993
-# across [0.05, 0.3] and drops to ~0.950 on both sides (0.02 below, 0.4 above):
-# too cheap and the MCF declines to route through the path at all, too dear and
-# the invented phase starts competing with data. 0.1 is the geometric centre of
-# that plateau, a full step from either cliff. Callers who genuinely need
-# another value can call `connect_gaps()` directly and assemble the solve
-# themselves -- see its docstring for the four lines involved.
+# Fixed coherence assigned to phase synthesised by `connect_gaps`. This gives
+# the solver a low-confidence path through the gap without exposing an input
+# parameter that callers cannot estimate from the missing measurements.
 _SYNTHETIC_COHERENCE = 0.1
 
 if TYPE_CHECKING:
@@ -288,7 +279,7 @@ def unwrap(
     output (reproducing SNAPHU's ``GrowConnCompsMask``).
     ``conncomp_algorithm="linear"`` uses a global coherence-cost growing algorithm.
 
-    A fast default post-pass (``bridge``) attmempts to minimize 2π offsets
+    A fast default post-pass (``bridge``) attempts to minimize 2π offsets
     between regions that the valid mask splits apart, such as land slabs separated by a
     low-coherence river.
 
@@ -322,51 +313,25 @@ def unwrap(
         processed from largest to smallest and anchored to the nearest region
         already processed, so a tiny island cannot set a large landmass's level.
     connect_gaps : bool, default False
-        Synthesise phase across narrow nodata gaps so regions the mask split
-        apart become one connected scene, then drop the synthesised pixels from
-        the result. Use this when nodata *stripes* cut a frame into pieces -- a
-        NISAR fixed-PRF frame arrives as subswaths separated by ~140 px of
-        nodata. Each piece otherwise unwraps on its own arbitrary 2π level, and
-        choosing those levels afterwards (``bridge``) means guessing the phase
-        change across data you do not have. Connecting first folds that choice
-        into the solve, which decides it from the real data on either side.
-
-        Distinct from ``interpolate``, which smooths *existing valid* pixels by
-        taking a circular mean of their neighbours. A circular mean is the
-        short-arc answer, which discards the whole-cycle count across a gap --
-        the one quantity a crossing has to preserve. This pass extrapolates the
-        fringe rate instead. They compose, and are controlled separately.
-
-        Prefer this to ``remove_ramp`` on gapped frames: it does not assume the
-        bulk phase is a plane, so a curved ionosphere is handled too. Note it is
-        a geometric rule, not a NISAR-specific one -- any interior hole narrower
-        than ``connect_gaps_max_px`` is crossed, along a row or down a column,
-        including water or layover.
-        See :func:`connect_gaps` for the details and for the manual equivalent.
+        Add low-confidence phase paths across bounded nodata runs before
+        unwrapping, then remove those synthetic pixels from both outputs. The
+        paths let the solver estimate relative 2π levels between regions that
+        would otherwise be independent. Unlike ``interpolate``, this estimates
+        spatial phase slope on both sides of a gap to retain a winding estimate;
+        circular averaging of wrapped phasors contains no winding information.
+        Rows and columns are both scanned. This is a geometric operation, so it
+        may also cross non-subswath holes selected by ``mask``.
     connect_gaps_max_px : int, default 300
-        Widest gap to cross, in pixels. Wider holes are left for ``bridge``:
-        past some width the fringe rate on one side stops predicting the other,
-        and a gap that gets bridged beats a confidently wrong fill. Lower this
-        if you want only genuine subswath stripes crossed.
+        Maximum width, in pixels, of a bounded invalid run to cross. This is
+        only a geometric width limit; it does not identify why pixels are
+        invalid.
     remove_ramp : bool, default False
         Fit and remove a linear phase ramp from the wrapped phase before the
-        solve, then add the same plane back to the unwrapped result. Large
-        ionospheric (dominant for NISAR) or tropospheric ramps add many fringes
-        across a frame; when the valid mask splits the scene into subswath
-        rectangles that must be bridged together, a steep ramp makes the
-        per-region 2π offsets large and the bridge/Goldstein/interpolation
-        passes struggle. Flattening the fringe rate first shrinks those offsets.
-        The plane is estimated from the mean wrapped phase gradient (a
-        single-pass, memory-light complex-covariance fit; no FFT). Like the other
-        pre-passes it only INFORMS the solver: the de-ramp is congruence-preserving
-        (unwrapping ``igram · exp(-i·ramp)`` and adding ``ramp`` back is a valid
-        unwrapping of ``igram`` for *any* plane), so every per-pixel value the
-        caller passed in is preserved regardless of how well the plane matches the
-        true ramp. Runs first, before ``connect_gaps`` / ``interpolate`` /
-        ``goldstein_alpha`` / ``downsample``; on a gapped frame that ordering
-        matters, because flattening the scene first leaves ``connect_gaps`` a far
-        easier gap to cross.
-        See :func:`fit_ramp`, :func:`deramp`, and :func:`add_ramp` for the pieces.
+        solve, then restore it in the result. The plane is estimated from mean
+        wrapped phase gradients over valid adjacent pixels. Ramp removal is
+        congruence-preserving and runs before the other pre-passes; in
+        particular, it reduces the phase change that ``connect_gaps`` must
+        estimate.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
         interferogram is coherently averaged into ``downsample x downsample``
@@ -514,6 +479,8 @@ def unwrap(
     if mask is None:
         mask = (igram != 0) & (corr > 0)
     mask = np.ascontiguousarray(mask, dtype=bool)
+    measurement_mask = mask
+    measurement_corr = corr
 
     if conncomp_sigma is not None:
         import math
@@ -522,27 +489,14 @@ def unwrap(
     if conncomp_cycle_prob is not None:
         cost_threshold = cost_threshold_from_cycle_prob(conncomp_cycle_prob)
 
-    # Build the phase fed to the MCF. Ramp removal, gap connection, interpolation
-    # and Goldstein filtering all only INFORM the solver; the integer 2π·k field
-    # they produce is transferred back onto the solver's input base phase below
-    # (`solve_base`), so every per-pixel value the caller passed in is preserved.
-    #
-    # `working` is the phase each stage hands to the next.
+    # Pre-passes modify the phase used to estimate the integer cycle field. That
+    # field is transferred back onto `solve_base` below.
     working = igram
     ramp_slopes: "tuple[float, float] | None" = None
     if remove_ramp:
-        # Fit the dominant linear phase ramp (ionospheric/tropospheric) and
-        # de-ramp the complex phase: working = igram · exp(-i·ramp). Flattening
-        # the fringe rate shrinks the per-region 2π offsets the bridge pass must
-        # resolve across subswath gaps, so the whole solve + bridge runs in the
-        # de-ramped domain and the fitted plane is added back only at the very end
-        # (after bridging). De-ramping is congruence-preserving, so the final
-        # per-pixel result is a valid unwrapping regardless of how well the plane
-        # matches the true ramp.
-        #
-        # `mask` is still measurement-only here -- ramp removal deliberately runs
-        # BEFORE `connect_gaps` (see below), so no invented phase can feed back
-        # into the plane that produced it.
+        # Fit before gap connection so synthetic phase cannot affect the plane.
+        # The solve and bridge remain in the de-ramped domain until the ramp is
+        # restored below.
         row_slope, col_slope = fit_ramp(igram, mask=mask)
         ramp_slopes = (row_slope, col_slope)
         working = np.array(
@@ -550,18 +504,9 @@ def unwrap(
         )
         working[~mask] = 0
 
-    # Gap connection runs next, and after ramp removal on purpose. It changes
-    # which pixels are valid, so the mask it produces is the one the rest of the
-    # pipeline (later pre-passes, solve, bridge, connected components) works
-    # with. The synthesised pixels are handed over at a low coherence, cheap
-    # enough for the solver to route the required cycles through and distrusted
-    # enough never to outvote real data.
-    #
-    # Ordering matters and is measured, not assumed: connecting has to guess how
-    # many whole fringes span each gap, and de-ramping first collapses that from
-    # (on a steep frame) more than a cycle to nearly zero, which is the easy end
-    # of the problem. Connecting first and de-ramping afterwards loses stripes on
-    # exactly the steep-ramp frames `remove_ramp` exists for.
+    # Gap connection runs after ramp removal because flatter phase is easier to
+    # extrapolate. Its expanded mask and low coherence are solver inputs only;
+    # connected-component labels are computed from the measurements below.
     synthetic: "NDArray[np.bool_] | None" = None
     if connect_gaps:
         joined, added = _connect_gaps(working, mask, max_gap=connect_gaps_max_px)
@@ -603,14 +548,7 @@ def unwrap(
         if mask is not None:
             ig_solve[~mask] = 0
         if synthetic is not None:
-            # Restore the synthesised path over whatever the later pre-passes
-            # did to it. The interpolator in particular reads those pixels'
-            # deliberately low coherence as "needs filling" and replaces them
-            # with a local average, which erases the fringe continuation they
-            # exist to provide and puts the frame back where it started.
-            #
-            # `solve_base` is the phase in the domain the solver works in, so
-            # this restores the path exactly as `connect_gaps` laid it down.
+            # Preserve the gap path through later filtering and interpolation.
             ig_solve[synthetic] = solve_base[synthetic]
 
     if conncomp_algorithm not in ("snaphu", "linear"):
@@ -618,10 +556,9 @@ def unwrap(
             f"conncomp_algorithm must be 'snaphu' or 'linear', got {conncomp_algorithm!r}"
         )
 
-    # `_unwrap_native` returns the phase plus the legacy linear-cost conncomp.
-    # The linear grow is cheap (a few % of the solve), so we always take it; it
-    # is the returned conncomp under ``conncomp_algorithm="linear"`` and is
-    # discarded under the default "snaphu" path (replaced below).
+    # `_unwrap_native` also returns linear-cost components for the solver mask.
+    # Those can be reused unless gap connection expanded the mask; in that case
+    # the measurement-only components are recomputed below.
     unw_solve, cc_linear = _unwrap_native(
         ig_solve,
         corr,
@@ -639,13 +576,9 @@ def unwrap(
     if ig_solve is solve_base:
         unw = np.asarray(unw_solve, dtype=np.float32)
     else:
-        # Transfer the integer 2π·k field from the interpolated/filtered unwrap
-        # onto the solver's input base phase, rounding against that base (not the
-        # modified phase) to avoid the dolphin-#364 artefact: any pixel where the
-        # pre-pass moved phase across the ±π discontinuity would otherwise pick up
-        # a spurious ±2π cycle, producing visible outlines along fringe
-        # boundaries. When `remove_ramp` is on, the base is the de-ramped phase,
-        # so `unw` stays in the flat de-ramped domain through the bridge below.
+        # Round against the solver base rather than a filtered phase, which may
+        # have crossed the ±π discontinuity. The de-ramped phase is the base when
+        # ramp removal is enabled.
         tau = np.float32(2 * np.pi)
         phase_orig = np.angle(solve_base).astype(np.float32)
         k = np.round((np.asarray(unw_solve) - phase_orig) / tau).astype(np.float32)
@@ -654,25 +587,19 @@ def unwrap(
             unw[~mask] = 0.0
 
     if bridge:
-        # Runs on the (de-ramped, flat) phase when remove_ramp is on, so the
-        # per-region 2π offsets it must resolve across subswath gaps are small.
         unw = bridge_components(unw, mask)
 
     if ramp_slopes is not None:
-        # Add the fitted ramp back, AFTER bridging, so every pre-pass and the
-        # bridge operated on the flat de-ramped phase. `unw` is now a valid
-        # unwrapping of the original igram (the de-ramp is congruence-preserving),
-        # which the conncomp grow below reads against the original igram.
+        # Restore the ramp after bridging in the de-ramped domain.
         unw = add_ramp(
             np.asarray(unw, dtype=np.float32), ramp_slopes[0], ramp_slopes[1]
         )
         if mask is not None:
             unw[~mask] = 0.0
 
-    # Connected components. The default "snaphu" grow runs on the FINAL (bridged)
-    # unwrapped phase via the convex-cost ambiguity wiggle; it is bridge-invariant
-    # but using the final phase keeps it unambiguous. "linear" returns the legacy
-    # coherence-cost grow already computed above.
+    # Connected components describe measured support, not the temporary phase
+    # paths used by the solver. Otherwise removing a synthetic path can leave one
+    # label assigned to several disconnected islands.
     if conncomp_algorithm == "snaphu":
         # A target minimum coherence (the default, and the intuitive knob) takes
         # precedence over a raw 1/sigma2 reliability: components keep edges above
@@ -691,10 +618,10 @@ def unwrap(
         reliability_raw = round(conncomp_reliability * CONNCOMP_RELIABILITY_UNIT)
         cc = components_snaphu(
             igram,
-            corr,
+            measurement_corr,
             nlooks,
             unw,
-            mask,
+            measurement_mask,
             reliability_raw,
             min_size_px,
             max_ncomps,
@@ -702,7 +629,19 @@ def unwrap(
             conncomp_thicken,
         )
     else:
-        cc = cc_linear
+        if synthetic is None:
+            cc = cc_linear
+        else:
+            cc = _components_linear(
+                igram,
+                measurement_corr,
+                nlooks,
+                mask=measurement_mask,
+                cost_threshold=cost_threshold,
+                min_size_px=min_size_px,
+                max_ncomps=max_ncomps,
+                phase_grad_window=pgw,
+            )
 
     if synthetic is not None:
         # Synthesised pixels were only ever scaffolding to connect the regions.

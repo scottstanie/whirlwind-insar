@@ -51,6 +51,18 @@ def _unwrap_native(
     the absolute, scene-size-invariant speckle floor.
     """
 
+def _components_linear(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float,
+    mask: NDArray[np.bool_] | None = ...,
+    cost_threshold: int = ...,
+    min_size_px: int = ...,
+    max_ncomps: int = ...,
+    phase_grad_window: tuple[int, int] = ...,
+) -> NDArray[np.uint32]:
+    """Compute legacy linear connected components without unwrapping."""
+
 def unwrap_reuse(
     igram: NDArray[np.complex64],
     corr: NDArray[np.float32],
@@ -289,38 +301,21 @@ def fit_ramp(
     igram: NDArray[np.complex64],
     mask: NDArray[np.bool_] | None = ...,
 ) -> tuple[float, float]:
-    """Fit the dominant linear phase ramp of a wrapped interferogram.
-
-    Returns ``(row_slope, col_slope)`` in radians per pixel, defining the plane
-    ``row_slope*i + col_slope*j``. Estimated from the mean wrapped phase gradient
-    (complex covariance of adjacent-pixel phase differences) - single-pass,
-    memory-light, sub-pixel accurate, no FFT. Nodata (``0+0j``), non-finite, and
-    (with ``mask``) masked pixels are excluded, so subswath gaps do not bias the
-    fit.
-    """
+    """Estimate row and column phase slopes from valid adjacent pixels."""
 
 def deramp(
     igram: NDArray[np.complex64],
     row_slope: float,
     col_slope: float,
 ) -> NDArray[np.complex64]:
-    """De-ramp a wrapped interferogram: ``igram * exp(-1j*(row_slope*i + col_slope*j))``.
-
-    Removes the fitted plane from the phase while preserving magnitude; nodata
-    (``0+0j``) and non-finite pixels stay ``0+0j``.
-    """
+    """Remove a linear phase ramp while preserving magnitude."""
 
 def add_ramp(
     phase: NDArray[np.float32],
     row_slope: float,
     col_slope: float,
 ) -> NDArray[np.float32]:
-    """Add a linear ramp ``row_slope*i + col_slope*j`` onto an unwrapped-phase
-    array - the unwrapped-domain inverse of :func:`deramp`.
-
-    Restores the fitted ramp after unwrapping the de-ramped phase; non-finite
-    pixels pass through unchanged.
-    """
+    """Add a linear phase ramp to an unwrapped-phase array."""
 
 def set_num_threads(n: int) -> None:
     """Set the rayon thread pool size used for all parallel ww work.
