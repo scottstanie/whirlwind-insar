@@ -99,6 +99,8 @@ The field prior stays uniform, so the estimate remains maximum-likelihood ("prob
 
 A guiding principle from Carballo's formulation is to never rewrap: the algorithm works directly with wrapped gradients and integer cycle corrections, never rewrapping intermediate results.
 
+For the Bayesian reading of this formulation - the hierarchical model behind the costs, the posterior over the integer correction field that the flow solve maximizes, and the contrast with SNAPHU's MAP/ML costs - see [Why it's Bayesian](BAYESIAN.md).
+
 ### 2.4 Residues
 
 A **residue** at a grid node is the sum of wrapped phase gradients around a 2x2 pixel loop, normalized by $2\pi$:
