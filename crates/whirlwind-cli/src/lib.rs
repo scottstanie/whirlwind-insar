@@ -727,10 +727,13 @@ fn cmd_unwrap(args: Cli) -> Result<()> {
                 let k = ((u_filt - p_base) / tau).round();
                 *o = p_base + tau * k;
             });
+        // Masked pixels get the same nodata fill the solver applies when no
+        // pre-pass ran, so the written raster's convention does not depend on
+        // whether `--interpolate` / `--goldstein-alpha` were used.
         if let Some(m) = &mk {
             ndarray::Zip::from(&mut out_arr).and(m).for_each(|o, &v| {
                 if !v {
-                    *o = 0.0;
+                    *o = f32::NAN;
                 }
             });
         }

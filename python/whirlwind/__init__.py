@@ -303,6 +303,8 @@ def unwrap(
     mask : ndarray of bool, optional
         Valid-pixel mask, ``True`` = valid. Defaults to ``(igram != 0) &
         (corr > 0)``, so exact-zero phase or zero-coherence pixels are excluded.
+        Excluded pixels are ``NaN`` in the returned phase and ``0`` in the
+        returned components.
     bridge : bool, default True
         Post-processing step that re-levels regions the valid mask splits into
         disconnected pieces (for example two land slabs separated by a
@@ -450,7 +452,7 @@ def unwrap(
     Returns
     -------
     unwrapped : ndarray of float32, shape ``(m, n)``
-        Unwrapped phase, in radians.
+        Unwrapped phase, in radians. Pixels excluded by ``mask`` are ``NaN``.
     conncomp : ndarray of uint32, shape ``(m, n)``
         Connected-component labels; ``0`` = background / dropped.
     """
@@ -583,8 +585,10 @@ def unwrap(
         phase_orig = np.angle(solve_base).astype(np.float32)
         k = np.round((np.asarray(unw_solve) - phase_orig) / tau).astype(np.float32)
         unw = (phase_orig + tau * k).astype(np.float32)
-        if mask is not None:
-            unw[~mask] = 0.0
+        # Masked pixels get the same nodata fill as the no-pre-pass branch
+        # above, so the output convention does not depend on whether a
+        # pre-pass ran.
+        unw[~mask] = np.nan
 
     if bridge:
         unw = bridge_components(unw, mask)

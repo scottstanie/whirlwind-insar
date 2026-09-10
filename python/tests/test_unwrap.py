@@ -62,6 +62,34 @@ class TestUnwrap:
         aligned = _align_to_truth(unw[mask], phase[mask])
         np.testing.assert_allclose(aligned, phase[mask], atol=5e-2)
 
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {},
+            {"interpolate": True},
+            {"goldstein_alpha": 0.5},
+            {"interpolate": True, "goldstein_alpha": 0.5},
+            {"bridge": False},
+        ],
+        ids=["plain", "interp", "goldstein", "interp+goldstein", "no-bridge"],
+    )
+    def test_masked_pixels_are_nan(self, kwargs):
+        """Masked pixels are NaN regardless of which pre-pass ran."""
+        y, x = np.ogrid[-3:3:128j, -3:3:128j]
+        phase = (np.pi * (x + y)).astype(np.float32)
+        igram = np.exp(1j * phase).astype(np.complex64)
+        corr = np.full(igram.shape, 0.9, dtype=np.float32)
+
+        mask = np.ones(igram.shape, dtype=bool)
+        mask[40:60, 40:60] = False
+        igram[~mask] = 0
+        corr[~mask] = 0
+
+        unw, cc = ww.unwrap(igram, corr, nlooks=10.0, mask=mask, **kwargs)
+        assert np.isnan(unw[~mask]).all()
+        assert np.isfinite(unw[mask]).all()
+        assert (cc[~mask] == 0).all()
+
     def test_noisy_gaussian_bump(self):
         """Real-world flavor: a Gaussian deformation bump under Goodman noise."""
         truth = ww.diagonal_ramp(96, 96) * 0.0  # zeros; we'll add a bump
