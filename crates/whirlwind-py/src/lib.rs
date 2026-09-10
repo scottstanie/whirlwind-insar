@@ -849,62 +849,6 @@ fn goldstein<'py>(
     Ok(out.into_pyarray(py))
 }
 
-/// Estimate row and column phase slopes in radians per pixel.
-///
-/// The estimate uses mean wrapped phase gradients between adjacent valid,
-/// finite, nonzero pixels. An optional mask further restricts those pairs.
-#[pyfunction]
-#[pyo3(signature = (igram, mask = None))]
-fn fit_ramp<'py>(
-    py: Python<'py>,
-    igram: PyReadonlyArray2<'py, Complex32>,
-    mask: Option<PyReadonlyArray2<'py, bool>>,
-) -> (f32, f32) {
-    let ig = igram.as_array();
-    let m = mask.as_ref().map(|m| m.as_array());
-    let s = py.detach(|| whirlwind_core::ramp::fit_ramp(ig, m));
-    (s.row_slope, s.col_slope)
-}
-
-/// Remove a linear phase ramp while preserving magnitude.
-///
-/// Zero and non-finite input pixels remain zero.
-#[pyfunction]
-fn deramp<'py>(
-    py: Python<'py>,
-    igram: PyReadonlyArray2<'py, Complex32>,
-    row_slope: f32,
-    col_slope: f32,
-) -> Bound<'py, PyArray2<Complex32>> {
-    let ig = igram.as_array();
-    let slopes = whirlwind_core::ramp::RampSlopes {
-        row_slope,
-        col_slope,
-    };
-    let out = py.detach(|| whirlwind_core::ramp::deramp(ig, slopes));
-    out.into_pyarray(py)
-}
-
-/// Add a linear phase ramp to an unwrapped-phase array.
-///
-/// This is the unwrapped-domain inverse of `deramp`. Non-finite pixels pass
-/// through unchanged.
-#[pyfunction]
-fn add_ramp<'py>(
-    py: Python<'py>,
-    phase: PyReadonlyArray2<'py, f32>,
-    row_slope: f32,
-    col_slope: f32,
-) -> Bound<'py, PyArray2<f32>> {
-    let ph = phase.as_array();
-    let slopes = whirlwind_core::ramp::RampSlopes {
-        row_slope,
-        col_slope,
-    };
-    let out = py.detach(|| whirlwind_core::ramp::add_ramp(ph, slopes));
-    out.into_pyarray(py)
-}
-
 /// Set the number of threads used by ww's internal parallel work.
 ///
 /// Initialises rayon's global thread pool. **Must be called before the
@@ -1023,8 +967,5 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(quality_map, m)?)?;
     m.add_function(wrap_pyfunction!(quality_triangles, m)?)?;
     m.add_function(wrap_pyfunction!(goldstein, m)?)?;
-    m.add_function(wrap_pyfunction!(fit_ramp, m)?)?;
-    m.add_function(wrap_pyfunction!(deramp, m)?)?;
-    m.add_function(wrap_pyfunction!(add_ramp, m)?)?;
     Ok(())
 }

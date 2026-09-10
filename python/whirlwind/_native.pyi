@@ -297,26 +297,6 @@ def goldstein(
     2. Hann overlap-add window (smoother than triangle).
     """
 
-def fit_ramp(
-    igram: NDArray[np.complex64],
-    mask: NDArray[np.bool_] | None = ...,
-) -> tuple[float, float]:
-    """Estimate row and column phase slopes from valid adjacent pixels."""
-
-def deramp(
-    igram: NDArray[np.complex64],
-    row_slope: float,
-    col_slope: float,
-) -> NDArray[np.complex64]:
-    """Remove a linear phase ramp while preserving magnitude."""
-
-def add_ramp(
-    phase: NDArray[np.float32],
-    row_slope: float,
-    col_slope: float,
-) -> NDArray[np.float32]:
-    """Add a linear phase ramp to an unwrapped-phase array."""
-
 def set_num_threads(n: int) -> None:
     """Set the rayon thread pool size used for all parallel ww work.
 

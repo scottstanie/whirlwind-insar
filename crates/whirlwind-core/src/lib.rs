@@ -30,7 +30,6 @@ pub mod integrate;
 pub mod interpolate;
 pub mod network;
 pub mod primal_dual;
-pub mod ramp;
 pub mod residual_graph;
 pub mod residue;
 pub mod shortest_path;

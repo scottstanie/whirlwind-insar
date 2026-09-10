@@ -226,10 +226,8 @@ class TestUnwrapConnectGaps:
     @pytest.mark.parametrize(
         "kwargs",
         [
-            {"remove_ramp": True},
             {"goldstein_alpha": 0.5},
             {"interpolate": True, "interp_cutoff": 0.3},
-            {"remove_ramp": True, "interpolate": True, "interp_cutoff": 0.3},
         ],
     )
     def test_composes_with_other_prepasses(self, kwargs):
@@ -237,38 +235,17 @@ class TestUnwrapConnectGaps:
         unw, _ = ww.unwrap(igram, corr, nlooks, mask, connect_gaps=True, **kwargs)
         assert on_cycle_fraction(unw, truth, mask) > 0.99, kwargs
 
-    def test_composes_with_a_steep_ramp_and_a_curved_surface(self):
-        """Gap phase must remain in the de-ramped solver domain."""
+    def test_crosses_a_steep_ramp_and_a_curved_surface(self):
+        """A steep ramp plus curvature is the hard case for a gap crossing.
+
+        The crossing has to carry the whole fringe count over the gap, and at 40
+        ramp cycles with 6 cycles of curvature the count is large and the phase
+        is not a plane, so an extrapolation that got the slope wrong would land
+        a cycle out.
+        """
         igram, corr, mask, truth, nlooks = striped_scene(
             m=384, n=384, n_stripes=7, gap=16, ramp_cycles=40.0, curvature_cycles=6.0
         )
-        alone, _ = ww.unwrap(igram, corr, nlooks, mask, connect_gaps=True)
-        both, _ = ww.unwrap(
-            igram, corr, nlooks, mask, connect_gaps=True, remove_ramp=True
-        )
-        s_alone = on_cycle_fraction(alone, truth, mask)
-        s_both = on_cycle_fraction(both, truth, mask)
-        assert s_alone > 0.99, f"connect_gaps alone regressed ({s_alone:.3f})"
-        assert s_both > 0.99, f"remove_ramp broke the connection ({s_both:.3f})"
-
-    def test_ramp_is_fitted_to_measured_pixels_only(self, monkeypatch):
-        """Synthesised phase must not feed back into the plane fit."""
-        igram, corr, mask, _truth, nlooks = striped_scene(
-            n_stripes=7, gap=16, ramp_cycles=20.0
-        )
-        _joined, added = ww.connect_gaps(igram, mask, max_gap=300)
-        assert added.any(), "scene must actually have crossable gaps"
-
-        seen: list[np.ndarray] = []
-        real_fit_ramp = ww.fit_ramp
-
-        def spy(ig, mask=None):
-            seen.append(np.array(mask, copy=True))
-            return real_fit_ramp(ig, mask=mask)
-
-        monkeypatch.setattr(ww, "fit_ramp", spy)
-        ww.unwrap(igram, corr, nlooks, mask, connect_gaps=True, remove_ramp=True)
-
-        assert len(seen) == 1
-        np.testing.assert_array_equal(seen[0], mask)
-        assert not (seen[0] & added).any(), "plane was fitted to invented phase"
+        unw, _ = ww.unwrap(igram, corr, nlooks, mask, connect_gaps=True)
+        score = on_cycle_fraction(unw, truth, mask)
+        assert score > 0.99, f"connect_gaps regressed on a curved ramp ({score:.3f})"

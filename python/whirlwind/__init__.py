@@ -14,14 +14,11 @@ logger = logging.getLogger(__name__)
 __version__ = version("whirlwind-insar")
 
 from ._native import (
-    add_ramp,
     bridge_components,
     closure_correct,
     closure_refine_mcf,
     compute_residues,
-    deramp,
     diagonal_ramp,
-    fit_ramp,
     goldstein,
     interpolate,
     num_threads,
@@ -244,7 +241,6 @@ def unwrap(
     bridge: bool = True,
     connect_gaps: bool = False,
     connect_gaps_max_px: int = 300,
-    remove_ramp: bool = False,
     downsample: int = 1,
     interpolate: bool = False,
     interp_cutoff: float = 0.1,
@@ -327,13 +323,6 @@ def unwrap(
         Maximum width, in pixels, of a bounded invalid run to cross. This is
         only a geometric width limit; it does not identify why pixels are
         invalid.
-    remove_ramp : bool, default False
-        Fit and remove a linear phase ramp from the wrapped phase before the
-        solve, then restore it in the result. The plane is estimated from mean
-        wrapped phase gradients over valid adjacent pixels. Ramp removal is
-        congruence-preserving and runs before the other pre-passes; in
-        particular, it reduces the phase change that ``connect_gaps`` must
-        estimate.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
         interferogram is coherently averaged into ``downsample x downsample``
@@ -494,20 +483,7 @@ def unwrap(
     # Pre-passes modify the phase used to estimate the integer cycle field. That
     # field is transferred back onto `solve_base` below.
     working = igram
-    ramp_slopes: "tuple[float, float] | None" = None
-    if remove_ramp:
-        # Fit before gap connection so synthetic phase cannot affect the plane.
-        # The solve and bridge remain in the de-ramped domain until the ramp is
-        # restored below.
-        row_slope, col_slope = fit_ramp(igram, mask=mask)
-        ramp_slopes = (row_slope, col_slope)
-        working = np.array(
-            deramp(igram, row_slope, col_slope), dtype=np.complex64, copy=True
-        )
-        working[~mask] = 0
-
-    # Gap connection runs after ramp removal because flatter phase is easier to
-    # extrapolate. Its expanded mask and low coherence are solver inputs only;
+    # Gap connection's expanded mask and low coherence are solver inputs only;
     # connected-component labels are computed from the measurements below.
     synthetic: "NDArray[np.bool_] | None" = None
     if connect_gaps:
@@ -520,8 +496,8 @@ def unwrap(
                 np.float32
             )
 
-    # Wrapped phase the K-transfer rounds back onto: de-ramped and/or connected
-    # as above, else the original igram.
+    # Wrapped phase the K-transfer rounds back onto: gap-connected as above,
+    # else the original igram.
     solve_base = working
     ig_solve = working
     if interpolate:
@@ -579,8 +555,7 @@ def unwrap(
         unw = np.asarray(unw_solve, dtype=np.float32)
     else:
         # Round against the solver base rather than a filtered phase, which may
-        # have crossed the ±π discontinuity. The de-ramped phase is the base when
-        # ramp removal is enabled.
+        # have crossed the ±π discontinuity.
         tau = np.float32(2 * np.pi)
         phase_orig = np.angle(solve_base).astype(np.float32)
         k = np.round((np.asarray(unw_solve) - phase_orig) / tau).astype(np.float32)
@@ -592,14 +567,6 @@ def unwrap(
 
     if bridge:
         unw = bridge_components(unw, mask)
-
-    if ramp_slopes is not None:
-        # Restore the ramp after bridging in the de-ramped domain.
-        unw = add_ramp(
-            np.asarray(unw, dtype=np.float32), ramp_slopes[0], ramp_slopes[1]
-        )
-        if mask is not None:
-            unw[~mask] = 0.0
 
     # Connected components describe measured support, not the temporary phase
     # paths used by the solver. Otherwise removing a synthetic path can leave one
@@ -676,15 +643,12 @@ def unwrap(
 #   - the synthetic-scene generators (``diagonal_ramp``, ``simulate_ifg``) -
 #     test/benchmark utilities.
 __all__ = [
-    "add_ramp",
     "bridge_components",
     "compute_residues",
     "conncomp_reliability_from_coherence",
     "conncomp_min_coherence_auto",
     "connect_gaps",
     "cost_threshold_from_cycle_prob",
-    "deramp",
-    "fit_ramp",
     "goldstein",
     "interpolate",
     "label_components",
