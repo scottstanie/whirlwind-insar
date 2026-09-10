@@ -578,7 +578,11 @@ def unwrap(
             np.asarray(unw, dtype=np.float32), ramp_slopes[0], ramp_slopes[1]
         )
         if mask is not None:
-            unw[~mask] = 0.0
+            # Match the nodata convention main adopted in #101: masked pixels
+            # are NaN in the returned phase. `add_ramp` writes a finite plane
+            # value into them, so re-filling with 0.0 here would make the
+            # output convention depend on whether the pre-pass ran.
+            unw[~mask] = np.nan
 
     # Connected components. The default "snaphu" grow runs on the FINAL (bridged)
     # unwrapped phase via the convex-cost ambiguity wiggle; it is bridge-invariant
