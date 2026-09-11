@@ -816,6 +816,76 @@ fn goldstein<'py>(
     Ok(out.into_pyarray(py))
 }
 
+/// Fit the dominant linear phase ramp of a wrapped interferogram.
+///
+/// Returns ``(row_slope, col_slope)`` in radians per pixel, defining the plane
+/// ``φ(i, j) = row_slope·i + col_slope·j``. Estimated from the mean wrapped phase
+/// gradient (the circular mean of adjacent-pixel phase differences), which is
+/// single-pass, ``O(1)`` extra memory, sub-pixel accurate, and needs no FFT.
+///
+/// * ``igram`` - complex64 wrapped interferogram, shape ``(m, n)``. Nodata is
+///   ``0+0j``.
+/// * ``mask`` - optional bool valid mask; only pairs whose both endpoints are
+///   valid, finite, and nonzero contribute, so nodata and subswath gaps are
+///   skipped. Pass this to keep the gaps of a NISAR fixed-PRF frame out of the
+///   fit.
+#[pyfunction]
+#[pyo3(signature = (igram, mask = None))]
+fn fit_ramp<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+) -> (f32, f32) {
+    let ig = igram.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let s = py.detach(|| whirlwind_core::ramp::fit_ramp(ig, m));
+    (s.row_slope, s.col_slope)
+}
+
+/// De-ramp a wrapped interferogram: ``igram · exp(-i·(row_slope·i + col_slope·j))``.
+///
+/// Subtracts the plane (given by :func:`fit_ramp`) from the phase while
+/// preserving magnitude; nodata (``0+0j``) and non-finite pixels stay ``0+0j``.
+/// The plane angle is evaluated in f64 so it stays accurate over large frames.
+/// Returns a complex64 ``(m, n)`` array.
+#[pyfunction]
+fn deramp<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    row_slope: f32,
+    col_slope: f32,
+) -> Bound<'py, PyArray2<Complex32>> {
+    let ig = igram.as_array();
+    let slopes = whirlwind_core::ramp::RampSlopes {
+        row_slope,
+        col_slope,
+    };
+    let out = py.detach(|| whirlwind_core::ramp::deramp(ig, slopes));
+    out.into_pyarray(py)
+}
+
+/// Add a linear ramp ``row_slope·i + col_slope·j`` back onto an unwrapped-phase
+/// array - the unwrapped-domain inverse of :func:`deramp`.
+///
+/// After unwrapping the de-ramped phase, this restores the fitted ramp so the
+/// result is a valid unwrapping of the original interferogram. Non-finite pixels
+/// pass through unchanged. Returns a float32 ``(m, n)`` array.
+#[pyfunction]
+fn add_ramp<'py>(
+    py: Python<'py>,
+    phase: PyReadonlyArray2<'py, f32>,
+    row_slope: f32,
+    col_slope: f32,
+) -> Bound<'py, PyArray2<f32>> {
+    let ph = phase.as_array();
+    let slopes = whirlwind_core::ramp::RampSlopes {
+        row_slope,
+        col_slope,
+    };
+    let out = py.detach(|| whirlwind_core::ramp::add_ramp(ph, slopes));
+    out.into_pyarray(py)
+}
+
 /// Set the number of threads used by ww's internal parallel work.
 ///
 /// Initialises rayon's global thread pool. **Must be called before the
@@ -933,5 +1003,8 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(quality_map, m)?)?;
     m.add_function(wrap_pyfunction!(quality_triangles, m)?)?;
     m.add_function(wrap_pyfunction!(goldstein, m)?)?;
+    m.add_function(wrap_pyfunction!(fit_ramp, m)?)?;
+    m.add_function(wrap_pyfunction!(deramp, m)?)?;
+    m.add_function(wrap_pyfunction!(add_ramp, m)?)?;
     Ok(())
 }

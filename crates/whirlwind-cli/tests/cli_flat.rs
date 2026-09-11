@@ -471,6 +471,63 @@ fn unw_altline_output_and_flat_conncomp() {
     assert!(cc.iter().all(|&v| v == 1), "expected one full component");
 }
 
+/// `--remove-ramp` fits and subtracts a plane before the solve and adds it back
+/// after: the output must stay per-pixel congruent to the wrapped input and
+/// recover the true ramp (up to a global 2π gauge).
+#[test]
+fn remove_ramp_recovers_congruent_unwrap() {
+    let dir = tdir("remove-ramp");
+    let (ph, cor) = scene(); // wrapped 0.35*(r+c) ramp - several fringes
+    let ph_tif = dir.join("ph.tif");
+    let cor_tif = dir.join("cor.tif");
+    write_tiff(&ph_tif, &ph);
+    write_tiff(&cor_tif, &cor);
+    let out = dir.join("out_rr.tif");
+    run(&[
+        "--phase",
+        ph_tif.to_str().unwrap(),
+        "--cor",
+        cor_tif.to_str().unwrap(),
+        "--nlooks",
+        "10",
+        "--remove-ramp",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+
+    let mut dec =
+        tiff::decoder::Decoder::new(std::io::BufReader::new(File::open(&out).unwrap())).unwrap();
+    let px: Vec<f32> = match dec.read_image().unwrap() {
+        tiff::decoder::DecodingResult::F32(v) => v,
+        other => panic!("unexpected dtype: {other:?}"),
+    };
+
+    let wrap = |v: f32| -> f32 {
+        let w = v.rem_euclid(2.0 * PI);
+        if w > PI { w - 2.0 * PI } else { w }
+    };
+    // Congruent to the wrapped input everywhere.
+    for (k, (&u, &p)) in px.iter().zip(ph.iter()).enumerate() {
+        assert!(
+            wrap(u - p).abs() < 1e-3,
+            "pixel {k}: unw {u} not congruent to wrapped {p}"
+        );
+    }
+    // Recovers the true ramp up to a single global 2π offset.
+    let truth: Vec<f32> = (0..ROWS)
+        .flat_map(|r| (0..COLS).map(move |c| 0.35 * (r as f32 + c as f32)))
+        .collect();
+    let mean_diff: f32 = px.iter().zip(&truth).map(|(u, t)| u - t).sum::<f32>() / px.len() as f32;
+    let offset = 2.0 * PI * (mean_diff / (2.0 * PI)).round();
+    for (k, (&u, &t)) in px.iter().zip(&truth).enumerate() {
+        assert!(
+            (u - offset - t).abs() < 1e-2,
+            "pixel {k}: {} vs truth {t}",
+            u - offset
+        );
+    }
+}
+
 #[test]
 fn wrong_cols_is_a_clear_error() {
     let dir = tdir("wrong-cols");

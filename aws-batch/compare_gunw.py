@@ -931,6 +931,10 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
             reliability = args.conncomp_reliability
             if reliability is not None:
                 mc = None
+            # Only pass remove_ramp when asked: released whirlwind builds that
+            # predate the pre-pass do not accept the kwarg, and silently
+            # dropping it would make an A/B look like a null result.
+            ramp_kwargs = {"remove_ramp": True} if args.remove_ramp else {}
             ww_unw, ww_cc = ww.unwrap(
                 ig_complex,
                 coh_solver,
@@ -946,10 +950,23 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 goldstein_alpha=args.goldstein_alpha,
                 goldstein_psize=args.goldstein_psize,
                 phase_grad_window=tuple(args.phase_grad_window),
+                **ramp_kwargs,
             )
             runtime_s = time.perf_counter() - t0
         rss1 = get_rss_mb()
         rss_delta = None if (rss0 is None or rss1 is None) else rss1 - rss0
+
+        # Record the frame's fitted linear ramp whether or not it was removed:
+        # it is one cheap pass, and it says how many fringes a de-ramp would
+        # flatten -- i.e. whether --remove-ramp is even applicable here.
+        row_slope, col_slope = ww.fit_ramp(ig_complex, mask)
+        ramp_fit = {
+            "ramp_row_slope_rad_px": float(row_slope),
+            "ramp_col_slope_rad_px": float(col_slope),
+            "ramp_fringes_across_frame": float(
+                (abs(row_slope) * ig.shape[0] + abs(col_slope) * ig.shape[1]) / TWOPI
+            ),
+        }
 
         ww_unw = np.asarray(ww_unw, dtype=np.float32)
         ww_cc_arr = None if ww_cc is None else np.asarray(ww_cc)
@@ -983,6 +1000,8 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
                 "conncomp_reliability": args.conncomp_reliability,
                 "conncomp_thicken": args.conncomp_thicken,
                 "mask_policy": args.mask_policy,
+                "remove_ramp": args.remove_ramp,
+                **ramp_fit,
                 "engine": args.engine,
                 "snaphu_ntiles": args.snaphu_ntiles
                 if args.engine == "snaphu"
@@ -1201,6 +1220,13 @@ def parse_args() -> argparse.Namespace:
         dest="bridge",
         action="store_false",
         help="Disable the disconnected-mask component re-leveling post-pass.",
+    )
+    p.add_argument(
+        "--remove-ramp",
+        action="store_true",
+        help="Fit and remove a linear phase ramp before the solve, adding it "
+        "back afterward (whirlwind.unwrap(remove_ramp=True)). The fitted ramp "
+        "is reported either way.",
     )
     p.add_argument(
         "--downsample",
