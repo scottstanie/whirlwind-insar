@@ -145,9 +145,22 @@ Run all three samples at once:
 uv run aws-batch/compare_gunw.py --inputs-file aws-batch/sample_granules.txt --out-dir out
 ```
 
-> Memory note: a full NISAR frame uses several GB and is solved single-threaded
-> at peak. The tool runs products one at a time on purpose; don't fan out
-> multiple full-frame solves on one machine.
+Inputs are independent, so one that fails — a granule CMR can't resolve, a
+truncated download, a solver crash — is recorded in `<out-dir>/failures.json`
+and the rest of the manifest still runs. The exit status is nonzero only if
+nothing at all produced a row.
+
+`--num-parallel N` puts N products in flight at once, one worker process each,
+with `cores // N` solver threads apiece (set `WHIRLWIND_NUM_THREADS` yourself to
+override) and each worker's console output in `<out-dir>/logs/<product>.log`.
+`summary.csv` is written in manifest order whatever `--num-parallel` is, so the
+output doesn't depend on which frame finished first.
+
+> Memory note: a full NISAR frame uses several GB, so each added worker costs
+> that again — `--num-parallel` is bounded by RAM well before it is bounded by
+> cores. Per-frame `runtime_s` under it includes contention and is not a
+> single-frame benchmark; use `--num-parallel 1` for timings, or `run_local.py`,
+> which also samples true peak RSS per process tree and is resumable.
 
 ---
 

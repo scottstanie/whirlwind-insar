@@ -74,6 +74,16 @@ Bare granule names (resolved via earthaccess/CMR)::
 A manifest file (one URL / granule / path per line, ``#`` comments allowed)::
 
     python compare_gunw.py --inputs-file sample_granules.txt --out-dir out
+
+Several products at once (``--num-parallel`` worker processes, one product per
+worker, each given ``cores // num_parallel`` solver threads; each worker's
+console output goes to ``<out-dir>/logs/<product>.log``)::
+
+    python compare_gunw.py --inputs-file sample_granules.txt --num-parallel 3
+
+Inputs are independent: a product that fails (download error, unreadable file,
+solver crash) is recorded in ``<out-dir>/failures.json`` and the run continues
+with the rest.
 """
 
 from __future__ import annotations
@@ -686,6 +696,41 @@ def download_s3(uri: str, dest_dir: Path, profile: str | None = None) -> Path:
     return dest
 
 
+def cmr_atom_data_urls(name: str) -> list[str]:
+    """Look a granule's ``.h5`` download URLs up in CMR's atom (``.json``) API.
+
+    Fallback for granules that CMR indexes but cannot render as UMM-G: the
+    ``.umm_json`` endpoint ``earthaccess`` reads returns zero items even though
+    the response's ``cmr-hits`` header says 1, so such a granule is invisible to
+    ``earthaccess.search_data`` while the atom response still carries its links.
+    """
+    import requests
+
+    for short_name in (SHORT_NAME, SHORT_NAME_BETA):
+        r = requests.get(
+            "https://cmr.earthdata.nasa.gov/search/granules.json",
+            params={
+                "short_name": short_name,
+                "readable_granule_name[]": f"{name}*",
+                "options[readable_granule_name][pattern]": "true",
+                "page_size": 10,
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        for entry in r.json()["feed"]["entry"]:
+            urls = [
+                link["href"]
+                for link in entry.get("links", [])
+                if link.get("rel", "").endswith("/data#")
+                and link["href"].startswith("https://")
+                and link["href"].endswith(".h5")
+            ]
+            if urls:
+                return urls
+    return []
+
+
 def download_granule(name: str, dest_dir: Path) -> list[Path]:
     """Resolve a bare granule name to local file(s) via earthaccess/CMR.
 
@@ -707,10 +752,18 @@ def download_granule(name: str, dest_dir: Path) -> list[Path]:
             print(f"  resolved {name} in {short_name}", flush=True)
             break
     if not results:
-        raise RuntimeError(
-            f"No earthaccess results for granule_name={name!r} in any of "
-            f"{(SHORT_NAME, SHORT_NAME_BETA)}"
-        )
+        urls = cmr_atom_data_urls(name)
+        if not urls:
+            raise RuntimeError(
+                f"No earthaccess results for granule_name={name!r} in any of "
+                f"{(SHORT_NAME, SHORT_NAME_BETA)}"
+            )
+        print(f"  {name}: not in UMM-G; using CMR atom links", flush=True)
+        paths = [download_https(u, dest_dir) for u in urls]
+        h5s = [p for p in paths if is_main_gunw_h5(p)]
+        if not h5s:
+            raise RuntimeError(f"Downloaded {name!r} but found no main GUNW .h5")
+        return h5s
     paths = [Path(p) for p in earthaccess.download(results, local_path=str(dest_dir))]
     h5s = [p for p in paths if is_main_gunw_h5(p)]
     if not h5s:
@@ -1055,6 +1108,120 @@ def compare_one(path: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
     return rows
 
 
+def token_slug(tok: str) -> str:
+    """Filesystem-safe short name for an input token (used for log filenames)."""
+    stem = Path(urlparse(tok).path if "://" in tok else tok).name or tok
+    return "".join(c if (c.isalnum() or c in "._-") else "_" for c in stem)[:180]
+
+
+def run_one_input(
+    tok: str, args: argparse.Namespace, log_path: Path | None = None
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Resolve one input token and compare every GUNW product it yields.
+
+    Returns ``(rows, error)``. This never raises: inputs are independent, so one
+    bad product (missing granule, unreadable file, solver crash) is reported as
+    an error string and the rest of the campaign still runs. ``log_path``, if
+    given, receives this input's stdout/stderr -- with several workers running
+    at once, interleaved console output is unreadable.
+    """
+    import contextlib
+    import traceback
+
+    with contextlib.ExitStack() as stack:
+        if log_path is not None:
+            fh = stack.enter_context(open(log_path, "w", buffering=1))
+            stack.enter_context(contextlib.redirect_stdout(fh))
+            stack.enter_context(contextlib.redirect_stderr(fh))
+        try:
+            rows: list[dict[str, Any]] = []
+            for h5 in resolve_inputs([tok], args.data_dir, args.s3_profile):
+                rows.extend(compare_one(h5, args))
+            return rows, None
+        except (Exception, SystemExit) as exc:
+            traceback.print_exc()
+            return [], f"{type(exc).__name__}: {exc}"
+
+
+def run_all_inputs(
+    tokens: list[str], args: argparse.Namespace
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Run every input, sequentially or across ``--num-parallel`` processes."""
+    all_rows: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    num_parallel = max(1, args.num_parallel)
+
+    if num_parallel == 1:
+        for tok in tokens:
+            rows, err = run_one_input(tok, args)
+            all_rows.extend(rows)
+            if err:
+                print(f"FAILED {tok}: {err}", flush=True)
+                failures.append({"input": tok, "error": err})
+        return all_rows, failures
+
+    # Processes, not threads: the unwrap is CPU-bound and matplotlib's pyplot
+    # state is global, so a worker per product is both faster and safer.
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    log_dir = args.out_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logs = [log_dir / f"{token_slug(tok)}.log" for tok in tokens]
+    # One log per input, so two inputs must not share a slug (the same granule
+    # named twice, or two directories holding the same basename).
+    assert len(set(logs)) == len(logs), "inputs collide on a log filename"
+
+    # Each worker's solver would otherwise build a rayon pool over every core,
+    # so N workers oversubscribe the machine N-fold. Spawned children inherit
+    # this environment. An explicit setting from the caller wins.
+    if "WHIRLWIND_NUM_THREADS" not in os.environ:
+        os.environ["WHIRLWIND_NUM_THREADS"] = str(
+            max(1, (os.cpu_count() or 1) // num_parallel)
+        )
+    threads = os.environ["WHIRLWIND_NUM_THREADS"]
+
+    print(
+        f"Running {len(tokens)} input(s), {num_parallel} at a time, "
+        f"{threads} solver thread(s) each.",
+        flush=True,
+    )
+    ctx = multiprocessing.get_context("spawn")
+    done_rows: dict[int, list[dict[str, Any]]] = {}
+    done_errs: dict[int, str] = {}
+    with ProcessPoolExecutor(max_workers=num_parallel, mp_context=ctx) as pool:
+        futures = {
+            pool.submit(run_one_input, tok, args, logs[i]): i
+            for i, tok in enumerate(tokens)
+        }
+        for done, fut in enumerate(as_completed(futures), start=1):
+            i = futures[fut]
+            try:
+                rows, err = fut.result()
+            except Exception as exc:
+                # The worker process itself died (e.g. the OS killed it for
+                # memory); no return value made it back.
+                rows, err = [], f"worker died: {type(exc).__name__}: {exc}"
+            done_rows[i] = rows
+            if err:
+                done_errs[i] = err
+            status = "FAILED" if err else f"ok ({len(rows)} row(s))"
+            print(
+                f"[{done}/{len(tokens)}] {status}: {token_slug(tokens[i])}"
+                + (f"\n    {err}" if err else "")
+                + f"\n    log: {logs[i]}",
+                flush=True,
+            )
+
+    # Completion order is arbitrary; report in input order so that summary.csv
+    # does not depend on --num-parallel or on how fast each frame happened to be.
+    for i, tok in enumerate(tokens):
+        all_rows.extend(done_rows[i])
+        if i in done_errs:
+            failures.append({"input": tok, "error": done_errs[i], "log": str(logs[i])})
+    return all_rows, failures
+
+
 def write_summary(rows: list[dict[str, Any]], out_dir: Path) -> None:
     import pandas as pd
 
@@ -1104,6 +1271,17 @@ def parse_args() -> argparse.Namespace:
         help="Text file with one input per line (# comments allowed).",
     )
     p.add_argument("--out-dir", type=Path, default=Path("ww_gunw_out"))
+    p.add_argument(
+        "--num-parallel",
+        type=int,
+        default=1,
+        help="How many inputs to process at once, in separate worker processes. "
+        "Each worker holds a full frame in memory, so raise this only if you "
+        "have the RAM: a full-size GUNW unwrap can peak in the several-GB "
+        "range. Solver threads are split cores//num-parallel unless "
+        "WHIRLWIND_NUM_THREADS is already set, so per-frame runtimes under "
+        "this flag are not single-frame benchmarks.",
+    )
     p.add_argument(
         "--data-dir",
         type=Path,
@@ -1283,7 +1461,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
     tokens = list(args.inputs)
     if args.inputs_file:
@@ -1296,18 +1474,23 @@ def main() -> None:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     _ensure_netrc()
-    h5s = resolve_inputs(tokens, args.data_dir, args.s3_profile)
-    print(f"Resolved {len(h5s)} GUNW product(s).", flush=True)
 
-    all_rows: list[dict[str, Any]] = []
-    # Sequential on purpose: one large unwrap at a time keeps peak memory bounded.
-    for h5 in h5s:
-        all_rows.extend(compare_one(h5, args))
+    all_rows, failures = run_all_inputs(tokens, args)
 
     if all_rows:
         write_summary(all_rows, args.out_dir)
+    if failures:
+        failures_json = args.out_dir / "failures.json"
+        failures_json.write_text(json.dumps(failures, indent=2))
+        print(f"\n{len(failures)} of {len(tokens)} input(s) failed:", flush=True)
+        for f in failures:
+            print(f"  {f['input']}\n    {f['error']}", flush=True)
+        print(f"Wrote {failures_json}", flush=True)
     if args.upload_s3:
         upload_dir_s3(args.out_dir, args.upload_s3, profile=args.s3_profile)
+    # Nonzero only if nothing at all worked, so a partly-successful campaign
+    # still counts as a completed batch job.
+    return 1 if failures and not all_rows else 0
 
 
 if __name__ == "__main__":

@@ -35,6 +35,24 @@ import numpy as np
 
 UNW_BASE = "/science/LSAR/GUNW/grids/frequencyA/unwrappedInterferogram"
 WRAP_BASE = "/science/LSAR/GUNW/grids/frequencyA/wrappedInterferogram"
+PARAMS = "/science/LSAR/GUNW/metadata/processingInformation/parameters"
+
+# Verbatim from NISAR_L2_PR_GUNW_023_098_D_062_024_4000_SH_..._P05023_N_F_J_001.
+# `compare_gunw.nominal_enl_from_product` reads exactly these six values to size
+# the solver's coherence look count, so a synthetic product without them is
+# unreadable by the harness. These give 7 x 16 / (1.200 * 1.203) = 77.6 looks.
+ENL_PARAMS = {
+    "unwrappedInterferogram": {
+        "numberOfRangeLooks": 7,
+        "numberOfAzimuthLooks": 16,
+        "rangeBandwidth": 20_000_000.0,
+        "azimuthBandwidth": 1263.1013726604206,
+    },
+    "reference": {
+        "slantRangeSpacing": 6.245676208333333,
+        "zeroDopplerTimeSpacing": 0.0006578947368421052,
+    },
+}
 
 
 def synth_scene(n: int, seed: int) -> dict[str, np.ndarray]:
@@ -52,9 +70,12 @@ def synth_scene(n: int, seed: int) -> dict[str, np.ndarray]:
     coh[band, :] = 0.15
     unw[band, :] += rng.normal(0, 1.5, size=unw[band, :].shape)
 
-    mask = np.full((n, n), 0, dtype=np.uint8)  # 0 = land, both subswaths valid
+    # GUNW mask low byte is decimal [water][ref_subswath][sec_subswath], and a
+    # zero in either subswath digit means "invalid sample in that RSLC" -- so
+    # land in subswath 1 of both acquisitions is 11, not 0.
+    mask = np.full((n, n), 11, dtype=np.uint8)
     water = slice(int(0.80 * n), int(0.88 * n))
-    mask[water, :] = 100  # water digit set
+    mask[water, :] = 100  # water, no valid subswath sample
     unw[water, :] = np.nan
     coh[water, :] = 0.0
 
@@ -88,6 +109,10 @@ def write_product(path: Path, scene: dict[str, np.ndarray], pol: str) -> None:
         h5.create_group(f"{WRAP_BASE}/{pol}").create_dataset(
             "wrappedInterferogram", data=scene["wrapped"]
         )
+        for group, values in ENL_PARAMS.items():
+            meta = h5.create_group(f"{PARAMS}/{group}/frequencyA")
+            for name, value in values.items():
+                meta.create_dataset(name, data=value)
 
 
 def main() -> None:
