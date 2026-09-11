@@ -51,6 +51,18 @@ def _unwrap_native(
     the absolute, scene-size-invariant speckle floor.
     """
 
+def _components_linear(
+    igram: NDArray[np.complex64],
+    corr: NDArray[np.float32],
+    nlooks: float,
+    mask: NDArray[np.bool_] | None = ...,
+    cost_threshold: int = ...,
+    min_size_px: int = ...,
+    max_ncomps: int = ...,
+    phase_grad_window: tuple[int, int] = ...,
+) -> NDArray[np.uint32]:
+    """Compute legacy linear connected components without unwrapping."""
+
 def unwrap_reuse(
     igram: NDArray[np.complex64],
     corr: NDArray[np.float32],

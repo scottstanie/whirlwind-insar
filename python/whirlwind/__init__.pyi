@@ -26,6 +26,17 @@ from ._native import (
     wrap_phase as wrap_phase,
 )
 
+def connect_gaps(
+    igram: NDArray[np.complex64],
+    mask: NDArray[np.bool_],
+    max_gap: int = ...,
+    edge: int = ...,
+) -> tuple[NDArray[np.complex64], NDArray[np.bool_]]:
+    """Synthesise phase across interior nodata gaps to join separated regions.
+
+    Returns ``(connected_igram, added)``; see the full docstring in
+    ``whirlwind/_connect_gaps.py``."""
+
 def cost_threshold_from_cycle_prob(cycle_prob: float) -> int: ...
 def conncomp_min_coherence_auto(nlooks: float) -> float:
     """Looks-aware default conncomp coherence floor (0.32/sqrt(nlooks), clipped
@@ -44,6 +55,8 @@ def unwrap(
     mask: NDArray[np.bool_] | None = ...,
     *,
     bridge: bool = ...,
+    connect_gaps: bool = ...,
+    connect_gaps_max_px: int = ...,
     downsample: int = ...,
     interpolate: bool = ...,
     interp_cutoff: float = ...,

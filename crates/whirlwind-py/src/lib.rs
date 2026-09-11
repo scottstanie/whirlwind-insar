@@ -585,6 +585,39 @@ fn components_snaphu<'py>(
     Ok(comps.into_pyarray(py))
 }
 
+/// Legacy linear connected components without running the phase solver.
+#[pyfunction]
+#[pyo3(name = "_components_linear", signature = (
+    igram, corr, nlooks, mask = None,
+    cost_threshold = 50, min_size_px = 100, max_ncomps = 1024,
+    phase_grad_window = (7, 7),
+))]
+fn components_linear<'py>(
+    py: Python<'py>,
+    igram: PyReadonlyArray2<'py, Complex32>,
+    corr: PyReadonlyArray2<'py, f32>,
+    nlooks: f32,
+    mask: Option<PyReadonlyArray2<'py, bool>>,
+    cost_threshold: i32,
+    min_size_px: usize,
+    max_ncomps: u32,
+    phase_grad_window: (usize, usize),
+) -> PyResult<Bound<'py, PyArray2<u32>>> {
+    let ig = igram.as_array();
+    let co = corr.as_array();
+    let m = mask.as_ref().map(|m| m.as_array());
+    let window = parse_phase_grad_window(phase_grad_window)?;
+    let params = whirlwind_core::ConnCompParams {
+        cost_threshold,
+        min_size_px,
+        min_size_frac: 0.0001,
+        max_ncomps,
+    };
+    let out = py.detach(|| whirlwind_core::components_only(ig, co, nlooks, m, params, window));
+    let comps = out.map_err(|e| PyValueError::new_err(format!("{e}")))?;
+    Ok(comps.into_pyarray(py))
+}
+
 /// Per-pixel quality from temporal triangles (3-cycles).
 ///
 /// Same idea as `quality_map` but uses only triangles instead of the
@@ -918,6 +951,7 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unwrap_linear, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_linear_ext_costs, m)?)?;
     m.add_function(wrap_pyfunction!(components_snaphu, m)?)?;
+    m.add_function(wrap_pyfunction!(components_linear, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_native, m)?)?;
     m.add_function(wrap_pyfunction!(unwrap_sparse, m)?)?;
     m.add_function(wrap_pyfunction!(compute_residues, m)?)?;

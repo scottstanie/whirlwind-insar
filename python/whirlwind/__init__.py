@@ -33,15 +33,24 @@ from ._native import (
     wrap_phase,
 )
 from ._native import (
+    _components_linear,
     _unwrap_native,
     components_snaphu,
     label_components,
 )
+from ._connect_gaps import connect_gaps
 
 # `interpolate` is re-exported above as the public native binding. Alias it so
 # the `interpolate=` keyword argument inside unwrap() (which shadows the name in
 # that scope) can still reach the function.
 _interpolate = interpolate
+# Same shadowing problem for the `connect_gaps=` keyword argument below.
+_connect_gaps = connect_gaps
+
+# Fixed coherence assigned to phase synthesised by `connect_gaps`. This gives
+# the solver a low-confidence path through the gap without exposing an input
+# parameter that callers cannot estimate from the missing measurements.
+_SYNTHETIC_COHERENCE = 0.1
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -230,6 +239,8 @@ def unwrap(
     mask: "NDArray[np.bool_] | None" = None,
     *,
     bridge: bool = True,
+    connect_gaps: bool = False,
+    connect_gaps_max_px: int = 300,
     downsample: int = 1,
     interpolate: bool = False,
     interp_cutoff: float = 0.1,
@@ -264,7 +275,7 @@ def unwrap(
     output (reproducing SNAPHU's ``GrowConnCompsMask``).
     ``conncomp_algorithm="linear"`` uses a global coherence-cost growing algorithm.
 
-    A fast default post-pass (``bridge``) attmempts to minimize 2π offsets
+    A fast default post-pass (``bridge``) attempts to minimize 2π offsets
     between regions that the valid mask splits apart, such as land slabs separated by a
     low-coherence river.
 
@@ -299,6 +310,19 @@ def unwrap(
         boundaries and snaps it to an integer number of cycles. Regions are
         processed from largest to smallest and anchored to the nearest region
         already processed, so a tiny island cannot set a large landmass's level.
+    connect_gaps : bool, default False
+        Add low-confidence phase paths across bounded nodata runs before
+        unwrapping, then remove those synthetic pixels from both outputs. The
+        paths let the solver estimate relative 2π levels between regions that
+        would otherwise be independent. Unlike ``interpolate``, this estimates
+        spatial phase slope on both sides of a gap to retain a winding estimate;
+        circular averaging of wrapped phasors contains no winding information.
+        Rows and columns are both scanned. This is a geometric operation, so it
+        may also cross non-subswath holes selected by ``mask``.
+    connect_gaps_max_px : int, default 300
+        Maximum width, in pixels, of a bounded invalid run to cross. This is
+        only a geometric width limit; it does not identify why pixels are
+        invalid.
     downsample : int, default 1
         Coarse-solve factor for noisy scenes. When greater than 1, the complex
         interferogram is coherently averaged into ``downsample x downsample``
@@ -446,6 +470,8 @@ def unwrap(
     if mask is None:
         mask = (igram != 0) & (corr > 0)
     mask = np.ascontiguousarray(mask, dtype=bool)
+    measurement_mask = mask
+    measurement_corr = corr
 
     if conncomp_sigma is not None:
         import math
@@ -454,11 +480,26 @@ def unwrap(
     if conncomp_cycle_prob is not None:
         cost_threshold = cost_threshold_from_cycle_prob(conncomp_cycle_prob)
 
-    # Build the phase fed to the MCF. Interpolation and Goldstein filtering both
-    # only INFORM the solver; the integer 2π·k field they produce is transferred
-    # back onto the ORIGINAL wrapped phase below, so every per-pixel value the
-    # caller passed in is preserved.
-    ig_solve = igram
+    # Pre-passes modify the phase used to estimate the integer cycle field. That
+    # field is transferred back onto `solve_base` below.
+    working = igram
+    # Gap connection's expanded mask and low coherence are solver inputs only;
+    # connected-component labels are computed from the measurements below.
+    synthetic: "NDArray[np.bool_] | None" = None
+    if connect_gaps:
+        joined, added = _connect_gaps(working, mask, max_gap=connect_gaps_max_px)
+        if added.any():
+            synthetic = added
+            working = joined
+            mask = mask | synthetic
+            corr = np.where(synthetic, np.float32(_SYNTHETIC_COHERENCE), corr).astype(
+                np.float32
+            )
+
+    # Wrapped phase the K-transfer rounds back onto: gap-connected as above,
+    # else the original igram.
+    solve_base = working
+    ig_solve = working
     if interpolate:
         # Spiral PS interpolator: fill each valid pixel whose coherence is below
         # interp_cutoff from a Gaussian distance-weighted average of nearby
@@ -478,22 +519,24 @@ def unwrap(
         )
     if goldstein_alpha > 0:
         ig_solve = goldstein(ig_solve, alpha=goldstein_alpha, psize=goldstein_psize)
-    if ig_solve is not igram:
-        # Pre-pass produced a fresh array; zero masked pixels so the solver sees
-        # the same nodata convention as the original phase.
+    if ig_solve is not working:
+        # A pre-pass produced a fresh array; zero masked pixels so the solver
+        # sees the same nodata convention as the original phase.
         ig_solve = np.array(ig_solve, dtype=np.complex64, copy=True)
         if mask is not None:
             ig_solve[~mask] = 0
+        if synthetic is not None:
+            # Preserve the gap path through later filtering and interpolation.
+            ig_solve[synthetic] = solve_base[synthetic]
 
     if conncomp_algorithm not in ("snaphu", "linear"):
         raise ValueError(
             f"conncomp_algorithm must be 'snaphu' or 'linear', got {conncomp_algorithm!r}"
         )
 
-    # `_unwrap_native` returns the phase plus the legacy linear-cost conncomp.
-    # The linear grow is cheap (a few % of the solve), so we always take it; it
-    # is the returned conncomp under ``conncomp_algorithm="linear"`` and is
-    # discarded under the default "snaphu" path (replaced below).
+    # `_unwrap_native` also returns linear-cost components for the solver mask.
+    # Those can be reused unless gap connection expanded the mask; in that case
+    # the measurement-only components are recomputed below.
     unw_solve, cc_linear = _unwrap_native(
         ig_solve,
         corr,
@@ -508,17 +551,13 @@ def unwrap(
         phase_grad_window=pgw,
     )
 
-    if ig_solve is igram:
+    if ig_solve is solve_base:
         unw = np.asarray(unw_solve, dtype=np.float32)
     else:
-        # Transfer the integer 2π·k field from the interpolated/filtered unwrap
-        # onto the *original* wrapped phase, rounding against the original (not
-        # the modified) phase to avoid the dolphin-#364 artefact: any pixel where
-        # the pre-pass moved phase across the ±π discontinuity would otherwise
-        # pick up a spurious ±2π cycle, producing visible outlines along fringe
-        # boundaries.
+        # Round against the solver base rather than a filtered phase, which may
+        # have crossed the ±π discontinuity.
         tau = np.float32(2 * np.pi)
-        phase_orig = np.angle(igram).astype(np.float32)
+        phase_orig = np.angle(solve_base).astype(np.float32)
         k = np.round((np.asarray(unw_solve) - phase_orig) / tau).astype(np.float32)
         unw = (phase_orig + tau * k).astype(np.float32)
         # Masked pixels get the same nodata fill as the no-pre-pass branch
@@ -529,10 +568,9 @@ def unwrap(
     if bridge:
         unw = bridge_components(unw, mask)
 
-    # Connected components. The default "snaphu" grow runs on the FINAL (bridged)
-    # unwrapped phase via the convex-cost ambiguity wiggle; it is bridge-invariant
-    # but using the final phase keeps it unambiguous. "linear" returns the legacy
-    # coherence-cost grow already computed above.
+    # Connected components describe measured support, not the temporary phase
+    # paths used by the solver. Otherwise removing a synthetic path can leave one
+    # label assigned to several disconnected islands.
     if conncomp_algorithm == "snaphu":
         # A target minimum coherence (the default, and the intuitive knob) takes
         # precedence over a raw 1/sigma2 reliability: components keep edges above
@@ -551,10 +589,10 @@ def unwrap(
         reliability_raw = round(conncomp_reliability * CONNCOMP_RELIABILITY_UNIT)
         cc = components_snaphu(
             igram,
-            corr,
+            measurement_corr,
             nlooks,
             unw,
-            mask,
+            measurement_mask,
             reliability_raw,
             min_size_px,
             max_ncomps,
@@ -562,7 +600,29 @@ def unwrap(
             conncomp_thicken,
         )
     else:
-        cc = cc_linear
+        if synthetic is None:
+            cc = cc_linear
+        else:
+            cc = _components_linear(
+                igram,
+                measurement_corr,
+                nlooks,
+                mask=measurement_mask,
+                cost_threshold=cost_threshold,
+                min_size_px=min_size_px,
+                max_ncomps=max_ncomps,
+                phase_grad_window=pgw,
+            )
+
+    if synthetic is not None:
+        # Synthesised pixels were only ever scaffolding to connect the regions.
+        # Drop them from both outputs so the caller never sees a phase or a
+        # component label at a pixel that had no measurement.
+        unw = np.array(unw, dtype=np.float32, copy=True)
+        unw[synthetic] = 0.0
+        if cc is not None:
+            cc = np.array(cc, copy=True)
+            cc[synthetic] = 0
     return unw, cc
 
 
@@ -587,6 +647,7 @@ __all__ = [
     "compute_residues",
     "conncomp_reliability_from_coherence",
     "conncomp_min_coherence_auto",
+    "connect_gaps",
     "cost_threshold_from_cycle_prob",
     "goldstein",
     "interpolate",
