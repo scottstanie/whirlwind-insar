@@ -18,7 +18,6 @@ ASF download URL, or an `s3://` URI and it fetches the product first.
   list from the ASF catalog), `run_local.py` (parallel runner with peak-memory
   tracking and resume), `aggregate_results.py` (campaign roll-up + plots),
   `make_synthetic_gunw.py` (offline smoke test).
-- `isce3_integration/` — wiring whirlwind into the isce3 GUNW workflow.
 - `ARCH_COMPARISON.md` — x86_64 vs ARM64: results are identical, ARM64 is cheaper.
 
 ---
@@ -93,27 +92,11 @@ of the full NISAR wrapped-product geocoding.
 The "conncomp coverage (ww−prod)" panel shows which unwrapper labeled each pixel:
 red = whirlwind only, blue = production only, gray = both.
 
-whirlwind labels every pixel it unwrapped self-consistently, a larger set than
-production SNAPHU labels (production also drops pixels by tile cost and region-size
-rules). On the cryo A_140 frame (median coherence 0.15) whirlwind labels ~99% of
-valid pixels vs production's ~70%, so those regions show red. The 2π solution still
-agrees with production at 99.8%.
-
-`--conncomp-min-coherence` sets the coherence below which conncomp labels a pixel
-0. The default `auto` is `0.32/sqrt(nlooks)` (0.045 at 50 looks); raise it to drop
-more low-coherence pixels, at the cost of more components. On A_140:
-
-| `--conncomp-min-coherence` | labeled fraction |
-| -------------------------- | ---------------- |
-| 0.08                       | 0.99             |
-| 0.10                       | 0.82             |
-| 0.12                       | 0.67             |
-| 0.15                       | 0.35             |
-
-Raising this floor is the most promising open knob for closing the remaining
-label gap against production. It is **not** changed from `auto` by default —
-see [`CONNCOMP_FLOOR_EXPERIMENT.md`](CONNCOMP_FLOOR_EXPERIMENT.md) for why, and
-for the experiment to run at campaign scale before touching the default.
+Labels use whirlwind's default reliability margin (`--conncomp-reliability 0.5`),
+which drops decorrelated water and near-noise but keeps real low-coherence land.
+Raise it to label fewer pixels, or set it to `0` to label every unwrapped pixel.
+Label settings never change the phase, so the 2π agreement numbers are unaffected.
+See [Connected components](../docs/CONNCOMP_TUNING.md) for what the margin means.
 
 ---
 
@@ -331,9 +314,20 @@ directly on the exact same data without HDF5.
 
 ---
 
-## isce3 GUNW workflow integration
+## isce3 GUNW workflow
 
-To run whirlwind *inside* the isce3 RUNW step (instead of SNAPHU/ICU/PHASS), see
-[`isce3_integration/README.md`](isce3_integration/README.md). It adds an
-`algorithm: whirlwind` branch to `nisar/workflows/unwrap.py` plus the runconfig
-and defaults plumbing.
+whirlwind is available in isce3 (`develop`) as a phase-unwrapping algorithm for
+the NISAR InSAR workflow. Select it in the runconfig:
+
+```yaml
+runconfig:
+  groups:
+    processing:
+      phase_unwrap:
+        algorithm: whirlwind
+```
+
+The options and their defaults are documented in isce3's
+`share/nisar/defaults/insar.yaml` under `phase_unwrap.whirlwind`. If `nlooks` is
+left blank, isce3 estimates the effective looks from the sample spacing and
+resolution. When whirlwind's `bridge` is on, isce3 skips its own bridge post-pass.

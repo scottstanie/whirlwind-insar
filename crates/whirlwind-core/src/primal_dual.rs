@@ -361,8 +361,8 @@ fn run_impl_full_fused<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usi
             }
         }
 
-        // SSP tail on the same fused state (single-source Dial; see ATBD
-        // §9.6). Augment scratch is dead from here - free it first.
+        // SSP tail on the same fused state (single-source Dial; see
+        // `ssp::run_single_source`). Augment scratch is dead from here - free it first.
         drop(visited_epoch);
         drop(source_used);
         drop(path_info);
@@ -570,7 +570,7 @@ fn run_impl<G: ResidualGraph>(g: &G, net: &mut Network, max_iter: usize) {
     }
 
     // Fall through to SSP for any remaining excess. Pick the variant that is
-    // fast for this path's graph shape (ATBD §9.6): the full-completion path is
+    // fast for this path's graph shape: the full-completion path is
     // the single-tile whole-image solve, where the multi-source SSP is
     // catastrophic (a near-graph-wide Dijkstra per unit) - use single-source
     // there. The early-exit path is tiled / small-graph, where multi-source is

@@ -505,7 +505,7 @@ fn solve_row(
 // This is a heuristic (max |K| over fundamental cycles), not a true
 // Bayesian posterior. A more principled per-pixel posterior would solve
 // a weighted integer LS (LAMBDA / closest-vector-in-lattice) over the
-// full integer-correction vector; deferred - see ATBD-3d §10.5.
+// full integer-correction vector; deferred.
 
 /// Per-pixel max |K| over fundamental cycles. Returns shape (m, n).
 pub fn quality_max_integer_cycles(

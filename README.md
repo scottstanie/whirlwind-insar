@@ -2,9 +2,10 @@
 
 Fast Rust-backed 2D InSAR phase unwrapping with Python bindings.
 
-Whirlwind unwraps a complex interferogram and returns both unwrapped phase and connected-component labels. The [NISAR comparison](docs/NISAR_SUMMARY.md) shows agreement with production SNAPHU on 2pi ambiguities, with lower runtime in the tested scenes.
+Whirlwind unwraps a complex interferogram and returns unwrapped phase and connected-component labels. It runs one to two orders of magnitude faster than single-tile SNAPHU, with less than half the peak memory.
+For the algorithm and the full comparisons, see [our paper](https://arxiv.org/abs/2609.36267); to cite it, see [Reference](#reference).
 
-> The package is `whirlwind-insar` on PyPI and GitHub; it imports as `whirlwind`.
+The package is `whirlwind-insar` on PyPI and GitHub; it imports as `whirlwind`.
 
 ## Quickstart
 
@@ -71,8 +72,14 @@ whirlwind \
     --nlooks 10 \
     --out unwrapped_phase.tif
 ```
+where
+- `--phase` is the wrapped phase in radians: a float32 TIFF, or a flat binary float32 file (see below). If you start from a complex-valued GeoTIFF, extract GDAL's PHASE derived subdataset first and pass that as `--phase`;
+  - Alternative: `--ifg` is for flat complex64 rasters. The phase path reconstructs a unit-magnitude interferogram, so it does not preserve amplitude.
+- `--cor coherent.tif` is the float32 interferometric sample coherence raster
+- `--mask` is optional; nonzero means valid. When `--mask` is omitted the CLI uses `coherence > 0` (and `igram != 0` with `--ifg`) as the default valid mask, matching the Python API.
+- `--nlooks` is the number of independent looks used to estimate the sample coherence raster
 
-`--phase` is the wrapped phase in radians: a float32 TIFF, or a flat binary float32 file (see below). If you start from a complex-valued GeoTIFF, extract GDAL's PHASE derived subdataset first and pass that as `--phase`; `--ifg` is for flat complex64 rasters. The phase path reconstructs a unit-magnitude interferogram, so it does not preserve amplitude. `--mask` is optional; nonzero means valid. When `--mask` is omitted the CLI uses `coherence > 0` (and `igram != 0` with `--ifg`) as the default valid mask, matching the Python API.  The CLI writes a SNAPHU-faithful connected-component label map by default next to `--out` (`foo.conncomp.tif` for TIFF, `foo.unw.conncomp` for flat `.unw`); use `--conncomp PATH` to choose the path or `--no-conncomp` to skip it.
+The CLI writes a SNAPHU-like connected-component label map by default next to `--out` (`foo.conncomp.tif` for TIFF, `foo.unw.conncomp` for flat `.unw`); use `--conncomp PATH` to choose the path or `--no-conncomp` to skip it.
 
 ### Flat-binary formats (snaphu / ROI_PAC / isce2 / GAMMA)
 
@@ -101,6 +108,7 @@ whirlwind --ifg pair.diff --ifg-meta pair.off \
 - Output is chosen by extension (override with `--out-format`): `.tif` → TIFF; `.unw` → two-band amp+phase rmg (snaphu's default output layout); anything else → flat float32 phase. Conncomp follows the output style by default: u16 TIFF for TIFF outputs, or one-byte-per-pixel flat for flat outputs (the snaphu/isce2 convention). Flat outputs keep the input's byte order.
 - `--mask` also accepts snaphu-style flat byte masks (nonzero = valid, zero = masked).
 
+### Docker
 
 ```bash
 docker pull ghcr.io/scottstanie/whirlwind-insar:main   # prebuilt, or:
@@ -138,20 +146,31 @@ cargo test --workspace
 
 ## More
 
-- [NISAR comparison](docs/NISAR_SUMMARY.md)
-- [Why SNAPHU/PHASS differ](docs/SNAPHU_PHASS_SPEED.md)
-- [Memory and scaling notes](docs/MEMORY_AND_SCALING.md)
-- [Algorithm notes](docs/ALGORITHM.md)
+- [Algorithm](docs/ALGORITHM.md)
+- [Options and recipes](docs/RECIPES.md)
+- [Connected components](docs/CONNCOMP_TUNING.md)
+- [Bridging disconnected regions](docs/BRIDGING.md)
+- [Performance](docs/PERFORMANCE.md)
 - [Environment variables](docs/ENV_VARS.md)
 
-## Repository Layout
+## Reference
 
-- `python/whirlwind`: Python API.
-- `crates/whirlwind-core`: Rust algorithms.
-- `crates/whirlwind-py`: PyO3 bindings.
-- `crates/whirlwind-cli`: CLI binary.
-- `docs`: reference docs.
-- `scripts`: benchmarks and development utilities.
+If you use Whirlwind in your work, please cite the paper (submitted to IEEE TGRS; preprint on arXiv):
+
+> Staniewicz, S., Gunter, G., Mirzaee, S., Govorcin, M., Oliver-Cabrera, T., & Fattahi, H. (2026). A Probabilistic-Cost Algorithm for Large-Scale 2D Phase Unwrapping. arXiv:2609.36267. https://arxiv.org/abs/2609.36267
+
+```bibtex
+@article{Staniewicz2026Whirlwind,
+  title   = {A Probabilistic-Cost Algorithm for Large-Scale 2D Phase Unwrapping},
+  author  = {Staniewicz, Scott and Gunter, Geoffrey and Mirzaee, Sara and Govorcin, Marin and Oliver-Cabrera, Talib and Fattahi, Heresh},
+  journal = {arXiv preprint arXiv:2609.36267},
+  year    = {2026},
+  doi     = {10.48550/arXiv.2609.36267},
+  url     = {https://arxiv.org/abs/2609.36267}
+}
+```
+
+The same citation is in [`CITATION.cff`](CITATION.cff), which GitHub shows under "Cite this repository".
 
 ## License
 

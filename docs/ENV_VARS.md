@@ -2,10 +2,11 @@
 
 Most users do not need any environment variables. Prefer normal function arguments such as `mask=`, `downsample=`, and `goldstein_alpha=` when they apply.
 
-These variables are mainly for debugging, benchmarking, and reproducing internal experiments.
+Apart from the thread count, these variables are for debugging and benchmarking.
 
 | Variable                     | Default  | Use                                                                                                                                                                                                                |
 | ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WHIRLWIND_NUM_THREADS`      | all CPUs | Number of threads whirlwind uses (falls back to `RAYON_NUM_THREADS`). Read once at import; `whirlwind.set_num_threads(n)` does the same from Python.                               |
 | `WHIRLWIND_DEBUG`            | unset    | Print detailed MCF-solver (PD/SSP) progress to stderr. This is verbose and intended for debugging a suspect unwrap.                                                                                                 |
 | `WHIRLWIND_UNWRAP_SOLVER`    | `linear` | Select the solver behind `unwrap()`. The default is the supported 2D path. Other values such as `tiled`, `reuse`, and `convex` are research/debug paths, not recommended for normal use.                           |
 | `WHIRLWIND_DIJKSTRA`         | `dial`   | Select the shortest-path backend for benchmarking: `dial`, `heap`, or `dial-par`. The default `dial` backend is fastest in current tests.                                                                          |

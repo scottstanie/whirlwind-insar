@@ -19,23 +19,17 @@ docs_dir: docs
 site_dir: site
 use_directory_urls: true
 
-# `docs/requirements.txt` and `docs/comparison_to_dolphin.json` are auxiliary
-# files mkdocs would otherwise copy into the site without referencing.
 exclude_docs: |
   requirements.txt
-  comparison_to_dolphin.json
 
 nav:
   - Home: index.md
   - Algorithm: ALGORITHM.md
-  - NISAR comparison: NISAR_SUMMARY.md
-  - Why SNAPHU/PHASS differ: SNAPHU_PHASS_SPEED.md
+  - Options and recipes: RECIPES.md
+  - Connected components: CONNCOMP_TUNING.md
   - Bridging disconnected regions: BRIDGING.md
-  - Tuning connected components: CONNCOMP_TUNING.md
-  - Memory and scaling: MEMORY_AND_SCALING.md
+  - Performance: PERFORMANCE.md
   - Environment variables: ENV_VARS.md
-  - Deeper references:
-      - Full ATBD: ATBD-whirlwind.md
 
 theme:
   name: material

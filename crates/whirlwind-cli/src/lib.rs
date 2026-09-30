@@ -197,17 +197,16 @@ struct Cli {
     /// (all ones when the input was --phase)
     #[arg(long, value_enum, default_value_t = OutFormat::Auto)]
     out_format: OutFormat,
-    /// optional valid-pixel mask (TIFF, u8/u16/i8/i16/f32/f64).
-    /// Any nonzero value = valid (SNAPHU convention). Pre-saturates arcs
-    /// crossing masked pixels so MCF skips them - critical for large
-    /// real scenes with water / shadow / decorrelated regions, where
-    /// the unmasked path treats NoData pixels as real residues and
-    /// can slow down by 10-100x.
+    /// optional valid-pixel mask: TIFF (u8/u16/i8/i16/f32/f64) by extension,
+    /// otherwise flat one byte per pixel or float32. Any nonzero value = valid
+    /// (SNAPHU convention). Replaces the default `coherence > 0` mask rather
+    /// than combining with it. Masked pixels are NaN in the output. Mask water,
+    /// shadow, and nodata on real scenes: unmasked garbage phase creates
+    /// residues that slow the solve and can pull errors into good regions.
     #[arg(long)]
     mask: Option<PathBuf>,
-    /// Effective number of looks. The default phase-cost table represents up
-    /// to 300 looks. Runtime Lee-PDF paths, including the default SNAPHU
-    /// connected components, are capped at 80 for numerical stability.
+    /// Effective number of looks. The cost model represents up to 300 looks;
+    /// larger values are clamped to 300.
     #[arg(long, default_value_t = 1.0)]
     nlooks: f32,
     /// Coarse-solve factor for noisy scenes. When > 1, the complex

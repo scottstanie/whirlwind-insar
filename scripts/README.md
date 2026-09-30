@@ -1,6 +1,6 @@
 # whirlwind scripts
 
-## Reproduce the NISAR GUNW benchmark (the §9.6 table)
+## Reproduce the NISAR GUNW benchmark
 
 The 4-way single-tile comparison - **whirlwind vs ww-orig vs PHASS vs ICU**,
 per-component match vs the production GUNW unwrap (= snaphu), runtime, peak RSS:
@@ -26,7 +26,7 @@ implementation) need it installed separately - it's not a project dependency,
 so a fresh clone/pixi/uv env won't pull it in:
 `uv pip install -e /path/to/whirlwind` (or add it to your own venv).
 
-## Diagnostics (the masked-frame parity investigation, ATBD §7.6.1)
+## Diagnostics (masked-frame comparison against the original Python whirlwind)
 
 | script                       | what it shows                                                                                              |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -37,4 +37,4 @@ so a fresh clone/pixi/uv env won't pull it in:
 
 ## Infrastructure
 
-- `generate_carballo_tables.py` - export byte-parity embedded Carballo LUT blobs from saved ww-orig tables, or run the non-parity analytic model reconstruction for diagnostics.
+- `generate_carballo_tables.py` - regenerate the embedded Carballo cost tables from the analytic model (default), or re-export the historical ww-orig tables with `--source-table-dir`.
