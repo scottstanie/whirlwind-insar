@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+type: software
+title: "whirlwind-insar"
+abstract: "Fast Rust-backed 2D InSAR phase unwrapping with Python bindings."
+authors:
+  - family-names: Staniewicz
+    given-names: Scott
+repository-code: "https://github.com/scottstanie/whirlwind-insar"
+license:
+  - BSD-3-Clause
+  - Apache-2.0
+keywords:
+  - InSAR
+  - phase unwrapping
+  - minimum cost flow
+preferred-citation:
+  type: article
+  title: "A Probabilistic-Cost Algorithm for Large-Scale 2D Phase Unwrapping"
+  authors:
+    - family-names: Staniewicz
+      given-names: Scott
+    - family-names: Gunter
+      given-names: Geoffrey
+    - family-names: Mirzaee
+      given-names: Sara
+    - family-names: Govorcin
+      given-names: Marin
+    - family-names: Oliver-Cabrera
+      given-names: Talib
+    - family-names: Fattahi
+      given-names: Heresh
+  year: 2026
+  journal: "arXiv preprint arXiv:2609.36267"
+  doi: "10.48550/arXiv.2609.36267"
+  url: "https://arxiv.org/abs/2609.36267"

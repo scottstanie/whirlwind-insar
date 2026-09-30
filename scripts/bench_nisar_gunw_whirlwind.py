@@ -27,7 +27,7 @@ Carballo parity costs. On the full D_077 frame it matches Python ww-orig at
 accuracy (99.49%% vs 99.30%%). It returns unwrapped phase only (no connected
 components). For the public-API comparison that also returns SNAPHU-style
 connected components, use `aws-batch/compare_gunw.py`. The old `--solver tiled`
-path was removed (see `experiments/bench_nisar_gunw_tiled_solver.md`).
+path was removed.
 
 Run the cost model at `--nlooks ~16` (NISAR GUNW unwrap looks are ~13x16);
 `--nlooks 1` gives a near-flat phase-difference PDF and degenerate routing.

@@ -115,7 +115,7 @@ pub enum SlopeGuardMode {
 /// hypotheses that this single-branch model does not represent. The resulting
 /// likelihood ratio can be overconfident, making the solver refuse to cut
 /// along the discontinuity and lay a cheaper cut through the smooth interior
-/// instead (see `docs/BUG_NISAR_CRYO_STACKED_CUTS.md`).
+/// instead.
 ///
 /// This guard is an empirically validated robustification, not a result derived
 /// from that likelihood: it treats at most the steepest 3% of valid edges,
@@ -140,8 +140,8 @@ pub struct SlopeGuard {
     /// frees ~50% of the decorrelated `143_D_060` and visibly destabilizes it;
     /// 2 rad is safe there but stops fixing `077_A_036`. What separates the
     /// cases is *how much of the cost field the guard erases*, not coherence -
-    /// aliased edges are low-coherence in every frame, fixed or broken (see
-    /// `docs/BUG_NISAR_CRYO_STACKED_CUTS.md`). Budgeting that fraction turns a
+    /// aliased edges are low-coherence in every frame, fixed or broken.
+    /// Budgeting that fraction turns a
     /// per-scene radian value into one scene-independent knob: it selects
     /// ~1 rad where few edges alias, and pushes toward π where most do, which
     /// disables the guard exactly where it does harm.
@@ -1624,7 +1624,8 @@ mod slope_guard_tests {
 
     /// The `ZeroSlope` arm must stay *expensive* on a coherent edge - that is
     /// the whole reason it is only a diagnostic. If this ever inverts, the
-    /// interpretation in `docs/BUG_NISAR_CRYO_STACKED_CUTS.md` is wrong.
+    /// conclusion that the guard helps by freeing aliased edges (rather than by
+    /// correcting a bad slope estimate) no longer holds.
     #[test]
     fn zero_slope_cost_is_not_free_on_coherent_edges() {
         let lut = spline_lut::get_or_load();

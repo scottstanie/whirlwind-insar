@@ -13,7 +13,7 @@
 //!   which makes a binary heap balloon (millions of equal-distance entries) but
 //!   which Dial processes in O(nodes) per bucket. Used by the full-completion
 //!   path (`primal_dual::run_full_dijkstra`), which leaves the valid
-//!   (all-nodes-popped) potentials it requires. See ATBD §9.6.
+//!   (all-nodes-popped) potentials it requires.
 
 use crate::network::Network;
 use crate::residual_graph::ResidualGraph;

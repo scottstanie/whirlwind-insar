@@ -1,7 +1,7 @@
 """Profile the PD-vs-SSP cost split of whirlwind's single-tile linear unwrap by
 sweeping WHIRLWIND_LINEAR_PD_ITERS on 005_D_077 (the slowest NISAR frame). If more PD
-iterations make it FASTER, the multi-source SSP fallback dominates wall-clock (the
-ATBD's hypothesis); if slower, PD dominates. One heavy unwrap at a time.
+iterations make it FASTER, the multi-source SSP fallback dominates wall-clock;
+if slower, PD dominates. One heavy unwrap at a time.
 
 Usage (base miniforge3 env): python scripts/prof_pdssp.py [FRAME=005_D_077] [PD_ITERS...]
 """

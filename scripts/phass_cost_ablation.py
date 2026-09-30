@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """A/B the PHASS arc-cost surface on whirlwind's own capacity-1 linear solver.
 
-Motivated by the NISAR cryosphere stacked-cut frame (009_074_A_137, see
-docs/BUG_NISAR_CRYO_STACKED_CUTS.md): the capacity-1 AND the uncapacitated
+Motivated by the NISAR cryosphere stacked-cut frame (009_074_A_137): the capacity-1 AND the uncapacitated
 (`WHIRLWIND_UNWRAP_SOLVER=multi`) linear solves both split the glacier by -3
 cycles, while actual isce3 PHASS does not. Preprocessing and arc capacity are
 ruled out, so the remaining candidate is the COST SURFACE. This script keeps
