@@ -1,13 +1,12 @@
 # x86_64 vs ARM64: does the cheaper architecture change the results?
 
-Short answer: no. On real NISAR data, whirlwind produces bit-identical
-unwrapping results on `linux/amd64` (x86_64) and `linux/arm64` (Graviton) over
-every valid pixel — same 2π ambiguities, same connected components, same phase.
-ARM64/Graviton is ~20% cheaper on Fargate at zero quality cost.
+In the NISAR crop tested below, whirlwind produced bit-identical results on
+`linux/amd64` (x86_64) and `linux/arm64` (Graviton) over every valid pixel:
+the same 2π ambiguities, connected components, and phase. ARM64/Graviton was
+~20% cheaper on Fargate at the rates used for this comparison.
 
-This is expected: whirlwind's minimum-cost-flow solve runs on integer Carballo
-costs, so the routing is deterministic regardless of CPU. The output phase is
-`wrapped_input + 2π·(integer cycle field)`, and both terms come out identical.
+The minimum-cost-flow solve uses integer Carballo costs. In this test, both the
+wrapped input and the resulting integer cycle field were identical across CPUs.
 
 ## The test
 
@@ -50,11 +49,11 @@ comparable to Graviton. The cost takeaway is purely the Fargate price difference
 ## Recommendation
 
 - Cost-sensitive runs (e.g. sweeping hundreds of products): ARM64/Graviton.
-  Identical results, ~20% cheaper, and it builds natively on Apple-Silicon Macs.
+  It matched x86_64 in this test, was ~20% cheaper at the rates compared, and
+  builds natively on Apple-Silicon Macs.
   Set `runtimePlatform.cpuArchitecture: ARM64` in `job-definition.json` and build
   with `--platform linux/arm64`.
 - NISAR SDS / x86 environments: x86_64. The committed `job-definition.json`
   defaults to this. Build with `--platform linux/amd64`.
 
-Both images are validated to build and run end-to-end. Point this out to anyone
-weighing the cost: the cheap option is not a quality trade-off here.
+Both images built and ran successfully in this test.

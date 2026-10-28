@@ -21,27 +21,23 @@ What this does
 For each NISAR GUNW product (a local ``.h5``, an ASF download URL, an ``s3://``
 URI, or a bare granule name), this script:
 
-1. Reads the production 80 m ``unwrappedPhase`` and **re-wraps** it to
-   ``[-pi, pi)``. That re-wrapped phase is the *only* input handed to whirlwind,
-   so this is an apples-to-apples test of the unwrapping algorithm on the exact
-   grid the production unwrapped product lives on. (The beta GUNW also ships a
-   20 m ``wrappedInterferogram``, but its georeferencing has been flagged as
-   unreliable in some beta products, so re-wrapping the 80 m unwrapped phase is
-   the cleaner comparison. See ``--use-product-wrapped`` to override.)
+1. Reads the production 80 m ``unwrappedPhase`` and re-wraps it to
+   ``[-pi, pi)`` as the phase input to whirlwind. This compares the unwrappers
+   on the production grid. The beta GUNW also has a 20 m
+   ``wrappedInterferogram``, but its georeferencing has been flagged as
+   unreliable in some beta products. Use ``--use-product-wrapped`` to test it.
 2. Reads the production coherence and the GUNW ``mask`` (water / subswath).
-3. Runs ``whirlwind.unwrap(...)`` -- the exact public API an external user would
-   call -- producing an unwrapped phase **and** connected-component labels.
+3. Runs ``whirlwind.unwrap(...)``, producing an unwrapped phase and
+   connected-component labels.
 4. Compares whirlwind's output to the production ``unwrappedPhase`` and
    ``connectedComponents``: per-pixel 2*pi ambiguity agreement (overall and
    re-leveled within each production component), wrapped-residual RMSE,
    component counts, and label coverage / recall. Records runtime and peak-RSS.
-5. Writes, per product: a ``<crop>.json`` of metrics, a ``<crop>.png`` six-panel
+5. Writes, per product: a ``<crop>.json`` of metrics, a ``<crop>.png`` eight-panel
    figure, and a ``<crop>_arrays.npz`` of the rasters. Across all products it
    writes ``summary.csv`` / ``summary.md``.
 
-Because the comparison only needs the production unwrapped phase, you do **not**
-need to have pre-downloaded anything: point it at a URL or granule name and it
-fetches the product first.
+For a URL or granule name, the script downloads the product before comparing it.
 
 Authentication (for URL / granule inputs)
 -----------------------------------------
@@ -50,8 +46,7 @@ by any one of:
   * ``EARTHDATA_TOKEN`` env var (an EDL bearer token), or
   * ``EARTHDATA_USERNAME`` / ``EARTHDATA_PASSWORD`` env vars, or
   * a ``~/.netrc`` entry for ``urs.earthdata.nasa.gov``.
-Running in **AWS us-west-2** keeps all transfers in-region (the ASF DAAC cloud
-holdings live there), so downloads incur no egress cost.
+Running in **AWS us-west-2** keeps all transfers in-region.
 
 Examples
 --------

@@ -9,7 +9,7 @@ The package is `whirlwind-insar` on PyPI and GitHub; it imports as `whirlwind`.
 
 ## Quickstart
 
-`whirlwind` can be installed from PyPI,
+Install `whirlwind` from PyPI:
 
 ```bash
 pip install whirlwind-insar
@@ -35,7 +35,7 @@ unw, conncomp = ww.unwrap(igram, corr, nlooks=10.0, mask=mask)
 
 ## CLI
 
-A CLI is provided that mirrors the Python API. Run `whirlwind --help` for the full list.
+The CLI mirrors the Python API. Run `whirlwind --help` for all options.
 
 ```bash
 ➜ whirlwind --help
@@ -45,10 +45,10 @@ InSAR phase unwrapper.
 
 ### CLI installation
 
-There are multiple ways to install whirlwind to use only the CLI:
+To use the CLI, choose an installation method:
 
-1. **Prebuilt binary (no Python or toolchain).** Download the archive for your platform from the [latest release][releases], unpack it, and run the `whirlwind` executable. A single self-contained binary - handy for MATLAB users driving it via `system('whirlwind ...')`.
-2. **With the Python package.** The wheel ships a `whirlwind` console script which can be run using [`uvx` with with the UV tool system](https://docs.astral.sh/uv/guides/tools/):
+1. **Prebuilt binary (no Python or toolchain).** Download the archive for your platform from the [latest release](https://github.com/scottstanie/whirlwind-insar/releases/latest), unpack it, and run the `whirlwind` executable. MATLAB users can call it with `system('whirlwind ...')`.
+2. **Python package.** The wheel includes a `whirlwind` console script, which you can run with [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 ```bash
 uvx --from whirlwind-insar whirlwind --help   # zero-install try-out
 pip install whirlwind-insar                   # puts `whirlwind` on PATH
@@ -75,7 +75,7 @@ whirlwind \
 where
 - `--phase` is the wrapped phase in radians: a float32 TIFF, or a flat binary float32 file (see below). If you start from a complex-valued GeoTIFF, extract GDAL's PHASE derived subdataset first and pass that as `--phase`;
   - Alternative: `--ifg` is for flat complex64 rasters. The phase path reconstructs a unit-magnitude interferogram, so it does not preserve amplitude.
-- `--cor coherent.tif` is the float32 interferometric sample coherence raster
+- `--cor` is the float32 interferometric sample coherence raster
 - `--mask` is optional; nonzero means valid. When `--mask` is omitted the CLI uses `coherence > 0` (and `igram != 0` with `--ifg`) as the default valid mask, matching the Python API.
 - `--nlooks` is the number of independent looks used to estimate the sample coherence raster
 

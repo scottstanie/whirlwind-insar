@@ -47,7 +47,7 @@ The unwrapped phase is congruent with the wrapped input modulo $2\pi$. See [Conn
 
 ## Aliased-gradient robustness guard
 
-The Carballo/Lee cost conditions on one locally expected slope. At shear margins and rupture edges, several unwrapped gradients can produce the same wrapped observation, so that single-branch model can assign an overconfident cost. Whirlwind robustifies the cost by treating at most the steepest 3% of valid edges as uninformative, subject to a 1 radian floor. This is an empirical approximation to a missing heavy-tailed or discontinuity component, not a new likelihood derivation. Set `WHIRLWIND_SLOPE_GUARD=off` to reproduce the unguarded cost field.
+The Carballo/Lee cost uses one locally expected slope. At shear margins and rupture edges, several unwrapped gradients can produce the same wrapped observation, so this model can assign an overconfident cost. Whirlwind treats at most the steepest 3% of valid edges as uninformative, provided they exceed 1 radian. This is an empirical approximation to a missing heavy-tailed or discontinuity component, not a new likelihood derivation. Set `WHIRLWIND_SLOPE_GUARD=off` to reproduce the unguarded cost field.
 
 ## Bridge post-pass
 

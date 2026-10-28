@@ -16,8 +16,8 @@ A common use is to treat `conncomp > 0` as a "trust this pixel" mask, or to refe
 
 The default algorithm (`conncomp_algorithm="snaphu"`) follows SNAPHU's rule:
 
-1. For each pixel edge, ask how much it would cost to shift the unwrapped solution there by ±1 cycle, using SNAPHU's smooth statistical cost.
-2. If that cost is below the `conncomp_reliability` margin, the solution is not confidently pinned on that edge, so the edge is cut.
+1. For each pixel edge, calculate the cost of shifting the unwrapped solution there by ±1 cycle, using SNAPHU's smooth statistical cost.
+2. If that cost is below the `conncomp_reliability` margin, cut the edge because its solution is uncertain.
 3. Cut regions are thickened sideways (`conncomp_thicken`), so a one-pixel reliable thread cannot join two sides of a wide unreliable area.
 4. Pixels are grouped over the remaining edges. Groups smaller than `min_size_px` are dropped, and only the `max_ncomps` largest are kept.
 

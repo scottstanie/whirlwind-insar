@@ -96,12 +96,10 @@ def unwrap_crlb_stack(
     min_size_px: int = 100,
     max_ncomps: int = 1024,
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
-    """Per-IG CRLB unwrap + conncomp over a 3D stack.
+    """Unwrap each interferogram in a 3D stack using CRLB costs.
 
-    Loops over the leading axis calling :func:`unwrap_crlb`
-    per IG. Each per-IG MCF solve is independent, so this is just a
-    convenient Python wrapper - there is no shared state between IGs. For
-    parallel execution use ``multiprocessing`` or ``concurrent.futures``.
+    Calls :func:`unwrap_crlb` along the leading axis. Each solve is independent;
+    use ``multiprocessing`` or ``concurrent.futures`` to run them in parallel.
 
     Parameters
     ----------
@@ -201,9 +199,9 @@ CONNCOMP_RELIABILITY_UNIT = 100 * 100**2  # COST_SCALE * nshortcycle**2 = 1_000_
 def conncomp_reliability_from_coherence(coherence: float, nlooks: float) -> float:
     """``conncomp_reliability`` value that cuts conncomp edges below a target coherence.
 
-    A guessable way to set ``conncomp_reliability``: pass a target minimum
-    coherence and use the result, and the connected components keep edges whose
-    coherence is roughly above ``coherence`` and drop (label ``0``) those below.
+    Use the result as ``conncomp_reliability`` to roughly cut edges below the
+    target coherence. Pixels may be labeled ``0`` if they are masked, judged
+    unreliable, or part of a component that is too small to keep.
 
     ``conncomp_reliability`` is in inverse-variance (``1 / sigma2``) units, and a
     clean edge at coherence ``gamma`` and ``L=nlooks`` looks has reliability
@@ -263,9 +261,9 @@ def unwrap(
 ) -> "tuple[NDArray[np.float32], NDArray[np.uint32]]":
     """Unwrap a wrapped interferogram with a minimum-cost-flow (MCF) solver.
 
-    Main unwrapping entry point. Estimates the integer number of 2π cycles
-    at each pixel, and adds them back to the wrapped phase, returning the
-    continuous unwrapped phase together with connected-component labels.
+    Estimates the integer number of 2π cycles at each pixel and adds them to
+    the wrapped phase. Returns the unwrapped phase and connected-component
+    labels.
 
     The ``conncomp`` output labels regions believed to be unwrapped
     self-consistently, with one positive integer per region and ``0`` for
@@ -275,9 +273,8 @@ def unwrap(
     output (reproducing SNAPHU's ``GrowConnCompsMask``).
     ``conncomp_algorithm="linear"`` uses a global coherence-cost growing algorithm.
 
-    A fast default post-pass (``bridge``) attempts to minimize 2π offsets
-    between regions that the valid mask splits apart, such as land slabs separated by a
-    low-coherence river.
+    By default, ``bridge`` estimates 2π offsets between regions separated by
+    the valid mask, such as land on either side of a masked river.
 
     Parameters
     ----------
@@ -293,12 +290,12 @@ def unwrap(
         means higher confidence in ``corr`` and a narrower coherence cost model.
         The cost model represents up to 300 looks and clamps larger values to
         that endpoint, with a warning. That limit is shared: the phase-cost
-        table and the runtime Lee-PDF tables behind the SNAPHU
-        connected-component grow and the grounded/convex solvers all use it, so
-        every path prices the same interferogram at the same number of looks.
+        table and the runtime Lee-PDF tables used by SNAPHU connected
+        components and the grounded/convex solvers share this limit.
     mask : ndarray of bool, optional
         Valid-pixel mask, ``True`` = valid. Defaults to ``(igram != 0) &
-        (corr > 0)``, so exact-zero phase or zero-coherence pixels are excluded.
+        (corr > 0)``, so zero-valued interferogram or zero-coherence pixels are
+        excluded.
         Excluded pixels are ``NaN`` in the returned phase and ``0`` in the
         returned components.
     bridge : bool, default True
@@ -330,10 +327,9 @@ def unwrap(
         cycle each block sits on. Only the integer cycle is borrowed back onto
         the full-resolution wrapped phase, so every per-pixel value is kept;
         detail finer than the block scale aliases under the downlook.
-        May be useful for noisy or moderate-coherence scenes, provides little benefit
-        for clean scenes. Note this coherently averages an existing
-        interferogram, which is not the same as forming a multilooked
-        interferogram from the SLCs.
+        This can help with noisy or moderate-coherence scenes, but provides
+        little benefit for clean scenes. It averages an existing interferogram,
+        which differs from forming a multilooked interferogram from the SLCs.
     interpolate : bool, default False
         Spiral persistent-scatterer interpolation pre-pass (the Rust port of
         dolphin's ``interpolation.interpolate``, exposed standalone as

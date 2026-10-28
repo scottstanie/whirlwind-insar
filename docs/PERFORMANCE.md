@@ -1,6 +1,6 @@
 # Performance
 
-Whirlwind solves the whole interferogram as a single tile. Its runtime and memory grow roughly linearly with pixel count, so there is no tiling to configure. The numbers below are from [the Whirlwind paper](https://arxiv.org/abs/2609.36267). Absolute times depend on the machine; the ratios between unwrappers are what carry over.
+By default, Whirlwind solves the whole interferogram as a single tile. Its runtime and memory grow roughly linearly with pixel count. The numbers below are from [the Whirlwind paper](https://arxiv.org/abs/2609.36267). Times and relative performance depend on the machine and input.
 
 ## What to expect
 

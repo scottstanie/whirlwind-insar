@@ -5,22 +5,20 @@
 # ///
 """Run the GUNW comparison over a manifest of granules on a local CPU server.
 
-This is the no-cloud counterpart to ``submit_batch.py``: instead of one AWS
-Batch job per granule, it runs one ``compare_gunw.py`` subprocess per granule
-across a pool of worker slots on whatever machine you have.
+This is the local counterpart to ``submit_batch.py``. It runs one
+``compare_gunw.py`` subprocess per granule across a pool of workers.
 
 What it adds on top of ``compare_gunw.py``:
 
-* **Parallelism with honest CPU accounting.** Each worker gets its own slice of
-  the machine via ``WHIRLWIND_NUM_THREADS``, so N workers do not each try to
-  use every core. See the note on timing below.
-* **True peak memory.** The runner samples the summed RSS of each job's process
-  tree, which is the number to quote for "how much memory does a frame need" --
+* **Thread allocation.** Each worker gets a share of the machine's cores via
+  ``WHIRLWIND_NUM_THREADS``. See the note on timing below.
+* **Peak memory.** The runner samples the summed RSS of each job's process
+  tree. This is an estimate of how much memory a frame needs;
   ``compare_gunw.py``'s own ``rss_delta_mb`` is an instantaneous before/after
   difference, not a high-water mark.
 * **Resumability.** Completed jobs are recorded in ``runs.jsonl`` and skipped on
   a rerun, so an interrupted campaign picks up where it left off.
-* **Disk hygiene.** GUNW products are ~2 GB each; ``--delete-after`` removes each
+* **Disk use.** GUNW products are ~2 GB each; ``--delete-after`` removes each
   download once its job succeeds, so disk use stays at roughly
   (workers x 2 GB) instead of the whole manifest.
 

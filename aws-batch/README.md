@@ -1,9 +1,8 @@
 # Comparing whirlwind against NISAR L2 GUNW products
 
-This directory packages a self-service benchmark so anyone on the NISAR team can
-run the whirlwind phase unwrapper on real NISAR L2 GUNW products and see, for
-themselves, how closely it matches the production unwrapped phase and connected
-components — on one product or on hundreds, via AWS Batch.
+This directory contains a benchmark that compares whirlwind's unwrapped phase
+and connected components with NISAR L2 GUNW products. Run it on one product or
+on many products using AWS Batch.
 
 You do not need to pre-download anything: point the tool at a granule name, an
 ASF download URL, or an `s3://` URI and it fetches the product first.
@@ -18,7 +17,7 @@ ASF download URL, or an `s3://` URI and it fetches the product first.
   list from the ASF catalog), `run_local.py` (parallel runner with peak-memory
   tracking and resume), `aggregate_results.py` (campaign roll-up + plots),
   `make_synthetic_gunw.py` (offline smoke test).
-- `ARCH_COMPARISON.md` — x86_64 vs ARM64: results are identical, ARM64 is cheaper.
+- `ARCH_COMPARISON.md` — x86_64 vs ARM64 results for one NISAR crop and Fargate cost comparison.
 
 ---
 
@@ -27,9 +26,8 @@ ASF download URL, or an `s3://` URI and it fetches the product first.
 For each GUNW product, `compare_gunw.py`:
 
 1. Reads the production 80 m `unwrappedPhase` and re-wraps it to `[-pi, pi)`.
-   That re-wrapped phase is the *only* phase input handed to whirlwind. This is
-   an apples-to-apples test of the unwrapping algorithm: both unwrappers see the
-   identical wrapped field on the identical grid.
+   That re-wrapped phase is the only phase input to whirlwind, so the comparison
+   uses the same wrapped field and grid as the production unwrap.
 
    > Why re-wrap instead of using the product's 20 m `wrappedInterferogram`? The
    > beta GUNW wrapped layer has been flagged as possibly mis-georeferenced, and
@@ -62,9 +60,8 @@ For each GUNW product, `compare_gunw.py`:
    | `water_and_subswath` | ✅                     | ✅          |
    | `ignore`             |                        |             |
 
-3. Runs `whirlwind.unwrap(igram, corr, nlooks, mask)` — the exact public API an
-   external user would call. This returns an unwrapped phase and SNAPHU-style
-   connected-component labels.
+3. Runs `whirlwind.unwrap(igram, corr, nlooks, mask)`, returning an unwrapped
+   phase and SNAPHU-style connected-component labels.
 
 4. Compares whirlwind's output to the production `unwrappedPhase` and
    `connectedComponents`:
@@ -75,7 +72,7 @@ For each GUNW product, `compare_gunw.py`:
    | `ambiguity_match_frac_percomp`                  | same, but re-leveled within each production connected component first. This is the fair score across water/decorrelation gaps, where the absolute inter-region 2π offset is physically unobservable. |
    | `residual_wrapped_rmse_rad` / `_p95_abs_rad`    | RMSE / 95th-pct of `wrap(whirlwind − production)`; near 0 means the shapes agree.                                                                                                                    |
    | `prod_num_cc` / `ww_num_cc`                     | number of connected components in each.                                                                                                                                                              |
-   | `prod_unwrapped_recall` / `ww_unwrapped_recall` | fraction of data pixels each unwrapper actually labels (conncomp > 0) — the coverage/recall lens.                                                                                                    |
+   | `prod_unwrapped_recall` / `ww_unwrapped_recall` | fraction of data pixels each unwrapper labels (conncomp > 0).                                                                                                                                         |
    | `runtime_s`, `rss_delta_mb`                     | wall-clock and peak-RSS delta of the whirlwind call.                                                                                                                                                 |
 
    Outputs per product: `<crop>.json` (all metrics), an eight-panel `<crop>.png`
@@ -139,11 +136,10 @@ override) and each worker's console output in `<out-dir>/logs/<product>.log`.
 `summary.csv` is written in manifest order whatever `--num-parallel` is, so the
 output doesn't depend on which frame finished first.
 
-> Memory note: a full NISAR frame uses several GB, so each added worker costs
-> that again — `--num-parallel` is bounded by RAM well before it is bounded by
-> cores. Per-frame `runtime_s` under it includes contention and is not a
-> single-frame benchmark; use `--num-parallel 1` for timings, or `run_local.py`,
-> which also samples true peak RSS per process tree and is resumable.
+> A full NISAR frame uses several GB, so check available RAM before adding
+> workers. Parallel `runtime_s` measurements include contention; use
+> `--num-parallel 1` for single-frame timings. `run_local.py` also measures peak
+> RSS per process tree and can resume interrupted runs.
 
 ---
 
@@ -172,11 +168,9 @@ Apple Silicon: set `runtimePlatform.cpuArchitecture` to `ARM64` in
 
 ## Run on AWS Batch (lowest cost)
 
-The single biggest cost lever is the region. The ASF DAAC NISAR cloud
-holdings live in `us-west-2`; running Batch there keeps every download
-in-region, so there is no data-egress charge — you pay only for compute.
-Then: Fargate Spot (≈70% off on-demand, no instances to manage), right-sized
-memory, and optionally ARM64/Graviton (≈20% cheaper still).
+ASF DAAC hosts NISAR cloud data in `us-west-2`. Running Batch in that region
+uses the fast direct-download. Using Spot queues, Fargate, appropriate memory
+allocation, and ARM64/Graviton can further reduce compute costs.
 
 Below, replace `ACCOUNT_ID`, the bucket, and the subnet/SG with your values.
 Commands use the `my-profile` profile for our sample run.
@@ -299,8 +293,8 @@ uv run aws-batch/submit_batch.py \
 
 In `us-west-2`, a full GUNW frame solves in single-digit minutes on 4 vCPU. At
 Fargate Spot rates that is on the order of a cent or two per product, plus
-a few MB of S3 for the figures/arrays and zero egress (in-region download).
-A few hundred products is dollars, not hundreds of dollars.
+a few MB of S3 for the figures/arrays.
+A few hundred products cost on the order of a few dollars at those rates.
 
 ---
 

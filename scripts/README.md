@@ -2,15 +2,16 @@
 
 ## Reproduce the NISAR GUNW benchmark
 
-The 4-way single-tile comparison - **whirlwind vs ww-orig vs PHASS vs ICU**,
-per-component match vs the production GUNW unwrap (= snaphu), runtime, peak RSS:
+Compare **whirlwind, ww-orig, PHASS, and ICU** on a single tile. The sweep
+measures per-component agreement with the production GUNW unwrap (snaphu),
+runtime, and peak RSS:
 
 ```bash
 # one heavy unwrap at a time; resume-friendly; writes results.csv + per-engine logs
 bash scripts/sweep_all_unwrappers.sh
 ```
 
-It drives two runners (each engine timed + memory-measured in its own process):
+It uses two runners, timing and measuring each engine in a separate process:
 
 | script                                                             | engines                                             | env                                       |
 | ------------------------------------------------------------------ | --------------------------------------------------- | ----------------------------------------- |

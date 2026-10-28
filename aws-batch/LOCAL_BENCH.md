@@ -38,9 +38,9 @@ Products are pulled from ASF over HTTPS.
 
 ## 0. Prerequisites
 
-**An environment with your whirlwind build installed**, plus `h5py`, `numpy`, `matplotlib`, `pandas`, `requests`, `psutil`, `asf-search`. `run_local.py` launches `compare_gunw.py`, and checks up front that the imports work. Environment with whirlwin must be active.
+Activate an environment with your whirlwind build installed, plus `h5py`, `numpy`, `matplotlib`, `pandas`, `requests`, `psutil`, and `asf-search`. `run_local.py` checks the imports before launching `compare_gunw.py`.
 
-Earthdata credentials must be available if listing granules to be downloaded, rather than local HDF5 files that are already downloaded.
+Earthdata credentials are required to download granules, but not to use local HDF5 files.
 
 ## 1. Build the granule list
 
@@ -71,7 +71,7 @@ Knobs worth knowing:
 - `--prefer short-baseline|recent` -- which repeat pass to keep per frame.
 - `--min-land 0.2` -- raise to skip mostly-ocean frames.
 
-To doo a 25-granule run first and look at the output before launching the full campaign:
+To inspect the output from 25 granules before launching the full campaign:
 
 ```bash
 python discover_granules.py --land-frames <...> --per-track 1 --limit 25 --out manifest_pilot.txt

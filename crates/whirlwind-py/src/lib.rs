@@ -113,26 +113,21 @@ fn cli_main(py: Python<'_>, argv: Vec<String>) -> i32 {
 
 /// Re-level the disconnected regions of an unwrapped phase image.
 ///
-/// Integration-component gauge bridging: sets the relative 2π integer offset
-/// between the disconnected valid regions an MCF integrator seeds independently
-/// (for example two land slabs separated by a low-coherence river), following
-/// the algorithm isce3's NISAR GUNW workflow uses
-/// (``isce3.unwrap.bridge_phase.bridge_unwrapped_phase``):
+/// Estimate the relative 2π offsets between disconnected valid regions, such
+/// as land on either side of a masked river. Each region is unwrapped with an
+/// independent starting level. The method is similar to the bridging step in
+/// isce3's NISAR GUNW workflow:
 ///
 /// 1. Label the integration regions (4-connected components of the valid mask).
-/// 2. For every pair of regions, find the closest boundary-pixel pair (the
-///    natural place to bridge - where the true phase gap is smallest).
-/// 3. Build a minimum spanning tree of those distances, rooted at the largest
-///    region, so each region is referenced through its nearest neighbor
-///    rather than directly to one global anchor.
-/// 4. Walking the tree outward from the root, compare the median unwrapped
-///    phase in a local box around the two bridge endpoints, round the
-///    difference to an integer number of cycles, and shift the child region
-///    (and, transitively, its descendants).
+/// 2. For every pair of regions, find the closest boundary-pixel pair.
+/// 3. Visit regions from largest to smallest, attaching each to the nearest
+///    region already visited.
+/// 4. Compare the median unwrapped phase in a local box around each bridge
+///    endpoint. Round the difference to whole cycles and shift the child region.
+///    Parents are processed first, so their shifts propagate to their children.
 ///
-/// The offset is read straight from the unwrapped phase at the region
-/// boundaries, so this needs only the unwrapped phase and a valid mask - no
-/// coherence or interferogram.
+/// The offsets come from the unwrapped phase at the region boundaries; no
+/// coherence or interferogram is needed.
 ///
 /// * ``unw`` - float32 unwrapped phase, masked/nodata pixels left at 0 (or NaN).
 /// * ``mask`` - bool valid-pixel mask defining the integration regions;
